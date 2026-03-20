@@ -1,61 +1,35 @@
 #include "chess_app/app.h"
 
+#include "chess_app/network_discovery.h"
 #include "chess_app/network_peer.h"
 #include "chess_app/network_session.h"
+#include "chess_app/network_tcp.h"
 #include "chess_app/render_board.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include <string.h>
 
-static void log_host_election_example(void)
+static bool init_local_peer(ChessPeerInfo *local_peer)
 {
-    ChessPeerInfo local_peer;
-    ChessPeerInfo remote_peer;
-
-    memset(&local_peer, 0, sizeof(local_peer));
-    memset(&remote_peer, 0, sizeof(remote_peer));
-
-    if (!chess_parse_ipv4("192.168.1.12", &local_peer.ipv4_host_order)) {
-        SDL_Log("Failed to parse local peer IP");
-        return;
+    if (!local_peer) {
+        return false;
     }
 
-    if (!chess_parse_ipv4("192.168.1.48", &remote_peer.ipv4_host_order)) {
-        SDL_Log("Failed to parse remote peer IP");
-        return;
+    memset(local_peer, 0, sizeof(*local_peer));
+
+    if (!chess_get_default_local_ipv4(&local_peer->ipv4_host_order)) {
+        SDL_Log("Could not detect local IPv4 address");
+        return false;
     }
 
-    SDL_strlcpy(local_peer.uuid, "2f8a34f8-88ec-4047-a95e-cce96b122107", sizeof(local_peer.uuid));
-    SDL_strlcpy(remote_peer.uuid, "8b4d717f-5d56-44dd-a07a-68de8e1617f7", sizeof(remote_peer.uuid));
-
-    const ChessRole role = chess_elect_role(&local_peer, &remote_peer);
-    if (role == CHESS_ROLE_SERVER) {
-        SDL_Log("LAN election example: local peer is SERVER");
-    } else if (role == CHESS_ROLE_CLIENT) {
-        SDL_Log("LAN election example: local peer is CLIENT");
-    } else {
-        SDL_Log("LAN election example: role is UNKNOWN");
+    if (!chess_generate_peer_uuid(local_peer->uuid, sizeof(local_peer->uuid))) {
+        SDL_Log("Could not generate local peer UUID");
+        return false;
     }
-}
 
-static ChessNetworkSession build_demo_network_session(void)
-{
-    ChessPeerInfo local_peer;
-    ChessPeerInfo remote_peer;
-    ChessNetworkSession session;
-
-    memset(&local_peer, 0, sizeof(local_peer));
-    memset(&remote_peer, 0, sizeof(remote_peer));
-
-    chess_parse_ipv4("192.168.1.12", &local_peer.ipv4_host_order);
-    chess_parse_ipv4("192.168.1.48", &remote_peer.ipv4_host_order);
-    SDL_strlcpy(local_peer.uuid, "2f8a34f8-88ec-4047-a95e-cce96b122107", sizeof(local_peer.uuid));
-    SDL_strlcpy(remote_peer.uuid, "8b4d717f-5d56-44dd-a07a-68de8e1617f7", sizeof(remote_peer.uuid));
-
-    chess_network_session_init(&session, &local_peer);
-    chess_network_session_set_remote(&session, &remote_peer);
-    return session;
+    SDL_Log("Local peer initialized (uuid=%s)", local_peer->uuid);
+    return true;
 }
 
 int app_run(void)
@@ -82,9 +56,40 @@ int app_run(void)
         return 1;
     }
 
-    log_host_election_example();
+    ChessPeerInfo local_peer;
+    ChessNetworkSession network_session;
+    ChessDiscoveryContext discovery;
+    ChessTcpListener listener;
+    ChessNetworkState last_state;
 
-    ChessNetworkSession network_session = build_demo_network_session();
+    if (!init_local_peer(&local_peer)) {
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    if (!chess_tcp_listener_open(&listener, 0)) {
+        SDL_Log("Could not create TCP listener on ephemeral port");
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Log("TCP listener ready on port %u", (unsigned int)listener.port);
+
+    chess_network_session_init(&network_session, &local_peer);
+    if (!chess_discovery_start(&discovery, &local_peer, listener.port)) {
+        SDL_Log("Discovery start failed");
+        chess_tcp_listener_close(&listener);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    last_state = network_session.state;
 
     bool running = true;
     while (running) {
@@ -95,7 +100,28 @@ int app_run(void)
             }
         }
 
+        if (!network_session.peer_available) {
+            ChessPeerInfo remote_peer;
+            if (chess_discovery_poll(&discovery, &remote_peer)) {
+                chess_network_session_set_remote(&network_session, &remote_peer);
+                SDL_Log("Peer discovered; starting election");
+            }
+        }
+
         chess_network_session_step(&network_session);
+
+        if (network_session.state != last_state) {
+            SDL_Log("Network state changed: %d -> %d", (int)last_state, (int)network_session.state);
+            last_state = network_session.state;
+        }
+
+        if (network_session.state == CHESS_NET_CONNECTING) {
+            if (network_session.role == CHESS_ROLE_SERVER) {
+                SDL_Log("Local role: SERVER (smaller IP)");
+            } else if (network_session.role == CHESS_ROLE_CLIENT) {
+                SDL_Log("Local role: CLIENT");
+            }
+        }
 
         int width = 0;
         int height = 0;
@@ -108,6 +134,9 @@ int app_run(void)
 
         SDL_RenderPresent(renderer);
     }
+
+    chess_discovery_stop(&discovery);
+    chess_tcp_listener_close(&listener);
 
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
