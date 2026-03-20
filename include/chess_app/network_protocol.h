@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "chess_app/network_peer.h"
+
 #define CHESS_PROTOCOL_VERSION 1u
 #define CHESS_DISCOVERY_SERVICE "_chess._tcp.local"
 
@@ -34,5 +36,10 @@ typedef struct ChessPacketHeader {
     uint32_t sequence;
     uint32_t payload_size;
 } ChessPacketHeader;
+
+typedef struct ChessHelloPayload {
+    char uuid[CHESS_UUID_STRING_LEN];
+    uint32_t role;
+} ChessHelloPayload;
 
 #endif

@@ -21,10 +21,12 @@ typedef struct ChessNetworkSession {
     ChessPeerInfo local_peer;
     ChessPeerInfo remote_peer;
     bool peer_available;
+    bool transport_ready;
 } ChessNetworkSession;
 
 void chess_network_session_init(ChessNetworkSession *session, const ChessPeerInfo *local_peer);
 void chess_network_session_set_remote(ChessNetworkSession *session, const ChessPeerInfo *remote_peer);
+void chess_network_session_set_transport_ready(ChessNetworkSession *session, bool transport_ready);
 void chess_network_session_step(ChessNetworkSession *session);
 
 #endif

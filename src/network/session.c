@@ -23,7 +23,17 @@ void chess_network_session_set_remote(ChessNetworkSession *session, const ChessP
 
     session->remote_peer = *remote_peer;
     session->peer_available = true;
+    session->transport_ready = false;
     session->state = CHESS_NET_PEER_FOUND;
+}
+
+void chess_network_session_set_transport_ready(ChessNetworkSession *session, bool transport_ready)
+{
+    if (!session) {
+        return;
+    }
+
+    session->transport_ready = transport_ready;
 }
 
 void chess_network_session_step(ChessNetworkSession *session)
@@ -43,7 +53,9 @@ void chess_network_session_step(ChessNetworkSession *session)
         session->state = CHESS_NET_CONNECTING;
         break;
     case CHESS_NET_CONNECTING:
-        session->state = CHESS_NET_IN_GAME;
+        if (session->transport_ready) {
+            session->state = CHESS_NET_IN_GAME;
+        }
         break;
     case CHESS_NET_IN_GAME:
         break;

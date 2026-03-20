@@ -13,8 +13,13 @@ typedef struct ChessDiscoveryContext {
     ChessPeerInfo local_peer;
 } ChessDiscoveryContext;
 
+typedef struct ChessDiscoveredPeer {
+    ChessPeerInfo peer;
+    uint16_t tcp_port;
+} ChessDiscoveredPeer;
+
 bool chess_discovery_start(ChessDiscoveryContext *ctx, const ChessPeerInfo *local_peer, uint16_t game_port);
 void chess_discovery_stop(ChessDiscoveryContext *ctx);
-bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessPeerInfo *out_remote_peer);
+bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer);
 
 #endif

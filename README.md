@@ -31,10 +31,11 @@ publish through mDNS.
 Until then, discovery can be tested using environment simulation:
 
 ```sh
-CHESS_REMOTE_IP=192.168.1.48 CHESS_REMOTE_UUID=8b4d717f-5d56-44dd-a07a-68de8e1617f7 ./build/chess_app
+CHESS_REMOTE_IP=192.168.1.48 CHESS_REMOTE_PORT=53021 CHESS_REMOTE_UUID=8b4d717f-5d56-44dd-a07a-68de8e1617f7 ./build/chess_app
 ```
 
 Expected behavior in logs:
 - peer is discovered
 - session moves to election/connecting states
 - local role is selected from IP ordering
+- TCP connection is established and HELLO handshake completes

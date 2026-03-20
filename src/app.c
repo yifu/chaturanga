@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 
 static bool init_local_peer(ChessPeerInfo *local_peer)
@@ -35,6 +36,7 @@ static bool init_local_peer(ChessPeerInfo *local_peer)
 int app_run(void)
 {
     const int window_size = 640;
+    const int connect_retry_ms = 1000;
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
@@ -60,6 +62,11 @@ int app_run(void)
     ChessNetworkSession network_session;
     ChessDiscoveryContext discovery;
     ChessTcpListener listener;
+    ChessTcpConnection connection;
+    ChessDiscoveredPeer discovered_peer;
+    bool connect_attempted;
+    bool hello_completed;
+    uint64_t next_connect_attempt_at;
     ChessNetworkState last_state;
 
     if (!init_local_peer(&local_peer)) {
@@ -78,6 +85,12 @@ int app_run(void)
     }
 
     SDL_Log("TCP listener ready on port %u", (unsigned int)listener.port);
+
+    connection.fd = -1;
+    memset(&discovered_peer, 0, sizeof(discovered_peer));
+    connect_attempted = false;
+    hello_completed = false;
+    next_connect_attempt_at = 0;
 
     chess_network_session_init(&network_session, &local_peer);
     if (!chess_discovery_start(&discovery, &local_peer, listener.port)) {
@@ -101,10 +114,56 @@ int app_run(void)
         }
 
         if (!network_session.peer_available) {
-            ChessPeerInfo remote_peer;
-            if (chess_discovery_poll(&discovery, &remote_peer)) {
-                chess_network_session_set_remote(&network_session, &remote_peer);
-                SDL_Log("Peer discovered; starting election");
+            if (chess_discovery_poll(&discovery, &discovered_peer)) {
+                chess_network_session_set_remote(&network_session, &discovered_peer.peer);
+                SDL_Log(
+                    "Peer discovered; starting election (remote port=%u)",
+                    (unsigned int)discovered_peer.tcp_port
+                );
+            }
+        }
+
+        if (network_session.state == CHESS_NET_CONNECTING && !hello_completed) {
+            const uint64_t now = SDL_GetTicks();
+            if (!connect_attempted || now >= next_connect_attempt_at) {
+                connect_attempted = true;
+                next_connect_attempt_at = now + (uint64_t)connect_retry_ms;
+
+                if (network_session.role == CHESS_ROLE_SERVER) {
+                    if (connection.fd < 0 && chess_tcp_accept_once(&listener, 10, &connection)) {
+                        SDL_Log("Accepted TCP client connection");
+                    }
+                } else if (network_session.role == CHESS_ROLE_CLIENT) {
+                    if (connection.fd < 0 &&
+                        chess_tcp_connect_once(
+                            network_session.remote_peer.ipv4_host_order,
+                            discovered_peer.tcp_port,
+                            200,
+                            &connection
+                        )) {
+                        SDL_Log("Connected to remote TCP host");
+                    }
+                }
+
+                if (connection.fd >= 0) {
+                    ChessHelloPayload local_hello;
+                    ChessHelloPayload remote_hello;
+
+                    memset(&local_hello, 0, sizeof(local_hello));
+                    memset(&remote_hello, 0, sizeof(remote_hello));
+                    SDL_strlcpy(local_hello.uuid, network_session.local_peer.uuid, sizeof(local_hello.uuid));
+                    local_hello.role = (uint32_t)network_session.role;
+
+                    if (chess_tcp_send_hello(&connection, &local_hello) &&
+                        chess_tcp_recv_hello(&connection, 500, &remote_hello)) {
+                        hello_completed = true;
+                        chess_network_session_set_transport_ready(&network_session, true);
+                        SDL_Log("HELLO handshake completed with peer uuid=%s", remote_hello.uuid);
+                    } else {
+                        SDL_Log("HELLO handshake failed, will retry connection");
+                        chess_tcp_connection_close(&connection);
+                    }
+                }
             }
         }
 
@@ -136,6 +195,7 @@ int app_run(void)
     }
 
     chess_discovery_stop(&discovery);
+    chess_tcp_connection_close(&connection);
     chess_tcp_listener_close(&listener);
 
     SDL_DestroyRenderer(renderer);
