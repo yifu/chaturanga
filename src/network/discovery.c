@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/select.h>
+#include <unistd.h>
 
 #define CHESS_DNSSD_SERVICE_TYPE "_chess._tcp"
 
@@ -53,6 +54,36 @@ static bool dnssd_pump(DNSServiceRef ref)
     return true;
 }
 
+static void self_addr_callback(
+    DNSServiceRef           ref,
+    DNSServiceFlags         flags,
+    uint32_t                interface_index,
+    DNSServiceErrorType     error,
+    const char             *hostname,
+    const struct sockaddr  *address,
+    uint32_t                ttl,
+    void                   *context)
+{
+    ChessDiscoveryContext *ctx = (ChessDiscoveryContext *)context;
+
+    (void)ref; (void)flags; (void)interface_index; (void)hostname; (void)ttl;
+
+    if (error != kDNSServiceErr_NoError || !address) {
+        return;
+    }
+    if (address->sa_family != AF_INET) {
+        return;
+    }
+
+    {
+        const struct sockaddr_in *sin = (const struct sockaddr_in *)address;
+        uint32_t ip = ntohl(sin->sin_addr.s_addr);
+        if ((ip >> 24) != 127) { /* ignore loopback, keep LAN IP */
+            ctx->local_peer.ipv4_host_order = ip;
+        }
+    }
+}
+
 static void addr_callback(
     DNSServiceRef           ref,
     DNSServiceFlags         flags,
@@ -76,7 +107,15 @@ static void addr_callback(
     }
 
     const struct sockaddr_in *sin = (const struct sockaddr_in *)address;
-    dnssd->pending_peer.peer.ipv4_host_order = ntohl(sin->sin_addr.s_addr);
+    uint32_t resolved_ip = ntohl(sin->sin_addr.s_addr);
+
+    /* If DNS-SD resolved to loopback the remote service is on the same machine.
+     * Substitute with our own LAN IP so both sides compare equal and the UUID
+     * tiebreaker decides the role (instead of both becoming CLIENT). */
+    if ((resolved_ip >> 24) == 127) {
+        resolved_ip = ctx->local_peer.ipv4_host_order;
+    }
+    dnssd->pending_peer.peer.ipv4_host_order = resolved_ip;
     SDL_strlcpy(dnssd->pending_peer.peer.uuid, dnssd->resolving_uuid,
                 sizeof(dnssd->pending_peer.peer.uuid));
     dnssd->pending_peer_ready = true;
@@ -203,7 +242,7 @@ static void register_callback(
  * Public API
  * ============================================================ */
 
-bool chess_discovery_start(ChessDiscoveryContext *ctx, const ChessPeerInfo *local_peer, uint16_t game_port)
+bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer, uint16_t game_port)
 {
     if (!ctx || !local_peer) {
         return false;
@@ -228,6 +267,54 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, const ChessPeerInfo *loca
             return false;
         }
         ctx->platform = dnssd;
+
+        /* Resolve our own IP via DNS-SD — same source as remote peer resolution,
+         * so IP comparison in election is always symmetric (no getifaddrs). */
+        {
+            char hostname[256];
+            DNSServiceRef self_ref = NULL;
+            DNSServiceErrorType self_err;
+
+            hostname[0] = '\0';
+            gethostname(hostname, sizeof(hostname) - 1);
+            if (strstr(hostname, ".local") == NULL) {
+                size_t hlen = strlen(hostname);
+                if (hlen + 6 < sizeof(hostname)) {
+                    memcpy(hostname + hlen, ".local", 7);
+                }
+            }
+
+            self_err = DNSServiceGetAddrInfo(
+                &self_ref, 0, 0,
+                kDNSServiceProtocol_IPv4,
+                hostname,
+                self_addr_callback,
+                ctx);
+            if (self_err == kDNSServiceErr_NoError) {
+                int self_fd = DNSServiceRefSockFD(self_ref);
+                if (self_fd >= 0) {
+                    struct timeval tv = {0, 500000}; /* 500 ms */
+                    fd_set rfds;
+                    FD_ZERO(&rfds);
+                    FD_SET(self_fd, &rfds);
+                    if (select(self_fd + 1, &rfds, NULL, NULL, &tv) > 0) {
+                        DNSServiceProcessResult(self_ref);
+                    }
+                }
+                DNSServiceRefDeallocate(self_ref);
+            }
+
+            if (ctx->local_peer.ipv4_host_order != 0) {
+                local_peer->ipv4_host_order = ctx->local_peer.ipv4_host_order;
+                SDL_Log("DNS-SD: local IP resolved to %u.%u.%u.%u",
+                        (ctx->local_peer.ipv4_host_order >> 24) & 0xffu,
+                        (ctx->local_peer.ipv4_host_order >> 16) & 0xffu,
+                        (ctx->local_peer.ipv4_host_order >>  8) & 0xffu,
+                         ctx->local_peer.ipv4_host_order        & 0xffu);
+            } else {
+                SDL_Log("DNS-SD: could not resolve local IP, election will use UUID only");
+            }
+        }
 
         err = DNSServiceRegister(
             &dnssd->register_ref,

@@ -19,11 +19,6 @@ static bool init_local_peer(ChessPeerInfo *local_peer)
 
     memset(local_peer, 0, sizeof(*local_peer));
 
-    if (!chess_get_default_local_ipv4(&local_peer->ipv4_host_order)) {
-        SDL_Log("Could not detect local IPv4 address");
-        return false;
-    }
-
     if (!chess_generate_peer_uuid(local_peer->uuid, sizeof(local_peer->uuid))) {
         SDL_Log("Could not generate local peer UUID");
         return false;
@@ -94,7 +89,6 @@ int app_run(void)
     hello_failures = 0u;
     next_connect_attempt_at = 0;
 
-    chess_network_session_init(&network_session, &local_peer);
     if (!chess_discovery_start(&discovery, &local_peer, listener.port)) {
         SDL_Log("Discovery start failed");
         chess_tcp_listener_close(&listener);
@@ -103,6 +97,7 @@ int app_run(void)
         SDL_Quit();
         return 1;
     }
+    chess_network_session_init(&network_session, &local_peer);
 
     last_state = network_session.state;
 

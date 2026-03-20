@@ -19,7 +19,7 @@ typedef struct ChessDiscoveredPeer {
     uint16_t tcp_port;
 } ChessDiscoveredPeer;
 
-bool chess_discovery_start(ChessDiscoveryContext *ctx, const ChessPeerInfo *local_peer, uint16_t game_port);
+bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer, uint16_t game_port);
 void chess_discovery_stop(ChessDiscoveryContext *ctx);
 bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer);
 
