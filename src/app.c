@@ -171,15 +171,16 @@ int app_run(void)
 
         if (network_session.state != last_state) {
             SDL_Log("Network state changed: %d -> %d", (int)last_state, (int)network_session.state);
-            last_state = network_session.state;
-        }
 
-        if (network_session.state == CHESS_NET_CONNECTING) {
-            if (network_session.role == CHESS_ROLE_SERVER) {
-                SDL_Log("Local role: SERVER (smaller IP)");
-            } else if (network_session.role == CHESS_ROLE_CLIENT) {
-                SDL_Log("Local role: CLIENT");
+            if (network_session.state == CHESS_NET_CONNECTING) {
+                if (network_session.role == CHESS_ROLE_SERVER) {
+                    SDL_Log("Local role: SERVER (smaller IP)");
+                } else if (network_session.role == CHESS_ROLE_CLIENT) {
+                    SDL_Log("Local role: CLIENT");
+                }
             }
+
+            last_state = network_session.state;
         }
 
         int width = 0;
