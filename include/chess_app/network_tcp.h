@@ -24,5 +24,7 @@ void chess_tcp_connection_close(ChessTcpConnection *conn);
 
 bool chess_tcp_send_hello(ChessTcpConnection *conn, const ChessHelloPayload *hello);
 bool chess_tcp_recv_hello(ChessTcpConnection *conn, int timeout_ms, ChessHelloPayload *out_hello);
+bool chess_tcp_send_ack(ChessTcpConnection *conn);
+bool chess_tcp_recv_ack(ChessTcpConnection *conn, int timeout_ms);
 
 #endif

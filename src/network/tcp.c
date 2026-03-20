@@ -258,3 +258,25 @@ bool chess_tcp_recv_hello(ChessTcpConnection *conn, int timeout_ms, ChessHelloPa
 
     return recv_all_with_timeout(conn->fd, out_hello, sizeof(*out_hello), timeout_ms);
 }
+
+bool chess_tcp_send_ack(ChessTcpConnection *conn)
+{
+    uint8_t ack = 1;
+
+    if (!conn || conn->fd < 0) {
+        return false;
+    }
+
+    return send_all(conn->fd, &ack, sizeof(ack));
+}
+
+bool chess_tcp_recv_ack(ChessTcpConnection *conn, int timeout_ms)
+{
+    uint8_t ack = 0;
+
+    if (!conn || conn->fd < 0) {
+        return false;
+    }
+
+    return recv_all_with_timeout(conn->fd, &ack, sizeof(ack), timeout_ms);
+}

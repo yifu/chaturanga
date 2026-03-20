@@ -145,14 +145,30 @@ int app_run(void)
                 if (connection.fd >= 0) {
                     ChessHelloPayload local_hello;
                     ChessHelloPayload remote_hello;
+                        bool handshake_ok = false;
 
                     memset(&local_hello, 0, sizeof(local_hello));
                     memset(&remote_hello, 0, sizeof(remote_hello));
                     SDL_strlcpy(local_hello.uuid, network_session.local_peer.uuid, sizeof(local_hello.uuid));
                     local_hello.role = (uint32_t)network_session.role;
 
-                    if (chess_tcp_send_hello(&connection, &local_hello) &&
-                        chess_tcp_recv_hello(&connection, 500, &remote_hello)) {
+                        if (network_session.role == CHESS_ROLE_CLIENT) {
+                            /* CLIENT: send -> recv -> send_ack
+                             * Ordering ensures SERVER's recv_ack catches stale connections:
+                             * if CLIENT already closed, SERVER's recv_ack gets EOF -> fail. */
+                            handshake_ok =
+                                chess_tcp_send_hello(&connection, &local_hello) &&
+                                chess_tcp_recv_hello(&connection, 500, &remote_hello) &&
+                                chess_tcp_send_ack(&connection);
+                        } else {
+                            /* SERVER: recv -> send -> recv_ack */
+                            handshake_ok =
+                                chess_tcp_recv_hello(&connection, 500, &remote_hello) &&
+                                chess_tcp_send_hello(&connection, &local_hello) &&
+                                chess_tcp_recv_ack(&connection, 500);
+                        }
+
+                        if (handshake_ok) {
                         hello_completed = true;
                         chess_network_session_set_transport_ready(&network_session, true);
                         SDL_Log("HELLO handshake completed with peer uuid=%s", remote_hello.uuid);
