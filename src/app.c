@@ -66,6 +66,7 @@ int app_run(void)
     ChessDiscoveredPeer discovered_peer;
     bool connect_attempted;
     bool hello_completed;
+    unsigned int hello_failures;
     uint64_t next_connect_attempt_at;
     ChessNetworkState last_state;
 
@@ -90,6 +91,7 @@ int app_run(void)
     memset(&discovered_peer, 0, sizeof(discovered_peer));
     connect_attempted = false;
     hello_completed = false;
+    hello_failures = 0u;
     next_connect_attempt_at = 0;
 
     chess_network_session_init(&network_session, &local_peer);
@@ -160,7 +162,13 @@ int app_run(void)
                         chess_network_session_set_transport_ready(&network_session, true);
                         SDL_Log("HELLO handshake completed with peer uuid=%s", remote_hello.uuid);
                     } else {
-                        SDL_Log("HELLO handshake failed, will retry connection");
+                        hello_failures += 1u;
+                        if (hello_failures == 1u || (hello_failures % 5u) == 0u) {
+                            SDL_Log(
+                                "HELLO handshake failed (%u failures), will retry connection",
+                                hello_failures
+                            );
+                        }
                         chess_tcp_connection_close(&connection);
                     }
                 }
