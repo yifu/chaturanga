@@ -11,6 +11,7 @@ typedef struct ChessDiscoveryContext {
     bool remote_emitted;
     uint16_t game_port;
     ChessPeerInfo local_peer;
+    void *platform; /* platform-specific discovery backend data (heap-allocated) */
 } ChessDiscoveryContext;
 
 typedef struct ChessDiscoveredPeer {

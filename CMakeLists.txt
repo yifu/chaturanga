@@ -31,4 +31,13 @@ if(AVAHI_CLIENT_FOUND)
     target_link_libraries(chess_app PRIVATE ${AVAHI_CLIENT_LIBRARIES})
 endif()
 
+# DNS-SD (Bonjour) — available on macOS as part of the system SDK, no extra link needed
+if(APPLE AND NOT AVAHI_CLIENT_FOUND)
+    include(CheckIncludeFile)
+    check_include_file("dns_sd.h" HAVE_DNS_SD_H)
+    if(HAVE_DNS_SD_H)
+        target_compile_definitions(chess_app PRIVATE CHESS_APP_HAVE_DNSSD=1)
+    endif()
+endif()
+
 target_link_libraries(chess_app PRIVATE SDL3::SDL3 Threads::Threads)
