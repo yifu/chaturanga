@@ -67,7 +67,44 @@ static const char *network_state_to_string(ChessNetworkState state)
 /* ---------- chess piece glyph textures (optional, falls back to rectangles) ---------- */
 
 static TTF_Font    *s_chess_font                     = NULL;
+static TTF_Font    *s_coord_font                     = NULL;
 static SDL_Texture *s_piece_textures[CHESS_PIECE_COUNT];
+static SDL_Texture *s_file_label_textures[CHESS_BOARD_SIZE][2];
+static SDL_Texture *s_rank_label_textures[CHESS_BOARD_SIZE][2];
+static bool         s_ttf_initialized                = false;
+
+static TTF_Font *open_font_from_candidates(const char * const *font_paths, float font_size)
+{
+    int i;
+
+    for (i = 0; font_paths[i] != NULL; ++i) {
+        TTF_Font *font = TTF_OpenFont(font_paths[i], font_size);
+        if (font) {
+            SDL_Log("Loaded font: %s (size=%.1f)", font_paths[i], (double)font_size);
+            return font;
+        }
+    }
+    return NULL;
+}
+
+static SDL_Texture *make_text_texture(SDL_Renderer *renderer, TTF_Font *font, const char *text, SDL_Color color)
+{
+    SDL_Surface *surface;
+    SDL_Texture *texture;
+
+    if (!renderer || !font || !text) {
+        return NULL;
+    }
+
+    surface = TTF_RenderText_Blended(font, text, SDL_strlen(text), color);
+    if (!surface) {
+        return NULL;
+    }
+
+    texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    return texture;
+}
 
 /* Renders a chess glyph with a contrasting outline for readability on any square. */
 static SDL_Texture *make_outlined_glyph_texture(
@@ -149,6 +186,8 @@ static void init_piece_textures(SDL_Renderer *renderer)
     const SDL_Color white_outline = { 50,  35,  20, 255};
     const SDL_Color black_fg      = { 45,  30,  20, 255};
     const SDL_Color black_outline = {215, 210, 175, 255};
+    const SDL_Color coord_on_light = {60, 70, 45, 255};
+    const SDL_Color coord_on_dark  = {238, 238, 210, 255};
     int i;
     float font_size = 52.0f;
 
@@ -156,28 +195,38 @@ static void init_piece_textures(SDL_Renderer *renderer)
         SDL_Log("TTF_Init failed: %s", SDL_GetError());
         return;
     }
+    s_ttf_initialized = true;
 
-    for (i = 0; font_paths[i] != NULL; ++i) {
-        s_chess_font = TTF_OpenFont(font_paths[i], font_size);
-        if (s_chess_font) {
-            SDL_Log("Loaded chess font: %s", font_paths[i]);
-            break;
-        }
-    }
+    s_chess_font = open_font_from_candidates(font_paths, font_size);
     if (!s_chess_font) {
         SDL_Log("No chess font found, piece rendering will use fallback rectangles");
-        TTF_Quit();
-        return;
     }
 
-    for (i = 1; i < CHESS_PIECE_COUNT; ++i) {
-        bool is_white = (i < (int)CHESS_PIECE_BLACK_PAWN);
-        SDL_Color fg      = is_white ? white_fg      : black_fg;
-        SDL_Color outline = is_white ? white_outline  : black_outline;
-        s_piece_textures[i] = make_outlined_glyph_texture(
-            renderer, s_chess_font, piece_codepoints[i], fg, outline, 2);
-        if (!s_piece_textures[i]) {
-            SDL_Log("Failed to create texture for piece %d: %s", i, SDL_GetError());
+    if (s_chess_font) {
+        for (i = 1; i < CHESS_PIECE_COUNT; ++i) {
+            bool is_white = (i < (int)CHESS_PIECE_BLACK_PAWN);
+            SDL_Color fg      = is_white ? white_fg      : black_fg;
+            SDL_Color outline = is_white ? white_outline : black_outline;
+            s_piece_textures[i] = make_outlined_glyph_texture(
+                renderer, s_chess_font, piece_codepoints[i], fg, outline, 2);
+            if (!s_piece_textures[i]) {
+                SDL_Log("Failed to create texture for piece %d: %s", i, SDL_GetError());
+            }
+        }
+    }
+
+    s_coord_font = open_font_from_candidates(font_paths, 16.0f);
+    if (!s_coord_font) {
+        SDL_Log("No coordinate font found, board coordinates disabled");
+    } else {
+        for (i = 0; i < CHESS_BOARD_SIZE; ++i) {
+            char file_label[2] = { (char)('a' + i), '\0' };
+            char rank_label[2] = { (char)('8' - i), '\0' };
+
+            s_file_label_textures[i][0] = make_text_texture(renderer, s_coord_font, file_label, coord_on_light);
+            s_file_label_textures[i][1] = make_text_texture(renderer, s_coord_font, file_label, coord_on_dark);
+            s_rank_label_textures[i][0] = make_text_texture(renderer, s_coord_font, rank_label, coord_on_light);
+            s_rank_label_textures[i][1] = make_text_texture(renderer, s_coord_font, rank_label, coord_on_dark);
         }
     }
 }
@@ -191,7 +240,38 @@ static void destroy_piece_textures(void)
             s_piece_textures[i] = NULL;
         }
     }
-    if (s_chess_font) { TTF_CloseFont(s_chess_font); s_chess_font = NULL; TTF_Quit(); }
+
+    for (i = 0; i < CHESS_BOARD_SIZE; ++i) {
+        if (s_file_label_textures[i][0]) {
+            SDL_DestroyTexture(s_file_label_textures[i][0]);
+            s_file_label_textures[i][0] = NULL;
+        }
+        if (s_file_label_textures[i][1]) {
+            SDL_DestroyTexture(s_file_label_textures[i][1]);
+            s_file_label_textures[i][1] = NULL;
+        }
+        if (s_rank_label_textures[i][0]) {
+            SDL_DestroyTexture(s_rank_label_textures[i][0]);
+            s_rank_label_textures[i][0] = NULL;
+        }
+        if (s_rank_label_textures[i][1]) {
+            SDL_DestroyTexture(s_rank_label_textures[i][1]);
+            s_rank_label_textures[i][1] = NULL;
+        }
+    }
+
+    if (s_chess_font) {
+        TTF_CloseFont(s_chess_font);
+        s_chess_font = NULL;
+    }
+    if (s_coord_font) {
+        TTF_CloseFont(s_coord_font);
+        s_coord_font = NULL;
+    }
+    if (s_ttf_initialized) {
+        TTF_Quit();
+        s_ttf_initialized = false;
+    }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -220,6 +300,64 @@ static int board_to_screen_index(int idx, bool black_perspective)
 static int screen_to_board_index(int idx, bool black_perspective)
 {
     return black_perspective ? (CHESS_BOARD_SIZE - 1 - idx) : idx;
+}
+
+static bool board_square_is_light(int file, int rank)
+{
+    return ((file + rank) % 2) == 0;
+}
+
+static void render_board_coordinates(
+    SDL_Renderer *renderer,
+    int width,
+    int height,
+    ChessPlayerColor local_color)
+{
+    const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    const bool black_perspective = use_black_perspective(local_color);
+    int screen_file;
+    int screen_rank;
+
+    if (!renderer || !s_coord_font) {
+        return;
+    }
+
+    for (screen_file = 0; screen_file < CHESS_BOARD_SIZE; ++screen_file) {
+        int board_file = screen_to_board_index(screen_file, black_perspective);
+        int board_rank = screen_to_board_index(CHESS_BOARD_SIZE - 1, black_perspective);
+        int color_idx = board_square_is_light(board_file, board_rank) ? 0 : 1;
+        SDL_Texture *label_tex = s_file_label_textures[board_file][color_idx];
+        if (label_tex) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(label_tex, &tex_w, &tex_h);
+            dst.x = screen_file * cell_w + cell_w - tex_w - 4.0f;
+            dst.y = (CHESS_BOARD_SIZE - 1) * cell_h + cell_h - tex_h - 2.0f;
+            dst.w = tex_w;
+            dst.h = tex_h;
+            SDL_RenderTexture(renderer, label_tex, NULL, &dst);
+        }
+    }
+
+    for (screen_rank = 0; screen_rank < CHESS_BOARD_SIZE; ++screen_rank) {
+        int board_rank = screen_to_board_index(screen_rank, black_perspective);
+        int board_file = screen_to_board_index(0, black_perspective);
+        int color_idx = board_square_is_light(board_file, board_rank) ? 0 : 1;
+        SDL_Texture *label_tex = s_rank_label_textures[board_rank][color_idx];
+        if (label_tex) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(label_tex, &tex_w, &tex_h);
+            dst.x = 4.0f;
+            dst.y = screen_rank * cell_h + 2.0f;
+            dst.w = tex_w;
+            dst.h = tex_h;
+            SDL_RenderTexture(renderer, label_tex, NULL, &dst);
+        }
+    }
 }
 
 static void render_game_overlay(
@@ -727,6 +865,7 @@ int app_run(void)
 
         render_board(renderer, width, height);
         render_game_overlay(renderer, width, height, &game_state, network_session.local_color);
+        render_board_coordinates(renderer, width, height, network_session.local_color);
 
         SDL_RenderPresent(renderer);
     }
