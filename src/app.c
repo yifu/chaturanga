@@ -37,6 +37,28 @@ static uint32_t make_game_id(const ChessPeerInfo *local_peer, const ChessPeerInf
     return hash;
 }
 
+static const char *network_state_to_string(ChessNetworkState state)
+{
+    switch (state) {
+    case CHESS_NET_IDLE_DISCOVERY:
+        return "IDLE_DISCOVERY";
+    case CHESS_NET_PEER_FOUND:
+        return "PEER_FOUND";
+    case CHESS_NET_ELECTION:
+        return "ELECTION";
+    case CHESS_NET_CONNECTING:
+        return "CONNECTING";
+    case CHESS_NET_IN_GAME:
+        return "IN_GAME";
+    case CHESS_NET_RECONNECTING:
+        return "RECONNECTING";
+    case CHESS_NET_TERMINATED:
+        return "TERMINATED";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 static bool init_local_peer(ChessPeerInfo *local_peer)
 {
     if (!local_peer) {
@@ -293,7 +315,11 @@ int app_run(void)
         chess_network_session_step(&network_session);
 
         if (network_session.state != last_state) {
-            SDL_Log("Network state changed: %d -> %d", (int)last_state, (int)network_session.state);
+            SDL_Log(
+                "Network state changed: %s -> %s",
+                network_state_to_string(last_state),
+                network_state_to_string(network_session.state)
+            );
 
             if (network_session.state == CHESS_NET_CONNECTING) {
                 if (network_session.role == CHESS_ROLE_SERVER) {
