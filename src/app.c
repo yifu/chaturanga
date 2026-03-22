@@ -643,32 +643,11 @@ static void render_lobby(
     }
 }
 
-int app_run(void)
-{
-    const int window_size = 640;
-    const int connect_retry_ms = 1000;
-
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        SDL_Log("SDL_Init failed: %s", SDL_GetError());
-        return 1;
-    }
-
-    SDL_Window *window = SDL_CreateWindow("SDL3 Chess Board", window_size, window_size, 0);
-    if (!window) {
-        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);
-    if (!renderer) {
-        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-    init_piece_textures(renderer);
-
+typedef struct AppLoopContext {
+    int window_size;
+    int connect_retry_ms;
+    SDL_Window *window;
+    SDL_Renderer *renderer;
     ChessPeerInfo local_peer;
     ChessNetworkSession network_session;
     ChessDiscoveryContext discovery;
@@ -691,19 +670,103 @@ int app_run(void)
     uint32_t move_sequence;
     uint64_t next_connect_attempt_at;
     ChessNetworkState last_state;
+    bool running;
+} AppLoopContext;
 
-    if (!init_local_peer(&local_peer)) {
-        SDL_DestroyRenderer(renderer);
+static void app_loop_context_init_defaults(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->window_size = 640;
+    ctx->connect_retry_ms = 1000;
+    ctx->connection.fd = -1;
+    ctx->running = true;
+}
+
+static void app_loop_context_shutdown(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    chess_discovery_stop(&ctx->discovery);
+    chess_tcp_connection_close(&ctx->connection);
+    chess_tcp_listener_close(&ctx->listener);
+    destroy_piece_textures();
+    if (ctx->renderer) {
+        SDL_DestroyRenderer(ctx->renderer);
+    }
+    if (ctx->window) {
+        SDL_DestroyWindow(ctx->window);
+    }
+    SDL_Quit();
+}
+
+int app_run(void)
+{
+    AppLoopContext ctx;
+
+    app_loop_context_init_defaults(&ctx);
+
+#define window_size ctx.window_size
+#define connect_retry_ms ctx.connect_retry_ms
+#define window ctx.window
+#define renderer ctx.renderer
+#define network_session ctx.network_session
+#define discovery ctx.discovery
+#define listener ctx.listener
+#define connection ctx.connection
+#define discovered_peer ctx.discovered_peer
+#define game_state ctx.game_state
+#define lobby ctx.lobby
+#define connect_attempted ctx.connect_attempted
+#define hello_sent ctx.hello_sent
+#define hello_received ctx.hello_received
+#define hello_ack_sent ctx.hello_ack_sent
+#define hello_ack_received ctx.hello_ack_received
+#define hello_completed ctx.hello_completed
+#define challenge_exchange_completed ctx.challenge_exchange_completed
+#define start_sent ctx.start_sent
+#define start_completed ctx.start_completed
+#define pending_start_payload ctx.pending_start_payload
+#define start_failures ctx.start_failures
+#define move_sequence ctx.move_sequence
+#define next_connect_attempt_at ctx.next_connect_attempt_at
+#define last_state ctx.last_state
+#define running ctx.running
+
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return 1;
+    }
+
+    window = SDL_CreateWindow("SDL3 Chess Board", window_size, window_size, 0);
+    if (!window) {
+        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    renderer = SDL_CreateRenderer(window, NULL);
+    if (!renderer) {
+        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
         SDL_DestroyWindow(window);
         SDL_Quit();
+        return 1;
+    }
+    init_piece_textures(renderer);
+
+    if (!init_local_peer(&ctx.local_peer)) {
+        app_loop_context_shutdown(&ctx);
         return 1;
     }
 
     if (!chess_tcp_listener_open(&listener, 0)) {
         SDL_Log("Could not create TCP listener on ephemeral port");
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+        app_loop_context_shutdown(&ctx);
         return 1;
     }
 
@@ -727,19 +790,15 @@ int app_run(void)
     chess_game_state_init(&game_state);
     chess_lobby_init(&lobby);
 
-    if (!chess_discovery_start(&discovery, &local_peer, listener.port)) {
+    if (!chess_discovery_start(&discovery, &ctx.local_peer, listener.port)) {
         SDL_Log("Discovery start failed");
-        chess_tcp_listener_close(&listener);
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+        app_loop_context_shutdown(&ctx);
         return 1;
     }
-    chess_network_session_init(&network_session, &local_peer);
+    chess_network_session_init(&network_session, &ctx.local_peer);
 
     last_state = network_session.state;
 
-    bool running = true;
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -1199,13 +1258,33 @@ int app_run(void)
         SDL_RenderPresent(renderer);
     }
 
-    chess_discovery_stop(&discovery);
-    chess_tcp_connection_close(&connection);
-    chess_tcp_listener_close(&listener);
+    app_loop_context_shutdown(&ctx);
 
-    destroy_piece_textures();
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+#undef window_size
+#undef connect_retry_ms
+#undef window
+#undef renderer
+#undef network_session
+#undef discovery
+#undef listener
+#undef connection
+#undef discovered_peer
+#undef game_state
+#undef lobby
+#undef connect_attempted
+#undef hello_sent
+#undef hello_received
+#undef hello_ack_sent
+#undef hello_ack_received
+#undef hello_completed
+#undef challenge_exchange_completed
+#undef start_sent
+#undef start_completed
+#undef pending_start_payload
+#undef start_failures
+#undef move_sequence
+#undef next_connect_attempt_at
+#undef last_state
+#undef running
     return 0;
 }
