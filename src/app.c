@@ -437,85 +437,61 @@ static void render_game_overlay(
     }
 }
 
-static void process_remote_messages(
-    ChessTcpConnection *connection,
-    ChessGameState *game_state,
-    ChessPlayerColor local_color)
+typedef struct ChessSocketEvents {
+    bool listener_readable;
+    bool connection_readable;
+    bool connection_writable;
+} ChessSocketEvents;
+
+static void poll_socket_events(
+    const ChessTcpListener *listener,
+    const ChessTcpConnection *connection,
+    ChessSocketEvents *events)
 {
-    ChessPlayerColor remote_color;
+    fd_set rfds;
+    fd_set wfds;
+    struct timeval tv = {0, 0};
+    int maxfd = -1;
+    int sel;
 
-    if (!connection || connection->fd < 0 || !game_state) {
+    if (!events) {
         return;
     }
 
-    remote_color = opposite_color(local_color);
-    if (remote_color == CHESS_COLOR_UNASSIGNED) {
-        return;
+    memset(events, 0, sizeof(*events));
+    FD_ZERO(&rfds);
+    FD_ZERO(&wfds);
+
+    if (listener && listener->fd >= 0) {
+        FD_SET(listener->fd, &rfds);
+        if (listener->fd > maxfd) {
+            maxfd = listener->fd;
+        }
     }
 
-    for (;;) {
-        fd_set rfds;
-        struct timeval tv = {0, 0};
-        int sel;
-        ChessPacketHeader header;
-
-        FD_ZERO(&rfds);
+    if (connection && connection->fd >= 0) {
         FD_SET(connection->fd, &rfds);
-        sel = select(connection->fd + 1, &rfds, NULL, NULL, &tv);
-        if (sel <= 0) {
-            break;
+        FD_SET(connection->fd, &wfds);
+        if (connection->fd > maxfd) {
+            maxfd = connection->fd;
         }
+    }
 
-        if (!chess_tcp_recv_packet_header(connection, 1, &header)) {
-            SDL_Log("Remote receive failed while reading packet header; closing connection");
-            chess_tcp_connection_close(connection);
-            break;
-        }
+    if (maxfd < 0) {
+        return;
+    }
 
-        if (header.message_type == CHESS_MSG_MOVE && header.payload_size == sizeof(ChessMovePayload)) {
-            ChessMovePayload move;
-            if (!chess_tcp_recv_payload(connection, 1, &move, (uint32_t)sizeof(move))) {
-                SDL_Log("Remote receive failed while reading MOVE payload; closing connection");
-                chess_tcp_connection_close(connection);
-                break;
-            }
+    sel = select(maxfd + 1, &rfds, &wfds, NULL, &tv);
+    if (sel <= 0) {
+        return;
+    }
 
-            if (chess_game_apply_remote_move(game_state, remote_color, &move)) {
-                SDL_Log(
-                    "Applied remote move: (%u,%u) -> (%u,%u)",
-                    (unsigned)move.from_file,
-                    (unsigned)move.from_rank,
-                    (unsigned)move.to_file,
-                    (unsigned)move.to_rank
-                );
-            } else {
-                SDL_Log("Ignoring invalid remote MOVE payload");
-            }
-        } else {
-            if (header.payload_size > 4096u) {
-                SDL_Log("Remote sent oversized payload (%u); closing connection", (unsigned)header.payload_size);
-                chess_tcp_connection_close(connection);
-                break;
-            }
-
-            if (header.payload_size > 0u) {
-                void *discard = malloc((size_t)header.payload_size);
-                if (!discard) {
-                    SDL_Log("Out of memory while discarding unknown payload; closing connection");
-                    chess_tcp_connection_close(connection);
-                    break;
-                }
-
-                if (!chess_tcp_recv_payload(connection, 1, discard, header.payload_size)) {
-                    SDL_Log("Failed to discard unknown payload; closing connection");
-                    free(discard);
-                    chess_tcp_connection_close(connection);
-                    break;
-                }
-
-                free(discard);
-            }
-        }
+    if (listener && listener->fd >= 0 && FD_ISSET(listener->fd, &rfds)) {
+        events->listener_readable = true;
+    }
+    if (connection && connection->fd >= 0) {
+        events->connection_readable = FD_ISSET(connection->fd, &rfds);
+        events->connection_writable = FD_ISSET(connection->fd, &wfds);
     }
 }
 
@@ -671,7 +647,6 @@ int app_run(void)
 {
     const int window_size = 640;
     const int connect_retry_ms = 1000;
-    const int hello_timeout_ms = 1200;
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
@@ -703,9 +678,15 @@ int app_run(void)
     ChessGameState game_state;
     ChessLobbyState lobby;
     bool connect_attempted;
+    bool hello_sent;
+    bool hello_received;
+    bool hello_ack_sent;
+    bool hello_ack_received;
     bool hello_completed;
+    bool challenge_exchange_completed;
+    bool start_sent;
     bool start_completed;
-    unsigned int hello_failures;
+    ChessStartPayload pending_start_payload;
     unsigned int start_failures;
     uint32_t move_sequence;
     uint64_t next_connect_attempt_at;
@@ -731,9 +712,15 @@ int app_run(void)
     connection.fd = -1;
     memset(&discovered_peer, 0, sizeof(discovered_peer));
     connect_attempted = false;
+    hello_sent = false;
+    hello_received = false;
+    hello_ack_sent = false;
+    hello_ack_received = false;
     hello_completed = false;
+    challenge_exchange_completed = false;
+    start_sent = false;
     start_completed = false;
-    hello_failures = 0u;
+    memset(&pending_start_payload, 0, sizeof(pending_start_payload));
     start_failures = 0u;
     move_sequence = 3u;
     next_connect_attempt_at = 0;
@@ -797,7 +784,8 @@ int app_run(void)
                         ChessChallengeState current_state = chess_lobby_get_challenge_state(&lobby, clicked_peer);
                         if (current_state == CHESS_CHALLENGE_NONE) {
                             chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
-                            SDL_Log("Challenge sent to peer %d", clicked_peer);
+                            chess_network_session_set_remote(&network_session, &lobby.discovered_peers[clicked_peer].peer);
+                            SDL_Log("Challenge sent to peer %d (%.8s...)", clicked_peer, lobby.discovered_peers[clicked_peer].peer.uuid);
                         } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
                             chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_NONE);
                             SDL_Log("Challenge cancelled for peer %d", clicked_peer);
@@ -868,43 +856,45 @@ int app_run(void)
 
         if (!network_session.peer_available) {
             if (chess_discovery_poll(&discovery, &discovered_peer)) {
-                chess_network_session_set_remote(&network_session, &discovered_peer.peer);
                 chess_lobby_add_or_update_peer(&lobby, &discovered_peer.peer, discovered_peer.tcp_port);
                 SDL_Log(
-                    "Peer discovered; starting election (remote port=%u)",
+                        "New peer discovered: %.8s... (port=%u)",
+                        discovered_peer.peer.uuid,
                     (unsigned int)discovered_peer.tcp_port
                 );
             }
         }
 
-        if (network_session.state == CHESS_NET_CONNECTING && !hello_completed) {
-            const uint64_t now = SDL_GetTicks();
-            bool should_attempt = false;
+        {
+            ChessSocketEvents socket_events;
+            poll_socket_events(&listener, &connection, &socket_events);
 
-            if (network_session.role == CHESS_ROLE_SERVER) {
-                /* Server must accept continuously to drain queued stale connects.
-                 * If we only accept once per second while clients timeout at ~500 ms,
-                 * every accepted connection is already dead and HELLO always fails. */
-                should_attempt = true;
-            } else if (network_session.role == CHESS_ROLE_CLIENT) {
-                if (!connect_attempted || now >= next_connect_attempt_at) {
-                    connect_attempted = true;
-                    next_connect_attempt_at = now + (uint64_t)connect_retry_ms;
-                    should_attempt = true;
+            if (network_session.state == CHESS_NET_CONNECTING && !hello_completed) {
+                const uint64_t now = SDL_GetTicks();
+                bool should_attempt_client_connect = false;
+
+                if (network_session.role == CHESS_ROLE_CLIENT) {
+                    if (!connect_attempted || now >= next_connect_attempt_at) {
+                        connect_attempted = true;
+                        next_connect_attempt_at = now + (uint64_t)connect_retry_ms;
+                        should_attempt_client_connect = true;
+                    }
                 }
-            }
 
-            if (should_attempt) {
-
-                if (network_session.role == CHESS_ROLE_SERVER) {
-                    if (connection.fd < 0 && chess_tcp_accept_once(&listener, 10, &connection)) {
+                if (network_session.role == CHESS_ROLE_SERVER && connection.fd < 0 && socket_events.listener_readable) {
+                    if (chess_tcp_accept_once(&listener, 0, &connection)) {
                         SDL_Log("Accepted TCP client connection");
                     }
-                } else if (network_session.role == CHESS_ROLE_CLIENT) {
+                } else if (network_session.role == CHESS_ROLE_CLIENT && should_attempt_client_connect) {
+                    uint16_t remote_port = discovered_peer.tcp_port;
+                    if (lobby.selected_peer_idx >= 0 && lobby.selected_peer_idx < lobby.discovered_peer_count) {
+                        remote_port = lobby.discovered_peers[lobby.selected_peer_idx].tcp_port;
+                    }
+
                     if (connection.fd < 0 &&
                         chess_tcp_connect_once(
                             network_session.remote_peer.ipv4_host_order,
-                            discovered_peer.tcp_port,
+                            remote_port,
                             200,
                             &connection
                         )) {
@@ -914,111 +904,237 @@ int app_run(void)
 
                 if (connection.fd >= 0) {
                     ChessHelloPayload local_hello;
-                    ChessHelloPayload remote_hello;
-                    ChessAckPayload handshake_ack;
-                    bool handshake_ok = false;
-
                     memset(&local_hello, 0, sizeof(local_hello));
-                    memset(&remote_hello, 0, sizeof(remote_hello));
-                    memset(&handshake_ack, 0, sizeof(handshake_ack));
                     SDL_strlcpy(local_hello.uuid, network_session.local_peer.uuid, sizeof(local_hello.uuid));
                     local_hello.role = (uint32_t)network_session.role;
 
-                    if (network_session.role == CHESS_ROLE_CLIENT) {
-                        /* CLIENT: send -> recv -> send_ack
-                         * Ordering ensures SERVER's recv_ack catches stale connections:
-                         * if CLIENT already closed, SERVER's recv_ack gets EOF -> fail. */
-                        handshake_ok =
-                            chess_tcp_send_hello(&connection, &local_hello) &&
-                            chess_tcp_recv_hello(&connection, hello_timeout_ms, &remote_hello) &&
-                            chess_tcp_send_ack(&connection, CHESS_MSG_HELLO, 1u, 0u);
-                    } else {
-                        /* SERVER: recv -> send -> recv_ack */
-                        handshake_ok =
-                            chess_tcp_recv_hello(&connection, hello_timeout_ms, &remote_hello) &&
-                            chess_tcp_send_hello(&connection, &local_hello) &&
-                            chess_tcp_recv_ack(&connection, hello_timeout_ms, &handshake_ack) &&
-                            handshake_ack.acked_message_type == CHESS_MSG_HELLO &&
-                            handshake_ack.acked_sequence == 1u &&
-                            handshake_ack.status_code == 0u;
+                    if (network_session.role == CHESS_ROLE_CLIENT && !hello_sent) {
+                        if (chess_tcp_send_hello(&connection, &local_hello)) {
+                            hello_sent = true;
+                        }
                     }
 
-                    if (handshake_ok) {
+                    if (network_session.role == CHESS_ROLE_CLIENT && hello_received && !hello_ack_sent) {
+                        if (chess_tcp_send_ack(&connection, CHESS_MSG_HELLO, 1u, 0u)) {
+                            hello_ack_sent = true;
+                        }
+                    }
+
+                    if (network_session.role == CHESS_ROLE_SERVER && hello_received && !hello_sent) {
+                        if (chess_tcp_send_hello(&connection, &local_hello)) {
+                            hello_sent = true;
+                        }
+                    }
+
+                    if (network_session.role == CHESS_ROLE_CLIENT && hello_sent && hello_received && hello_ack_sent) {
                         hello_completed = true;
                         chess_network_session_set_transport_ready(&network_session, true);
-                        SDL_Log("HELLO handshake completed with peer uuid=%s", remote_hello.uuid);
-                    } else {
-                        hello_failures += 1u;
-                        if (hello_failures == 1u || (hello_failures % 5u) == 0u) {
-                            SDL_Log(
-                                "HELLO handshake failed (%u failures), will retry connection",
-                                hello_failures
-                            );
-                        }
-                        chess_tcp_connection_close(&connection);
+                        SDL_Log("HELLO handshake completed (client)");
+                    } else if (network_session.role == CHESS_ROLE_SERVER && hello_received && hello_sent && hello_ack_received) {
+                        hello_completed = true;
+                        chess_network_session_set_transport_ready(&network_session, true);
+                        SDL_Log("HELLO handshake completed (server)");
                     }
                 }
             }
-        }
 
-        if (network_session.state == CHESS_NET_IN_GAME && hello_completed && !start_completed) {
-            ChessStartPayload start_payload;
-            ChessAckPayload start_ack;
-            bool start_ok = false;
-
-            memset(&start_payload, 0, sizeof(start_payload));
-            memset(&start_ack, 0, sizeof(start_ack));
-
-            if (network_session.role == CHESS_ROLE_SERVER) {
-                start_payload.game_id = make_game_id(&network_session.local_peer, &network_session.remote_peer);
-                start_payload.assigned_color = CHESS_COLOR_BLACK;
-                start_payload.initial_turn = CHESS_COLOR_WHITE;
-                SDL_strlcpy(start_payload.white_uuid, network_session.local_peer.uuid, sizeof(start_payload.white_uuid));
-                SDL_strlcpy(start_payload.black_uuid, network_session.remote_peer.uuid, sizeof(start_payload.black_uuid));
-
-                start_ok =
-                    chess_tcp_send_start(&connection, &start_payload) &&
-                    chess_tcp_recv_ack(&connection, 500, &start_ack) &&
-                    start_ack.acked_message_type == CHESS_MSG_START &&
-                    start_ack.acked_sequence == 2u &&
-                    start_ack.status_code == 0u;
-
-                if (start_ok) {
-                    chess_network_session_start_game(&network_session, start_payload.game_id, CHESS_COLOR_WHITE);
-                }
-            } else if (network_session.role == CHESS_ROLE_CLIENT) {
-                start_ok =
-                    chess_tcp_recv_start(&connection, 500, &start_payload) &&
-                    chess_tcp_send_ack(&connection, CHESS_MSG_START, 2u, 0u);
-
-                if (start_ok) {
-                    chess_network_session_start_game(
-                        &network_session,
-                        start_payload.game_id,
-                        (ChessPlayerColor)start_payload.assigned_color
-                    );
+            if (hello_completed && !challenge_exchange_completed && connection.fd >= 0 && network_session.role == CHESS_ROLE_CLIENT) {
+                int peer_idx = lobby.selected_peer_idx;
+                if (peer_idx >= 0 && !chess_lobby_has_offer_been_sent(&lobby, peer_idx)) {
+                    ChessOfferPayload offer;
+                    memset(&offer, 0, sizeof(offer));
+                    SDL_strlcpy(offer.challenger_uuid, network_session.local_peer.uuid, sizeof(offer.challenger_uuid));
+                    if (chess_tcp_send_offer(&connection, &offer)) {
+                        chess_lobby_mark_offer_sent(&lobby, peer_idx);
+                        SDL_Log("Sent OFFER to selected peer");
+                    }
                 }
             }
 
-            if (start_ok) {
-                start_completed = true;
-                chess_game_state_init(&game_state);
-                SDL_Log(
-                    "Game started (game_id=%u, local_color=%s, first_turn=%s)",
-                    network_session.game_id,
-                    network_session.local_color == CHESS_COLOR_WHITE ? "WHITE" : "BLACK",
-                    start_payload.initial_turn == CHESS_COLOR_WHITE ? "WHITE" : "BLACK"
-                );
-            } else {
-                start_failures += 1u;
-                if (start_failures == 1u || (start_failures % 5u) == 0u) {
-                    SDL_Log("START exchange failed (%u failures), will retry", start_failures);
+            if (connection.fd >= 0) {
+                const int max_packets_per_frame = 8;
+                int packet_idx;
+
+                for (packet_idx = 0; packet_idx < max_packets_per_frame; ++packet_idx) {
+                    ChessSocketEvents drain_events;
+                    ChessPacketHeader header;
+                    uint8_t payload[4096];
+
+                    poll_socket_events(&listener, &connection, &drain_events);
+                    if (!drain_events.connection_readable) {
+                        break;
+                    }
+
+                    if (!chess_tcp_recv_packet_header(&connection, 1, &header)) {
+                        SDL_Log("Failed to read packet header; closing connection");
+                        chess_tcp_connection_close(&connection);
+                        connect_attempted = false;
+                        hello_sent = false;
+                        hello_received = false;
+                        hello_ack_sent = false;
+                        hello_ack_received = false;
+                        hello_completed = false;
+                        challenge_exchange_completed = false;
+                        start_sent = false;
+                        break;
+                    }
+
+                    if (header.payload_size > sizeof(payload)) {
+                        SDL_Log("Received oversized payload (%u); closing connection", (unsigned)header.payload_size);
+                        chess_tcp_connection_close(&connection);
+                        connect_attempted = false;
+                        hello_sent = false;
+                        hello_received = false;
+                        hello_ack_sent = false;
+                        hello_ack_received = false;
+                        hello_completed = false;
+                        challenge_exchange_completed = false;
+                        start_sent = false;
+                        break;
+                    }
+
+                    if (header.payload_size > 0u && !chess_tcp_recv_payload(&connection, 1, payload, header.payload_size)) {
+                        SDL_Log("Failed to read packet payload; closing connection");
+                        chess_tcp_connection_close(&connection);
+                        connect_attempted = false;
+                        hello_sent = false;
+                        hello_received = false;
+                        hello_ack_sent = false;
+                        hello_ack_received = false;
+                        hello_completed = false;
+                        challenge_exchange_completed = false;
+                        start_sent = false;
+                        break;
+                    }
+
+                    if (header.message_type == CHESS_MSG_HELLO && header.payload_size == sizeof(ChessHelloPayload)) {
+                        const ChessHelloPayload *hello = (const ChessHelloPayload *)payload;
+                        hello_received = true;
+                        SDL_Log("Received HELLO from remote peer (%.8s...)", hello->uuid);
+                    } else if (header.message_type == CHESS_MSG_OFFER && header.payload_size == sizeof(ChessOfferPayload)) {
+                        if (!challenge_exchange_completed && network_session.role == CHESS_ROLE_SERVER) {
+                            const ChessOfferPayload *offer = (const ChessOfferPayload *)payload;
+                            ChessAcceptPayload accept;
+                            int peer_idx = -1;
+                            int i;
+
+                            SDL_Log("Received OFFER from remote peer (%.8s...)", offer->challenger_uuid);
+                            memset(&accept, 0, sizeof(accept));
+                            SDL_strlcpy(accept.acceptor_uuid, network_session.local_peer.uuid, sizeof(accept.acceptor_uuid));
+
+                            if (chess_tcp_send_accept(&connection, &accept)) {
+                                challenge_exchange_completed = true;
+                                SDL_Log("Sent ACCEPT to remote peer");
+                            }
+
+                            for (i = 0; i < lobby.discovered_peer_count; ++i) {
+                                if (SDL_strncmp(lobby.discovered_peers[i].peer.uuid, offer->challenger_uuid, CHESS_UUID_STRING_LEN) == 0) {
+                                    peer_idx = i;
+                                    break;
+                                }
+                            }
+
+                            if (peer_idx >= 0) {
+                                chess_lobby_set_challenge_state(&lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
+                                chess_network_session_set_remote(&network_session, &lobby.discovered_peers[peer_idx].peer);
+                            }
+                        }
+                    } else if (header.message_type == CHESS_MSG_ACCEPT && header.payload_size == sizeof(ChessAcceptPayload)) {
+                        if (!challenge_exchange_completed && network_session.role == CHESS_ROLE_CLIENT) {
+                            const ChessAcceptPayload *accept = (const ChessAcceptPayload *)payload;
+                            int peer_idx = lobby.selected_peer_idx;
+                            challenge_exchange_completed = true;
+                            if (peer_idx >= 0) {
+                                chess_lobby_set_challenge_state(&lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
+                            }
+                            SDL_Log("Received ACCEPT from remote peer (%.8s...)", accept->acceptor_uuid);
+                        }
+                    } else if (header.message_type == CHESS_MSG_START && header.payload_size == sizeof(ChessStartPayload)) {
+                        if (network_session.role == CHESS_ROLE_CLIENT && !start_completed) {
+                            const ChessStartPayload *start_payload = (const ChessStartPayload *)payload;
+                            if (chess_tcp_send_ack(&connection, CHESS_MSG_START, 2u, 0u)) {
+                                chess_network_session_start_game(
+                                    &network_session,
+                                    start_payload->game_id,
+                                    (ChessPlayerColor)start_payload->assigned_color
+                                );
+                                start_completed = true;
+                                chess_game_state_init(&game_state);
+                                SDL_Log(
+                                    "Game started (game_id=%u, local_color=%s, first_turn=%s)",
+                                    network_session.game_id,
+                                    network_session.local_color == CHESS_COLOR_WHITE ? "WHITE" : "BLACK",
+                                    start_payload->initial_turn == CHESS_COLOR_WHITE ? "WHITE" : "BLACK"
+                                );
+                            }
+                        }
+                    } else if (header.message_type == CHESS_MSG_ACK && header.payload_size == sizeof(ChessAckPayload)) {
+                        const ChessAckPayload *ack = (const ChessAckPayload *)payload;
+                        if (network_session.role == CHESS_ROLE_SERVER &&
+                            ack->acked_message_type == CHESS_MSG_HELLO &&
+                            ack->acked_sequence == 1u &&
+                            ack->status_code == 0u) {
+                            hello_ack_received = true;
+                        } else if (network_session.role == CHESS_ROLE_SERVER && start_sent && !start_completed) {
+                            if (ack->acked_message_type == CHESS_MSG_START &&
+                                ack->acked_sequence == 2u &&
+                                ack->status_code == 0u) {
+                                chess_network_session_start_game(&network_session, pending_start_payload.game_id, CHESS_COLOR_WHITE);
+                                start_completed = true;
+                                chess_game_state_init(&game_state);
+                                SDL_Log(
+                                    "Game started (game_id=%u, local_color=%s, first_turn=%s)",
+                                    network_session.game_id,
+                                    network_session.local_color == CHESS_COLOR_WHITE ? "WHITE" : "BLACK",
+                                    pending_start_payload.initial_turn == CHESS_COLOR_WHITE ? "WHITE" : "BLACK"
+                                );
+                            }
+                        }
+                    } else if (header.message_type == CHESS_MSG_MOVE && header.payload_size == sizeof(ChessMovePayload)) {
+                        if (network_session.game_started) {
+                            const ChessMovePayload *move = (const ChessMovePayload *)payload;
+                            ChessPlayerColor remote_color = opposite_color(network_session.local_color);
+                            if (remote_color != CHESS_COLOR_UNASSIGNED) {
+                                if (chess_game_apply_remote_move(&game_state, remote_color, move)) {
+                                    SDL_Log(
+                                        "Applied remote move: (%u,%u) -> (%u,%u)",
+                                        (unsigned)move->from_file,
+                                        (unsigned)move->from_rank,
+                                        (unsigned)move->to_file,
+                                        (unsigned)move->to_rank
+                                    );
+                                } else {
+                                    SDL_Log("Ignoring invalid remote MOVE payload");
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
 
-        if (network_session.game_started && connection.fd >= 0) {
-            process_remote_messages(&connection, &game_state, network_session.local_color);
+            if (network_session.state == CHESS_NET_IN_GAME &&
+                hello_completed &&
+                challenge_exchange_completed &&
+                !start_completed &&
+                network_session.role == CHESS_ROLE_SERVER &&
+                connection.fd >= 0 &&
+                !start_sent) {
+                memset(&pending_start_payload, 0, sizeof(pending_start_payload));
+                pending_start_payload.game_id = make_game_id(&network_session.local_peer, &network_session.remote_peer);
+                pending_start_payload.assigned_color = CHESS_COLOR_BLACK;
+                pending_start_payload.initial_turn = CHESS_COLOR_WHITE;
+                SDL_strlcpy(pending_start_payload.white_uuid, network_session.local_peer.uuid, sizeof(pending_start_payload.white_uuid));
+                SDL_strlcpy(pending_start_payload.black_uuid, network_session.remote_peer.uuid, sizeof(pending_start_payload.black_uuid));
+
+                if (chess_tcp_send_start(&connection, &pending_start_payload)) {
+                    start_sent = true;
+                } else {
+                    start_failures += 1u;
+                    if (start_failures == 1u || (start_failures % 5u) == 0u) {
+                        SDL_Log("START send failed (%u failures), will retry", start_failures);
+                    }
+                }
+            }
         }
 
         chess_network_session_step(&network_session);
