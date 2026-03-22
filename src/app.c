@@ -1,6 +1,7 @@
 #include "chess_app/app.h"
 
 #include "chess_app/game_state.h"
+#include "chess_app/lobby_state.h"
 
 #include "chess_app/network_discovery.h"
 #include "chess_app/network_peer.h"
@@ -535,6 +536,137 @@ static bool init_local_peer(ChessPeerInfo *local_peer)
     return true;
 }
 
+static void render_lobby(
+    SDL_Renderer *renderer,
+    int width,
+    int height,
+    const ChessLobbyState *lobby,
+    TTF_Font *font)
+{
+    const int peer_row_height = 60;
+    const int margin = 10;
+    const int peer_item_width = 400;
+    const int peer_item_x = (width - peer_item_width) / 2;
+    int i;
+    int y = margin + 20;
+
+    if (!renderer || !lobby || !font) {
+        return;
+    }
+
+    /* Title */
+    {
+        SDL_Texture *title_tex = make_text_texture(
+            renderer, font, "Discover players - Click to challenge", (SDL_Color){238, 238, 210, 255});
+        if (title_tex) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(title_tex, &tex_w, &tex_h);
+            dst.x = (float)(width - (int)tex_w) / 2.0f;
+            dst.y = (float)margin;
+            dst.w = tex_w;
+            dst.h = tex_h;
+            SDL_RenderTexture(renderer, title_tex, NULL, &dst);
+            SDL_DestroyTexture(title_tex);
+        }
+    }
+
+    y = margin + 50;
+
+    /* Render peer list */
+    for (i = 0; i < lobby->discovered_peer_count; ++i) {
+        const ChessDiscoveredPeerState *peer_state = &lobby->discovered_peers[i];
+        const SDL_Color bg_color = (i == lobby->selected_peer_idx)
+            ? (SDL_Color){100, 150, 200, 255}
+            : (SDL_Color){60, 60, 60, 255};
+        const SDL_Color text_color = (SDL_Color){238, 238, 210, 255};
+        SDL_FRect peer_rect = {
+            (float)peer_item_x,
+            (float)y,
+            (float)peer_item_width,
+            (float)peer_row_height
+        };
+
+        /* Draw background rectangle */
+        SDL_SetRenderDrawColor(
+            renderer,
+            bg_color.r,
+            bg_color.g,
+            bg_color.b,
+            bg_color.a
+        );
+        SDL_RenderFillRect(renderer, &peer_rect);
+
+        /* Draw border */
+        SDL_SetRenderDrawColor(renderer, 180, 180, 180, 255);
+        SDL_RenderRect(renderer, &peer_rect);
+
+        /* Draw peer UUID and challenge state */
+        {
+            char peer_label[128];
+            const char *challenge_icon = "";
+
+            switch (peer_state->challenge_state) {
+            case CHESS_CHALLENGE_NONE:
+                challenge_icon = "";
+                break;
+            case CHESS_CHALLENGE_OUTGOING_PENDING:
+                challenge_icon = " [⏳]";
+                break;
+            case CHESS_CHALLENGE_INCOMING_PENDING:
+                challenge_icon = " [⚔]";
+                break;
+            case CHESS_CHALLENGE_MATCHED:
+                challenge_icon = " [✓]";
+                break;
+            }
+
+            SDL_snprintf(
+                peer_label,
+                sizeof(peer_label),
+                "%.8s...%s",
+                peer_state->peer.uuid,
+                challenge_icon
+            );
+
+            SDL_Texture *label_tex = make_text_texture(renderer, font, peer_label, text_color);
+            if (label_tex) {
+                float tex_w = 0.0f;
+                float tex_h = 0.0f;
+                SDL_FRect dst;
+                SDL_GetTextureSize(label_tex, &tex_w, &tex_h);
+                dst.x = peer_rect.x + 15.0f;
+                dst.y = peer_rect.y + (peer_rect.h - tex_h) / 2.0f;
+                dst.w = tex_w;
+                dst.h = tex_h;
+                SDL_RenderTexture(renderer, label_tex, NULL, &dst);
+                SDL_DestroyTexture(label_tex);
+            }
+        }
+
+        y += peer_row_height;
+    }
+
+    /* If no peers, show waiting message */
+    if (lobby->discovered_peer_count == 0) {
+        SDL_Texture *waiting_tex = make_text_texture(
+            renderer, font, "Scanning for opponents...", (SDL_Color){180, 180, 180, 255});
+        if (waiting_tex) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(waiting_tex, &tex_w, &tex_h);
+            dst.x = (float)(width - (int)tex_w) / 2.0f;
+            dst.y = (float)(height - (int)tex_h) / 2.0f;
+            dst.w = tex_w;
+            dst.h = tex_h;
+            SDL_RenderTexture(renderer, waiting_tex, NULL, &dst);
+            SDL_DestroyTexture(waiting_tex);
+        }
+    }
+}
+
 int app_run(void)
 {
     const int window_size = 640;
@@ -569,6 +701,7 @@ int app_run(void)
     ChessTcpConnection connection;
     ChessDiscoveredPeer discovered_peer;
     ChessGameState game_state;
+    ChessLobbyState lobby;
     bool connect_attempted;
     bool hello_completed;
     bool start_completed;
@@ -605,6 +738,7 @@ int app_run(void)
     move_sequence = 3u;
     next_connect_attempt_at = 0;
     chess_game_state_init(&game_state);
+    chess_lobby_init(&lobby);
 
     if (!chess_discovery_start(&discovery, &local_peer, listener.port)) {
         SDL_Log("Discovery start failed");
@@ -624,6 +758,56 @@ int app_run(void)
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
+            } else if (
+                event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                event.button.button == SDL_BUTTON_LEFT &&
+                !network_session.game_started &&
+                lobby.discovered_peer_count > 0
+            ) {
+                /* Lobby click handler */
+                const int peer_row_height = 60;
+                const int margin = 10;
+                const int peer_item_width = 400;
+                int width = 0;
+                int height = 0;
+                int peer_item_x;
+                int lobby_start_y;
+                int clicked_peer = -1;
+                int i;
+
+                SDL_GetWindowSize(window, &width, &height);
+                peer_item_x = (width - peer_item_width) / 2;
+                lobby_start_y = margin + 50;
+
+                /* Check which peer row was clicked */
+                for (i = 0; i < lobby.discovered_peer_count; ++i) {
+                    int peer_y = lobby_start_y + i * peer_row_height;
+                    if (event.button.x >= peer_item_x &&
+                        event.button.x < peer_item_x + peer_item_width &&
+                        event.button.y >= peer_y &&
+                        event.button.y < peer_y + peer_row_height) {
+                        clicked_peer = i;
+                        break;
+                    }
+                }
+
+                if (clicked_peer >= 0) {
+                    if (lobby.selected_peer_idx == clicked_peer) {
+                        /* Second click: toggle challenge state */
+                        ChessChallengeState current_state = chess_lobby_get_challenge_state(&lobby, clicked_peer);
+                        if (current_state == CHESS_CHALLENGE_NONE) {
+                            chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
+                            SDL_Log("Challenge sent to peer %d", clicked_peer);
+                        } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
+                            chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_NONE);
+                            SDL_Log("Challenge cancelled for peer %d", clicked_peer);
+                        }
+                    } else {
+                        /* First click: select peer */
+                        lobby.selected_peer_idx = clicked_peer;
+                        SDL_Log("Selected peer %d", clicked_peer);
+                    }
+                }
             } else if (
                 event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 event.button.button == SDL_BUTTON_LEFT &&
@@ -685,6 +869,7 @@ int app_run(void)
         if (!network_session.peer_available) {
             if (chess_discovery_poll(&discovery, &discovered_peer)) {
                 chess_network_session_set_remote(&network_session, &discovered_peer.peer);
+                chess_lobby_add_or_update_peer(&lobby, &discovered_peer.peer, discovered_peer.tcp_port);
                 SDL_Log(
                     "Peer discovered; starting election (remote port=%u)",
                     (unsigned int)discovered_peer.tcp_port
@@ -863,9 +1048,13 @@ int app_run(void)
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
-        render_board(renderer, width, height);
-        render_game_overlay(renderer, width, height, &game_state, network_session.local_color);
-        render_board_coordinates(renderer, width, height, network_session.local_color);
+        if (!network_session.game_started) {
+            render_lobby(renderer, width, height, &lobby, s_coord_font);
+        } else {
+            render_board(renderer, width, height);
+            render_game_overlay(renderer, width, height, &game_state, network_session.local_color);
+            render_board_coordinates(renderer, width, height, network_session.local_color);
+        }
 
         SDL_RenderPresent(renderer);
     }
