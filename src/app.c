@@ -9,6 +9,7 @@
 #include "chess_app/render_board.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <sys/select.h>
@@ -63,6 +64,74 @@ static const char *network_state_to_string(ChessNetworkState state)
     }
 }
 
+/* ---------- chess piece glyph textures (optional, falls back to rectangles) ---------- */
+
+static TTF_Font    *s_chess_font     = NULL;
+static SDL_Texture *s_white_pawn_tex = NULL;
+static SDL_Texture *s_black_pawn_tex = NULL;
+
+static SDL_Texture *make_glyph_texture(SDL_Renderer *renderer, TTF_Font *font, Uint32 codepoint)
+{
+    /* Both piece colours are rendered in near-black so they are readable on any
+     * board square.  White pawns use U+2659 (outlined glyph) and black pawns
+     * use U+265F (filled glyph), so shape alone distinguishes the two sides. */
+    SDL_Color color = {30, 30, 30, 255};
+    SDL_Surface *surface = TTF_RenderGlyph_Blended(font, codepoint, color);
+    SDL_Texture *tex;
+    if (!surface) {
+        return NULL;
+    }
+    tex = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    return tex;
+}
+
+static void init_piece_textures(SDL_Renderer *renderer)
+{
+    /* Ordered list of fonts known to carry U+2659 / U+265F on macOS */
+    static const char * const font_paths[] = {
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        NULL
+    };
+    int i;
+    float font_size = 52.0f;
+
+    if (!TTF_Init()) {
+        SDL_Log("TTF_Init failed: %s", SDL_GetError());
+        return;
+    }
+
+    for (i = 0; font_paths[i] != NULL; ++i) {
+        s_chess_font = TTF_OpenFont(font_paths[i], font_size);
+        if (s_chess_font) {
+            SDL_Log("Loaded chess font: %s", font_paths[i]);
+            break;
+        }
+    }
+    if (!s_chess_font) {
+        SDL_Log("No chess font found, piece rendering will use fallback rectangles");
+        TTF_Quit();
+        return;
+    }
+
+    s_white_pawn_tex = make_glyph_texture(renderer, s_chess_font, 0x2659u); /* ♙ */
+    s_black_pawn_tex = make_glyph_texture(renderer, s_chess_font, 0x265Fu); /* ♟ */
+
+    if (!s_white_pawn_tex || !s_black_pawn_tex) {
+        SDL_Log("Failed to create glyph textures: %s", SDL_GetError());
+    }
+}
+
+static void destroy_piece_textures(void)
+{
+    if (s_white_pawn_tex) { SDL_DestroyTexture(s_white_pawn_tex); s_white_pawn_tex = NULL; }
+    if (s_black_pawn_tex) { SDL_DestroyTexture(s_black_pawn_tex); s_black_pawn_tex = NULL; }
+    if (s_chess_font)     { TTF_CloseFont(s_chess_font); s_chess_font = NULL; TTF_Quit(); }
+}
+
+/* ---------------------------------------------------------------------- */
+
 static ChessPlayerColor opposite_color(ChessPlayerColor color)
 {
     if (color == CHESS_COLOR_WHITE) {
@@ -92,19 +161,37 @@ static void render_game_overlay(SDL_Renderer *renderer, int width, int height, c
                 continue;
             }
 
-            if (piece == CHESS_PIECE_WHITE_PAWN) {
-                SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
-            } else {
-                SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
-            }
+            {
+                SDL_Texture *tex = (piece == CHESS_PIECE_WHITE_PAWN)
+                    ? s_white_pawn_tex
+                    : s_black_pawn_tex;
 
-            SDL_FRect pawn_rect = {
-                file * cell_w + (cell_w * 0.25f),
-                rank * cell_h + (cell_h * 0.25f),
-                cell_w * 0.5f,
-                cell_h * 0.5f
-            };
-            SDL_RenderFillRect(renderer, &pawn_rect);
+                if (tex) {
+                    float tex_w = 0.0f;
+                    float tex_h = 0.0f;
+                    SDL_FRect dst;
+                    SDL_GetTextureSize(tex, &tex_w, &tex_h);
+                    dst.x = file * cell_w + (cell_w - tex_w) * 0.5f;
+                    dst.y = rank * cell_h + (cell_h - tex_h) * 0.5f;
+                    dst.w = tex_w;
+                    dst.h = tex_h;
+                    SDL_RenderTexture(renderer, tex, NULL, &dst);
+                } else {
+                    /* Fallback: coloured rectangle when font is unavailable */
+                    SDL_FRect pawn_rect = {
+                        file * cell_w + (cell_w * 0.25f),
+                        rank * cell_h + (cell_h * 0.25f),
+                        cell_w * 0.5f,
+                        cell_h * 0.5f
+                    };
+                    if (piece == CHESS_PIECE_WHITE_PAWN) {
+                        SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
+                    } else {
+                        SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
+                    }
+                    SDL_RenderFillRect(renderer, &pawn_rect);
+                }
+            }
         }
     }
 
@@ -244,6 +331,7 @@ int app_run(void)
         SDL_Quit();
         return 1;
     }
+    init_piece_textures(renderer);
 
     ChessPeerInfo local_peer;
     ChessNetworkSession network_session;
@@ -550,6 +638,7 @@ int app_run(void)
     chess_tcp_connection_close(&connection);
     chess_tcp_listener_close(&listener);
 
+    destroy_piece_textures();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

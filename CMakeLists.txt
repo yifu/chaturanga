@@ -8,6 +8,7 @@ find_package(Threads REQUIRED)
 find_package(PkgConfig)
 
 find_package(SDL3 REQUIRED CONFIG)
+find_package(SDL3_ttf REQUIRED CONFIG)
 
 if(PkgConfig_FOUND)
     pkg_check_modules(AVAHI_CLIENT QUIET avahi-client)
@@ -41,4 +42,4 @@ if(APPLE AND NOT AVAHI_CLIENT_FOUND)
     endif()
 endif()
 
-target_link_libraries(chess_app PRIVATE SDL3::SDL3 Threads::Threads)
+target_link_libraries(chess_app PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads)
