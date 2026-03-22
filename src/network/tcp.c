@@ -222,20 +222,67 @@ void chess_tcp_connection_close(ChessTcpConnection *conn)
     conn->fd = -1;
 }
 
-bool chess_tcp_send_hello(ChessTcpConnection *conn, const ChessHelloPayload *hello)
+bool chess_tcp_send_packet(ChessTcpConnection *conn, uint32_t message_type, uint32_t sequence, const void *payload, uint32_t payload_size)
 {
     ChessPacketHeader header;
 
-    if (!conn || conn->fd < 0 || !hello) {
+    if (!conn || conn->fd < 0) {
         return false;
     }
 
     header.protocol_version = CHESS_PROTOCOL_VERSION;
-    header.message_type = CHESS_MSG_HELLO;
-    header.sequence = 1u;
-    header.payload_size = (uint32_t)sizeof(ChessHelloPayload);
+    header.message_type = message_type;
+    header.sequence = sequence;
+    header.payload_size = payload_size;
 
-    return send_all(conn->fd, &header, sizeof(header)) && send_all(conn->fd, hello, sizeof(*hello));
+    if (!send_all(conn->fd, &header, sizeof(header))) {
+        return false;
+    }
+
+    if (payload_size == 0u) {
+        return true;
+    }
+
+    return payload != NULL && send_all(conn->fd, payload, payload_size);
+}
+
+bool chess_tcp_recv_packet_header(ChessTcpConnection *conn, int timeout_ms, ChessPacketHeader *out_header)
+{
+    if (!conn || conn->fd < 0 || !out_header) {
+        return false;
+    }
+
+    if (!recv_all_with_timeout(conn->fd, out_header, sizeof(*out_header), timeout_ms)) {
+        return false;
+    }
+
+    return out_header->protocol_version == CHESS_PROTOCOL_VERSION;
+}
+
+bool chess_tcp_recv_payload(ChessTcpConnection *conn, int timeout_ms, void *out_payload, uint32_t payload_size)
+{
+    if (!conn || conn->fd < 0) {
+        return false;
+    }
+
+    if (payload_size == 0u) {
+        return true;
+    }
+
+    if (!out_payload) {
+        return false;
+    }
+
+    return recv_all_with_timeout(conn->fd, out_payload, payload_size, timeout_ms);
+}
+
+bool chess_tcp_send_hello(ChessTcpConnection *conn, const ChessHelloPayload *hello)
+{
+    if (!conn || conn->fd < 0 || !hello) {
+        return false;
+    }
+
+    return chess_tcp_send_packet(conn, CHESS_MSG_HELLO, 1u, hello, (uint32_t)sizeof(*hello));
 }
 
 bool chess_tcp_recv_hello(ChessTcpConnection *conn, int timeout_ms, ChessHelloPayload *out_hello)
@@ -246,7 +293,7 @@ bool chess_tcp_recv_hello(ChessTcpConnection *conn, int timeout_ms, ChessHelloPa
         return false;
     }
 
-    if (!recv_all_with_timeout(conn->fd, &header, sizeof(header), timeout_ms)) {
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
         return false;
     }
 
@@ -256,27 +303,68 @@ bool chess_tcp_recv_hello(ChessTcpConnection *conn, int timeout_ms, ChessHelloPa
         return false;
     }
 
-    return recv_all_with_timeout(conn->fd, out_hello, sizeof(*out_hello), timeout_ms);
+    return chess_tcp_recv_payload(conn, timeout_ms, out_hello, (uint32_t)sizeof(*out_hello));
 }
 
-bool chess_tcp_send_ack(ChessTcpConnection *conn)
+bool chess_tcp_send_ack(ChessTcpConnection *conn, uint32_t acked_message_type, uint32_t acked_sequence, uint32_t status_code)
 {
-    uint8_t ack = 1;
+    ChessAckPayload ack;
 
     if (!conn || conn->fd < 0) {
         return false;
     }
 
-    return send_all(conn->fd, &ack, sizeof(ack));
+    ack.acked_message_type = acked_message_type;
+    ack.acked_sequence = acked_sequence;
+    ack.status_code = status_code;
+    return chess_tcp_send_packet(conn, CHESS_MSG_ACK, acked_sequence, &ack, (uint32_t)sizeof(ack));
 }
 
-bool chess_tcp_recv_ack(ChessTcpConnection *conn, int timeout_ms)
+bool chess_tcp_recv_ack(ChessTcpConnection *conn, int timeout_ms, ChessAckPayload *out_ack)
 {
-    uint8_t ack = 0;
+    ChessPacketHeader header;
 
-    if (!conn || conn->fd < 0) {
+    if (!conn || conn->fd < 0 || !out_ack) {
         return false;
     }
 
-    return recv_all_with_timeout(conn->fd, &ack, sizeof(ack), timeout_ms);
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
+        return false;
+    }
+
+    if (header.message_type != CHESS_MSG_ACK ||
+        header.payload_size != sizeof(*out_ack)) {
+        return false;
+    }
+
+    return chess_tcp_recv_payload(conn, timeout_ms, out_ack, (uint32_t)sizeof(*out_ack));
+}
+
+bool chess_tcp_send_start(ChessTcpConnection *conn, const ChessStartPayload *start)
+{
+    if (!conn || conn->fd < 0 || !start) {
+        return false;
+    }
+
+    return chess_tcp_send_packet(conn, CHESS_MSG_START, 2u, start, (uint32_t)sizeof(*start));
+}
+
+bool chess_tcp_recv_start(ChessTcpConnection *conn, int timeout_ms, ChessStartPayload *out_start)
+{
+    ChessPacketHeader header;
+
+    if (!conn || conn->fd < 0 || !out_start) {
+        return false;
+    }
+
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
+        return false;
+    }
+
+    if (header.message_type != CHESS_MSG_START ||
+        header.payload_size != sizeof(*out_start)) {
+        return false;
+    }
+
+    return chess_tcp_recv_payload(conn, timeout_ms, out_start, (uint32_t)sizeof(*out_start));
 }

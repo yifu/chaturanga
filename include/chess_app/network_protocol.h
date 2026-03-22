@@ -22,6 +22,12 @@ typedef enum ChessMessageType {
     CHESS_MSG_DISCONNECT
 } ChessMessageType;
 
+typedef enum ChessPlayerColor {
+    CHESS_COLOR_UNASSIGNED = 0,
+    CHESS_COLOR_WHITE = 1,
+    CHESS_COLOR_BLACK = 2
+} ChessPlayerColor;
+
 typedef struct ChessMovePayload {
     uint8_t from_file;
     uint8_t from_rank;
@@ -41,5 +47,23 @@ typedef struct ChessHelloPayload {
     char uuid[CHESS_UUID_STRING_LEN];
     uint32_t role;
 } ChessHelloPayload;
+
+typedef struct ChessAckPayload {
+    uint32_t acked_message_type;
+    uint32_t acked_sequence;
+    uint32_t status_code;
+} ChessAckPayload;
+
+typedef struct ChessStartPayload {
+    uint32_t game_id;
+    uint32_t assigned_color;
+    uint32_t initial_turn;
+    char white_uuid[CHESS_UUID_STRING_LEN];
+    char black_uuid[CHESS_UUID_STRING_LEN];
+} ChessStartPayload;
+
+typedef struct ChessHeartbeatPayload {
+    uint32_t tick;
+} ChessHeartbeatPayload;
 
 #endif

@@ -12,6 +12,7 @@ void chess_network_session_init(ChessNetworkSession *session, const ChessPeerInf
     memset(session, 0, sizeof(*session));
     session->state = CHESS_NET_IDLE_DISCOVERY;
     session->role = CHESS_ROLE_UNKNOWN;
+    session->local_color = CHESS_COLOR_UNASSIGNED;
     session->local_peer = *local_peer;
 }
 
@@ -34,6 +35,17 @@ void chess_network_session_set_transport_ready(ChessNetworkSession *session, boo
     }
 
     session->transport_ready = transport_ready;
+}
+
+void chess_network_session_start_game(ChessNetworkSession *session, uint32_t game_id, ChessPlayerColor local_color)
+{
+    if (!session) {
+        return;
+    }
+
+    session->game_id = game_id;
+    session->local_color = local_color;
+    session->game_started = true;
 }
 
 void chess_network_session_step(ChessNetworkSession *session)
