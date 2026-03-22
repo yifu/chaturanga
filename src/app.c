@@ -81,7 +81,7 @@ static TTF_Font *open_font_from_candidates(const char * const *font_paths, float
     for (i = 0; font_paths[i] != NULL; ++i) {
         TTF_Font *font = TTF_OpenFont(font_paths[i], font_size);
         if (font) {
-            SDL_Log("Loaded font: %s (size=%.1f)", font_paths[i], (double)font_size);
+            SDL_Log("UI: loaded font %s (size=%.1f)", font_paths[i], (double)font_size);
             return font;
         }
     }
@@ -193,14 +193,14 @@ static void init_piece_textures(SDL_Renderer *renderer)
     float font_size = 52.0f;
 
     if (!TTF_Init()) {
-        SDL_Log("TTF_Init failed: %s", SDL_GetError());
+        SDL_Log("UI: TTF_Init failed: %s", SDL_GetError());
         return;
     }
     s_ttf_initialized = true;
 
     s_chess_font = open_font_from_candidates(font_paths, font_size);
     if (!s_chess_font) {
-        SDL_Log("No chess font found, piece rendering will use fallback rectangles");
+        SDL_Log("UI: no chess font found, piece rendering will use fallback rectangles");
     }
 
     if (s_chess_font) {
@@ -211,14 +211,14 @@ static void init_piece_textures(SDL_Renderer *renderer)
             s_piece_textures[i] = make_outlined_glyph_texture(
                 renderer, s_chess_font, piece_codepoints[i], fg, outline, 2);
             if (!s_piece_textures[i]) {
-                SDL_Log("Failed to create texture for piece %d: %s", i, SDL_GetError());
+                SDL_Log("UI: failed to create texture for piece %d: %s", i, SDL_GetError());
             }
         }
     }
 
     s_coord_font = open_font_from_candidates(font_paths, 16.0f);
     if (!s_coord_font) {
-        SDL_Log("No coordinate font found, board coordinates disabled");
+        SDL_Log("UI: no coordinate font found, board coordinates disabled");
     } else {
         for (i = 0; i < CHESS_BOARD_SIZE; ++i) {
             char file_label[2] = { (char)('a' + i), '\0' };
@@ -504,11 +504,11 @@ static bool init_local_peer(ChessPeerInfo *local_peer)
     memset(local_peer, 0, sizeof(*local_peer));
 
     if (!chess_generate_peer_uuid(local_peer->uuid, sizeof(local_peer->uuid))) {
-        SDL_Log("Could not generate local peer UUID");
+        SDL_Log("NET: could not generate local peer UUID");
         return false;
     }
 
-    SDL_Log("Local peer initialized (uuid=%s)", local_peer->uuid);
+    SDL_Log("NET: local peer initialized (uuid=%s)", local_peer->uuid);
     return true;
 }
 
@@ -715,20 +715,20 @@ static bool app_init_window_and_renderer(AppLoopContext *ctx)
     }
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        SDL_Log("APP: SDL_Init failed: %s", SDL_GetError());
         return false;
     }
 
     ctx->window = SDL_CreateWindow("SDL3 Chess Board", ctx->window_size, ctx->window_size, 0);
     if (!ctx->window) {
-        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Log("APP: SDL_CreateWindow failed: %s", SDL_GetError());
         SDL_Quit();
         return false;
     }
 
     ctx->renderer = SDL_CreateRenderer(ctx->window, NULL);
     if (!ctx->renderer) {
-        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
+        SDL_Log("APP: SDL_CreateRenderer failed: %s", SDL_GetError());
         SDL_DestroyWindow(ctx->window);
         ctx->window = NULL;
         SDL_Quit();
@@ -769,16 +769,16 @@ static bool app_init_networking(AppLoopContext *ctx)
     }
 
     if (!chess_tcp_listener_open(&ctx->listener, 0)) {
-        SDL_Log("Could not create TCP listener on ephemeral port");
+        SDL_Log("NET: could not create TCP listener on ephemeral port");
         return false;
     }
 
-    SDL_Log("TCP listener ready on port %u", (unsigned int)ctx->listener.port);
+    SDL_Log("NET: listener ready on port %u", (unsigned int)ctx->listener.port);
 
     app_init_runtime_state(ctx);
 
     if (!chess_discovery_start(&ctx->discovery, &ctx->local_peer, ctx->listener.port)) {
-        SDL_Log("Discovery start failed");
+        SDL_Log("NET: discovery start failed");
         return false;
     }
 
@@ -828,7 +828,7 @@ static void app_handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
 
     if (ctx->lobby.selected_peer_idx != clicked_peer) {
         ctx->lobby.selected_peer_idx = clicked_peer;
-        SDL_Log("Selected peer %d", clicked_peer);
+        SDL_Log("LOBBY: selected peer %d", clicked_peer);
         return;
     }
 
@@ -838,10 +838,10 @@ static void app_handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
         if (current_state == CHESS_CHALLENGE_NONE) {
             chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
             chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[clicked_peer].peer);
-            SDL_Log("Challenge sent to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.uuid);
+            SDL_Log("LOBBY: challenge sent to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.uuid);
         } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
             chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_NONE);
-            SDL_Log("Challenge cancelled for peer %d", clicked_peer);
+            SDL_Log("LOBBY: challenge cancelled for peer %d", clicked_peer);
         } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
             ChessAcceptPayload accept;
             memset(&accept, 0, sizeof(accept));
@@ -851,10 +851,10 @@ static void app_handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
                 ctx->challenge_exchange_completed = true;
                 chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);
                 chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[clicked_peer].peer);
-                SDL_Log("Accepted challenge from peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.uuid);
-                SDL_Log("Challenge exchange completed (local accept), waiting START/ACK");
+                SDL_Log("LOBBY: accepted challenge from peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.uuid);
+                SDL_Log("NET: challenge exchange completed (local accept), waiting START/ACK");
             } else {
-                SDL_Log("Cannot accept challenge yet: transport not ready");
+                SDL_Log("NET: cannot accept challenge yet, transport not ready");
             }
         }
     }
@@ -905,11 +905,11 @@ static void app_handle_board_click(AppLoopContext *ctx, int mouse_x, int mouse_y
                     ctx->move_sequence++,
                     &move,
                     (uint32_t)sizeof(move))) {
-                SDL_Log("Failed to send MOVE packet; closing connection");
+                SDL_Log("NET: failed to send MOVE packet, closing connection");
                 chess_tcp_connection_close(&ctx->connection);
             } else {
                 SDL_Log(
-                    "Sent local move: (%u,%u) -> (%u,%u)",
+                    "GAME: sent local move (%u,%u) -> (%u,%u)",
                     (unsigned)move.from_file,
                     (unsigned)move.from_rank,
                     (unsigned)move.to_file,
@@ -967,7 +967,7 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
             chess_lobby_add_or_update_peer(&ctx->lobby, &ctx->discovered_peer.peer, ctx->discovered_peer.tcp_port);
             chess_network_session_set_remote(&ctx->network_session, &ctx->discovered_peer.peer);
             SDL_Log(
-                "New peer discovered: %.8s... (port=%u)",
+                "LOBBY: discovered peer %.8s... (port=%u)",
                 ctx->discovered_peer.peer.uuid,
                 (unsigned int)ctx->discovered_peer.tcp_port
             );
@@ -1010,16 +1010,16 @@ static void app_log_network_state_transition(AppLoopContext *ctx)
     }
 
     SDL_Log(
-        "Network state changed: %s -> %s",
+        "NET: state changed %s -> %s",
         network_state_to_string(ctx->last_state),
         network_state_to_string(ctx->network_session.state)
     );
 
     if (ctx->network_session.state == CHESS_NET_CONNECTING) {
         if (ctx->network_session.role == CHESS_ROLE_SERVER) {
-            SDL_Log("Local role: SERVER (smaller IP)");
+            SDL_Log("NET: local role SERVER (smaller IP)");
         } else if (ctx->network_session.role == CHESS_ROLE_CLIENT) {
-            SDL_Log("Local role: CLIENT");
+            SDL_Log("NET: local role CLIENT");
         }
     }
 
@@ -1050,21 +1050,21 @@ static bool net_receive_next_packet(AppLoopContext *ctx, ChessPacketHeader *head
     }
 
     if (!chess_tcp_recv_packet_header(&ctx->connection, 1, header)) {
-        SDL_Log("Failed to read packet header; closing connection");
+        SDL_Log("NET: failed to read packet header, closing connection");
         chess_tcp_connection_close(&ctx->connection);
         net_reset_transport_progress(ctx);
         return false;
     }
 
     if (header->payload_size > payload_capacity) {
-        SDL_Log("Received oversized payload (%u); closing connection", (unsigned)header->payload_size);
+        SDL_Log("NET: received oversized payload (%u), closing connection", (unsigned)header->payload_size);
         chess_tcp_connection_close(&ctx->connection);
         net_reset_transport_progress(ctx);
         return false;
     }
 
     if (header->payload_size > 0u && !chess_tcp_recv_payload(&ctx->connection, 1, payload, header->payload_size)) {
-        SDL_Log("Failed to read packet payload; closing connection");
+        SDL_Log("NET: failed to read packet payload, closing connection");
         chess_tcp_connection_close(&ctx->connection);
         net_reset_transport_progress(ctx);
         return false;
@@ -1080,7 +1080,7 @@ static void net_handle_hello_packet(AppLoopContext *ctx, const ChessHelloPayload
     }
 
     ctx->hello_received = true;
-    SDL_Log("Received HELLO from remote peer (%.8s...)", hello->uuid);
+    SDL_Log("NET: received HELLO from remote peer (%.8s...)", hello->uuid);
 }
 
 static void net_handle_offer_packet(AppLoopContext *ctx, const ChessOfferPayload *offer)
@@ -1092,7 +1092,7 @@ static void net_handle_offer_packet(AppLoopContext *ctx, const ChessOfferPayload
         return;
     }
 
-    SDL_Log("Received OFFER from remote peer (%.8s...)", offer->challenger_uuid);
+    SDL_Log("NET: received OFFER from remote peer (%.8s...)", offer->challenger_uuid);
 
     for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
         if (SDL_strncmp(ctx->lobby.discovered_peers[i].peer.uuid, offer->challenger_uuid, CHESS_UUID_STRING_LEN) == 0) {
@@ -1134,8 +1134,8 @@ static void net_handle_accept_packet(AppLoopContext *ctx, const ChessAcceptPaylo
         chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
     }
 
-    SDL_Log("Received ACCEPT from remote peer (%.8s...)", accept->acceptor_uuid);
-    SDL_Log("Challenge exchange completed (remote accept), waiting START/ACK");
+    SDL_Log("NET: received ACCEPT from remote peer (%.8s...)", accept->acceptor_uuid);
+    SDL_Log("NET: challenge exchange completed (remote accept), waiting START/ACK");
 }
 
 static void net_handle_start_packet(AppLoopContext *ctx, const ChessStartPayload *start_payload)
@@ -1157,7 +1157,7 @@ static void net_handle_start_packet(AppLoopContext *ctx, const ChessStartPayload
         ctx->start_completed = true;
         chess_game_state_init(&ctx->game_state);
         SDL_Log(
-            "Game started (game_id=%u, local_color=%s, first_turn=%s)",
+            "GAME: started (game_id=%u, local_color=%s, first_turn=%s)",
             ctx->network_session.game_id,
             ctx->network_session.local_color == CHESS_COLOR_WHITE ? "WHITE" : "BLACK",
             start_payload->initial_turn == CHESS_COLOR_WHITE ? "WHITE" : "BLACK"
@@ -1183,12 +1183,12 @@ static void net_handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ac
         ack->acked_message_type == CHESS_MSG_START &&
         ack->acked_sequence == 2u &&
         ack->status_code == 0u) {
-        SDL_Log("START ACK received, switching to game view");
+        SDL_Log("NET: START ACK received, switching to game view");
         chess_network_session_start_game(&ctx->network_session, ctx->pending_start_payload.game_id, CHESS_COLOR_WHITE);
         ctx->start_completed = true;
         chess_game_state_init(&ctx->game_state);
         SDL_Log(
-            "Game started (game_id=%u, local_color=%s, first_turn=%s)",
+            "GAME: started (game_id=%u, local_color=%s, first_turn=%s)",
             ctx->network_session.game_id,
             ctx->network_session.local_color == CHESS_COLOR_WHITE ? "WHITE" : "BLACK",
             ctx->pending_start_payload.initial_turn == CHESS_COLOR_WHITE ? "WHITE" : "BLACK"
@@ -1211,14 +1211,14 @@ static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *
 
     if (chess_game_apply_remote_move(&ctx->game_state, remote_color, move)) {
         SDL_Log(
-            "Applied remote move: (%u,%u) -> (%u,%u)",
+            "GAME: applied remote move (%u,%u) -> (%u,%u)",
             (unsigned)move->from_file,
             (unsigned)move->from_rank,
             (unsigned)move->to_file,
             (unsigned)move->to_rank
         );
     } else {
-        SDL_Log("Ignoring invalid remote MOVE payload");
+        SDL_Log("GAME: ignoring invalid remote MOVE payload");
     }
 }
 
@@ -1296,7 +1296,7 @@ static void net_advance_transport_connection(AppLoopContext *ctx, const ChessSoc
             ctx->connection.fd < 0 &&
             socket_events->listener_readable) {
             if (chess_tcp_accept_once(&ctx->listener, 0, &ctx->connection)) {
-                SDL_Log("Accepted TCP client connection");
+                SDL_Log("NET: accepted TCP client connection");
             }
         } else if (ctx->network_session.role == CHESS_ROLE_CLIENT && should_attempt_client_connect) {
             uint16_t remote_port = ctx->discovered_peer.tcp_port;
@@ -1312,7 +1312,7 @@ static void net_advance_transport_connection(AppLoopContext *ctx, const ChessSoc
                     200,
                     &ctx->connection
                 )) {
-                SDL_Log("Connected to remote TCP host");
+                SDL_Log("NET: connected to remote TCP host");
             }
         }
     }
@@ -1358,14 +1358,14 @@ static void net_advance_hello_handshake(AppLoopContext *ctx)
             ctx->hello_ack_sent) {
             ctx->hello_completed = true;
             chess_network_session_set_transport_ready(&ctx->network_session, true);
-            SDL_Log("HELLO handshake completed (client)");
+            SDL_Log("NET: HELLO handshake completed (client)");
         } else if (ctx->network_session.role == CHESS_ROLE_SERVER &&
                    ctx->hello_received &&
                    ctx->hello_sent &&
                    ctx->hello_ack_received) {
             ctx->hello_completed = true;
             chess_network_session_set_transport_ready(&ctx->network_session, true);
-            SDL_Log("HELLO handshake completed (server)");
+            SDL_Log("NET: HELLO handshake completed (server)");
         }
     }
 }
@@ -1386,7 +1386,7 @@ static void net_send_pending_offer_if_needed(AppLoopContext *ctx)
             SDL_strlcpy(offer.challenger_uuid, ctx->network_session.local_peer.uuid, sizeof(offer.challenger_uuid));
             if (chess_tcp_send_offer(&ctx->connection, &offer)) {
                 chess_lobby_mark_offer_sent(&ctx->lobby, peer_idx);
-                SDL_Log("Sent OFFER to selected peer");
+                SDL_Log("NET: sent OFFER to selected peer");
             }
         }
     }
@@ -1420,7 +1420,7 @@ static void net_send_start_if_needed(AppLoopContext *ctx)
     } else {
         ctx->start_failures += 1u;
         if (ctx->start_failures == 1u || (ctx->start_failures % 5u) == 0u) {
-            SDL_Log("START send failed (%u failures), will retry", ctx->start_failures);
+            SDL_Log("NET: START send failed (%u failures), will retry", ctx->start_failures);
         }
     }
 }
