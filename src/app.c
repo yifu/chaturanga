@@ -73,6 +73,7 @@ static SDL_Texture *s_piece_textures[CHESS_PIECE_COUNT];
 static SDL_Texture *s_file_label_textures[CHESS_BOARD_SIZE][2];
 static SDL_Texture *s_rank_label_textures[CHESS_BOARD_SIZE][2];
 static bool         s_ttf_initialized                = false;
+static bool         s_lobby_unicode_icons_available  = false;
 
 static TTF_Font *open_font_from_candidates(const char * const *font_paths, float font_size)
 {
@@ -105,6 +106,121 @@ static SDL_Texture *make_text_texture(SDL_Renderer *renderer, TTF_Font *font, co
     texture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_DestroySurface(surface);
     return texture;
+}
+
+static bool text_surface_equals(SDL_Surface *a, SDL_Surface *b)
+{
+    int y;
+
+    if (!a || !b) {
+        return false;
+    }
+
+    if (a->w != b->w || a->h != b->h || a->pitch != b->pitch || a->format != b->format) {
+        return false;
+    }
+
+    for (y = 0; y < a->h; ++y) {
+        const uint8_t *row_a = (const uint8_t *)a->pixels + y * a->pitch;
+        const uint8_t *row_b = (const uint8_t *)b->pixels + y * b->pitch;
+        if (memcmp(row_a, row_b, (size_t)a->pitch) != 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool font_supports_lobby_icons(TTF_Font *font)
+{
+    const SDL_Color color = {255, 255, 255, 255};
+    SDL_Surface *hourglass = NULL;
+    SDL_Surface *swords = NULL;
+    SDL_Surface *check = NULL;
+    SDL_Surface *tofu_square = NULL;
+    SDL_Surface *question = NULL;
+    bool supported = false;
+
+    if (!font) {
+        return false;
+    }
+
+    hourglass = TTF_RenderText_Blended(font, "⏳", SDL_strlen("⏳"), color);
+    swords = TTF_RenderText_Blended(font, "⚔", SDL_strlen("⚔"), color);
+    check = TTF_RenderText_Blended(font, "✓", SDL_strlen("✓"), color);
+    tofu_square = TTF_RenderText_Blended(font, "□", SDL_strlen("□"), color);
+    question = TTF_RenderText_Blended(font, "?", SDL_strlen("?"), color);
+
+    if (!hourglass || !swords || !check || !tofu_square || !question) {
+        goto cleanup;
+    }
+
+    /* Conservative check: accept unicode icons only if each icon has a distinct raster
+     * and none match common fallback glyph shapes. */
+    if (text_surface_equals(hourglass, swords) ||
+        text_surface_equals(hourglass, check) ||
+        text_surface_equals(swords, check)) {
+        goto cleanup;
+    }
+
+    if (text_surface_equals(hourglass, tofu_square) ||
+        text_surface_equals(swords, tofu_square) ||
+        text_surface_equals(check, tofu_square) ||
+        text_surface_equals(hourglass, question) ||
+        text_surface_equals(swords, question) ||
+        text_surface_equals(check, question)) {
+        goto cleanup;
+    }
+
+    supported = true;
+
+cleanup:
+    if (hourglass) {
+        SDL_DestroySurface(hourglass);
+    }
+    if (swords) {
+        SDL_DestroySurface(swords);
+    }
+    if (check) {
+        SDL_DestroySurface(check);
+    }
+    if (tofu_square) {
+        SDL_DestroySurface(tofu_square);
+    }
+    if (question) {
+        SDL_DestroySurface(question);
+    }
+
+    return supported;
+}
+
+static const char *lobby_state_suffix(ChessChallengeState state)
+{
+    if (s_lobby_unicode_icons_available) {
+        switch (state) {
+        case CHESS_CHALLENGE_NONE:
+            return "";
+        case CHESS_CHALLENGE_OUTGOING_PENDING:
+            return " [⏳]";
+        case CHESS_CHALLENGE_INCOMING_PENDING:
+            return " [⚔]";
+        case CHESS_CHALLENGE_MATCHED:
+            return " [✓]";
+        }
+    }
+
+    switch (state) {
+    case CHESS_CHALLENGE_NONE:
+        return "";
+    case CHESS_CHALLENGE_OUTGOING_PENDING:
+        return " [PENDING]";
+    case CHESS_CHALLENGE_INCOMING_PENDING:
+        return " [INCOMING]";
+    case CHESS_CHALLENGE_MATCHED:
+        return " [MATCHED]";
+    }
+
+    return "";
 }
 
 /* Renders a chess glyph with a contrasting outline for readability on any square. */
@@ -220,6 +336,11 @@ static void init_piece_textures(SDL_Renderer *renderer)
     if (!s_coord_font) {
         SDL_Log("UI: no coordinate font found, board coordinates disabled");
     } else {
+        s_lobby_unicode_icons_available = font_supports_lobby_icons(s_coord_font);
+        if (!s_lobby_unicode_icons_available) {
+            SDL_Log("UI: lobby unicode icons unavailable in current font, using ASCII fallback labels");
+        }
+
         for (i = 0; i < CHESS_BOARD_SIZE; ++i) {
             char file_label[2] = { (char)('a' + i), '\0' };
             char rank_label[2] = { (char)('8' - i), '\0' };
@@ -366,7 +487,10 @@ static void render_game_overlay(
     int width,
     int height,
     const ChessGameState *game_state,
-    ChessPlayerColor local_color)
+    ChessPlayerColor local_color,
+    bool hide_piece,
+    int hidden_file,
+    int hidden_rank)
 {
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
     const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
@@ -382,6 +506,10 @@ static void render_game_overlay(
         for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
             ChessPiece piece = chess_game_get_piece(game_state, file, rank);
             if (piece == CHESS_PIECE_EMPTY) {
+                continue;
+            }
+
+            if (hide_piece && file == hidden_file && rank == hidden_rank) {
                 continue;
             }
 
@@ -581,22 +709,7 @@ static void render_lobby(
         /* Draw peer UUID and challenge state */
         {
             char peer_label[128];
-            const char *challenge_icon = "";
-
-            switch (peer_state->challenge_state) {
-            case CHESS_CHALLENGE_NONE:
-                challenge_icon = "";
-                break;
-            case CHESS_CHALLENGE_OUTGOING_PENDING:
-                challenge_icon = " [⏳]";
-                break;
-            case CHESS_CHALLENGE_INCOMING_PENDING:
-                challenge_icon = " [⚔]";
-                break;
-            case CHESS_CHALLENGE_MATCHED:
-                challenge_icon = " [✓]";
-                break;
-            }
+            const char *challenge_icon = lobby_state_suffix(peer_state->challenge_state);
 
             SDL_snprintf(
                 peer_label,
@@ -670,6 +783,12 @@ typedef struct AppLoopContext {
     uint32_t move_sequence;
     uint64_t next_connect_attempt_at;
     ChessNetworkState last_state;
+    bool drag_active;
+    ChessPiece drag_piece;
+    int drag_from_file;
+    int drag_from_rank;
+    int drag_mouse_x;
+    int drag_mouse_y;
     bool running;
 } AppLoopContext;
 
@@ -752,6 +871,12 @@ static void app_init_runtime_state(AppLoopContext *ctx)
     ctx->start_failures = 0u;
     ctx->move_sequence = 3u;
     ctx->next_connect_attempt_at = 0;
+    ctx->drag_active = false;
+    ctx->drag_piece = CHESS_PIECE_EMPTY;
+    ctx->drag_from_file = -1;
+    ctx->drag_from_rank = -1;
+    ctx->drag_mouse_x = 0;
+    ctx->drag_mouse_y = 0;
 
     net_reset_transport_progress(ctx);
     chess_game_state_init(&ctx->game_state);
@@ -860,7 +985,12 @@ static void app_handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
     }
 }
 
-static void app_handle_board_click(AppLoopContext *ctx, int mouse_x, int mouse_y)
+static bool app_screen_to_board_square(
+    AppLoopContext *ctx,
+    int mouse_x,
+    int mouse_y,
+    int *out_file,
+    int *out_rank)
 {
     int width = 0;
     int height = 0;
@@ -869,11 +999,9 @@ static void app_handle_board_click(AppLoopContext *ctx, int mouse_x, int mouse_y
     bool black_perspective;
     int screen_file;
     int screen_rank;
-    int file;
-    int rank;
 
-    if (!ctx || !ctx->window || ctx->connection.fd < 0) {
-        return;
+    if (!ctx || !ctx->window || !out_file || !out_rank) {
+        return false;
     }
 
     SDL_GetWindowSize(ctx->window, &width, &height);
@@ -882,45 +1010,113 @@ static void app_handle_board_click(AppLoopContext *ctx, int mouse_x, int mouse_y
     black_perspective = use_black_perspective(ctx->network_session.local_color);
     screen_file = (int)(mouse_x / cell_w);
     screen_rank = (int)(mouse_y / cell_h);
-    file = screen_to_board_index(screen_file, black_perspective);
-    rank = screen_to_board_index(screen_rank, black_perspective);
+    *out_file = screen_to_board_index(screen_file, black_perspective);
+    *out_rank = screen_to_board_index(screen_rank, black_perspective);
 
-    if (file < 0 || file >= CHESS_BOARD_SIZE || rank < 0 || rank >= CHESS_BOARD_SIZE) {
+    if (*out_file < 0 || *out_file >= CHESS_BOARD_SIZE || *out_rank < 0 || *out_rank >= CHESS_BOARD_SIZE) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank)
+{
+    ChessMovePayload move;
+
+    if (!ctx || ctx->connection.fd < 0) {
+        return false;
+    }
+
+    if (!chess_game_try_local_move(&ctx->game_state, ctx->network_session.local_color, to_file, to_rank, &move)) {
+        return false;
+    }
+
+    if (!chess_tcp_send_packet(
+            &ctx->connection,
+            CHESS_MSG_MOVE,
+            ctx->move_sequence++,
+            &move,
+            (uint32_t)sizeof(move))) {
+        SDL_Log("NET: failed to send MOVE packet, closing connection");
+        chess_tcp_connection_close(&ctx->connection);
+        return false;
+    }
+
+    SDL_Log(
+        "GAME: sent local move (%u,%u) -> (%u,%u)",
+        (unsigned)move.from_file,
+        (unsigned)move.from_rank,
+        (unsigned)move.to_file,
+        (unsigned)move.to_rank
+    );
+
+    return true;
+}
+
+static void app_handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mouse_y)
+{
+    int file;
+    int rank;
+
+    if (!ctx || ctx->connection.fd < 0) {
         return;
     }
 
-    if (ctx->game_state.has_selection &&
-        ctx->game_state.selected_file == file &&
-        ctx->game_state.selected_rank == rank) {
-        chess_game_clear_selection(&ctx->game_state);
+    if (!app_screen_to_board_square(ctx, mouse_x, mouse_y, &file, &rank)) {
+        return;
+    }
+
+    if (chess_game_select_local_piece(&ctx->game_state, ctx->network_session.local_color, file, rank)) {
+        ctx->drag_active = true;
+        ctx->drag_piece = chess_game_get_piece(&ctx->game_state, file, rank);
+        ctx->drag_from_file = file;
+        ctx->drag_from_rank = rank;
+        ctx->drag_mouse_x = mouse_x;
+        ctx->drag_mouse_y = mouse_y;
         return;
     }
 
     if (ctx->game_state.has_selection) {
-        ChessMovePayload move;
-        if (chess_game_try_local_move(&ctx->game_state, ctx->network_session.local_color, file, rank, &move)) {
-            if (!chess_tcp_send_packet(
-                    &ctx->connection,
-                    CHESS_MSG_MOVE,
-                    ctx->move_sequence++,
-                    &move,
-                    (uint32_t)sizeof(move))) {
-                SDL_Log("NET: failed to send MOVE packet, closing connection");
-                chess_tcp_connection_close(&ctx->connection);
-            } else {
-                SDL_Log(
-                    "GAME: sent local move (%u,%u) -> (%u,%u)",
-                    (unsigned)move.from_file,
-                    (unsigned)move.from_rank,
-                    (unsigned)move.to_file,
-                    (unsigned)move.to_rank
-                );
-            }
+        if (ctx->game_state.selected_file == file && ctx->game_state.selected_rank == rank) {
+            chess_game_clear_selection(&ctx->game_state);
+            return;
         }
+
+        (void)app_try_send_local_move(ctx, file, rank);
+    }
+}
+
+static void app_handle_board_mouse_motion(AppLoopContext *ctx, int mouse_x, int mouse_y)
+{
+    if (!ctx || !ctx->drag_active) {
         return;
     }
 
-    (void)chess_game_select_local_piece(&ctx->game_state, ctx->network_session.local_color, file, rank);
+    ctx->drag_mouse_x = mouse_x;
+    ctx->drag_mouse_y = mouse_y;
+}
+
+static void app_handle_board_mouse_up(AppLoopContext *ctx, int mouse_x, int mouse_y)
+{
+    int to_file;
+    int to_rank;
+
+    if (!ctx || !ctx->drag_active) {
+        return;
+    }
+
+    ctx->drag_mouse_x = mouse_x;
+    ctx->drag_mouse_y = mouse_y;
+
+    if (app_screen_to_board_square(ctx, mouse_x, mouse_y, &to_file, &to_rank)) {
+        (void)app_try_send_local_move(ctx, to_file, to_rank);
+    }
+
+    ctx->drag_active = false;
+    ctx->drag_piece = CHESS_PIECE_EMPTY;
+    ctx->drag_from_file = -1;
+    ctx->drag_from_rank = -1;
 }
 
 static void app_handle_events(AppLoopContext *ctx)
@@ -937,20 +1133,28 @@ static void app_handle_events(AppLoopContext *ctx)
             continue;
         }
 
-        if (event.type != SDL_EVENT_MOUSE_BUTTON_DOWN || event.button.button != SDL_BUTTON_LEFT) {
-            continue;
-        }
-
-        if (!ctx->network_session.game_started && ctx->lobby.discovered_peer_count > 0) {
-            const int clicked_peer = app_find_clicked_lobby_peer(ctx, event.button.x, event.button.y);
-            if (clicked_peer >= 0) {
-                app_handle_lobby_click(ctx, clicked_peer);
+        if (!ctx->network_session.game_started) {
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                event.button.button == SDL_BUTTON_LEFT &&
+                ctx->lobby.discovered_peer_count > 0) {
+                const int clicked_peer = app_find_clicked_lobby_peer(ctx, event.button.x, event.button.y);
+                if (clicked_peer >= 0) {
+                    app_handle_lobby_click(ctx, clicked_peer);
+                }
             }
             continue;
         }
 
-        if (ctx->network_session.game_started && ctx->connection.fd >= 0) {
-            app_handle_board_click(ctx, event.button.x, event.button.y);
+        if (ctx->connection.fd < 0) {
+            continue;
+        }
+
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+            app_handle_board_mouse_down(ctx, event.button.x, event.button.y);
+        } else if (event.type == SDL_EVENT_MOUSE_MOTION) {
+            app_handle_board_mouse_motion(ctx, event.motion.x, event.motion.y);
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
+            app_handle_board_mouse_up(ctx, event.button.x, event.button.y);
         }
     }
 }
@@ -975,6 +1179,47 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
     }
 }
 
+static void app_render_drag_preview(AppLoopContext *ctx, int width, int height)
+{
+    const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+
+    if (!ctx || !ctx->renderer || !ctx->drag_active ||
+        ctx->drag_piece <= CHESS_PIECE_EMPTY || ctx->drag_piece >= CHESS_PIECE_COUNT) {
+        return;
+    }
+
+    {
+        SDL_Texture *tex = s_piece_textures[(int)ctx->drag_piece];
+        if (tex) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+
+            SDL_GetTextureSize(tex, &tex_w, &tex_h);
+            dst.x = (float)ctx->drag_mouse_x - tex_w * 0.5f;
+            dst.y = (float)ctx->drag_mouse_y - tex_h * 0.5f;
+            dst.w = tex_w;
+            dst.h = tex_h;
+            SDL_RenderTexture(ctx->renderer, tex, NULL, &dst);
+        } else {
+            SDL_FRect piece_rect = {
+                (float)ctx->drag_mouse_x - cell_w * 0.25f,
+                (float)ctx->drag_mouse_y - cell_h * 0.25f,
+                cell_w * 0.5f,
+                cell_h * 0.5f
+            };
+
+            if ((int)ctx->drag_piece < (int)CHESS_PIECE_BLACK_PAWN) {
+                SDL_SetRenderDrawColor(ctx->renderer, 245, 245, 245, 255);
+            } else {
+                SDL_SetRenderDrawColor(ctx->renderer, 25, 25, 25, 255);
+            }
+            SDL_RenderFillRect(ctx->renderer, &piece_rect);
+        }
+    }
+}
+
 static void app_render_frame(AppLoopContext *ctx)
 {
     int width = 0;
@@ -992,7 +1237,16 @@ static void app_render_frame(AppLoopContext *ctx)
         render_lobby(ctx->renderer, width, height, &ctx->lobby, s_coord_font);
     } else {
         render_board(ctx->renderer, width, height);
-        render_game_overlay(ctx->renderer, width, height, &ctx->game_state, ctx->network_session.local_color);
+        render_game_overlay(
+            ctx->renderer,
+            width,
+            height,
+            &ctx->game_state,
+            ctx->network_session.local_color,
+            ctx->drag_active,
+            ctx->drag_from_file,
+            ctx->drag_from_rank);
+        app_render_drag_preview(ctx, width, height);
         render_board_coordinates(ctx->renderer, width, height, ctx->network_session.local_color);
     }
 
