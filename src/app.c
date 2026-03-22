@@ -58,6 +58,7 @@ int app_run(void)
 {
     const int window_size = 640;
     const int connect_retry_ms = 1000;
+    const int hello_timeout_ms = 1200;
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
@@ -152,9 +153,22 @@ int app_run(void)
 
         if (network_session.state == CHESS_NET_CONNECTING && !hello_completed) {
             const uint64_t now = SDL_GetTicks();
-            if (!connect_attempted || now >= next_connect_attempt_at) {
-                connect_attempted = true;
-                next_connect_attempt_at = now + (uint64_t)connect_retry_ms;
+            bool should_attempt = false;
+
+            if (network_session.role == CHESS_ROLE_SERVER) {
+                /* Server must accept continuously to drain queued stale connects.
+                 * If we only accept once per second while clients timeout at ~500 ms,
+                 * every accepted connection is already dead and HELLO always fails. */
+                should_attempt = true;
+            } else if (network_session.role == CHESS_ROLE_CLIENT) {
+                if (!connect_attempted || now >= next_connect_attempt_at) {
+                    connect_attempted = true;
+                    next_connect_attempt_at = now + (uint64_t)connect_retry_ms;
+                    should_attempt = true;
+                }
+            }
+
+            if (should_attempt) {
 
                 if (network_session.role == CHESS_ROLE_SERVER) {
                     if (connection.fd < 0 && chess_tcp_accept_once(&listener, 10, &connection)) {
@@ -190,14 +204,14 @@ int app_run(void)
                          * if CLIENT already closed, SERVER's recv_ack gets EOF -> fail. */
                         handshake_ok =
                             chess_tcp_send_hello(&connection, &local_hello) &&
-                            chess_tcp_recv_hello(&connection, 500, &remote_hello) &&
+                            chess_tcp_recv_hello(&connection, hello_timeout_ms, &remote_hello) &&
                             chess_tcp_send_ack(&connection, CHESS_MSG_HELLO, 1u, 0u);
                     } else {
                         /* SERVER: recv -> send -> recv_ack */
                         handshake_ok =
-                            chess_tcp_recv_hello(&connection, 500, &remote_hello) &&
+                            chess_tcp_recv_hello(&connection, hello_timeout_ms, &remote_hello) &&
                             chess_tcp_send_hello(&connection, &local_hello) &&
-                            chess_tcp_recv_ack(&connection, 500, &handshake_ack) &&
+                            chess_tcp_recv_ack(&connection, hello_timeout_ms, &handshake_ack) &&
                             handshake_ack.acked_message_type == CHESS_MSG_HELLO &&
                             handshake_ack.acked_sequence == 1u &&
                             handshake_ack.status_code == 0u;

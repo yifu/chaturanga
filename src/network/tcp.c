@@ -9,6 +9,17 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+static bool configure_connected_socket(int fd)
+{
+#if defined(SO_NOSIGPIPE)
+    int opt = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt)) != 0) {
+        return false;
+    }
+#endif
+    return true;
+}
+
 static bool recv_all_with_timeout(int fd, void *buf, size_t len, int timeout_ms)
 {
     size_t received = 0;
@@ -45,7 +56,12 @@ static bool send_all(int fd, const void *buf, size_t len)
     size_t sent = 0;
 
     while (sent < len) {
-        ssize_t n = send(fd, (const char *)buf + sent, len - sent, 0);
+        ssize_t n = 0;
+#if defined(MSG_NOSIGNAL)
+        n = send(fd, (const char *)buf + sent, len - sent, MSG_NOSIGNAL);
+#else
+        n = send(fd, (const char *)buf + sent, len - sent, 0);
+#endif
         if (n <= 0) {
             return false;
         }
@@ -141,6 +157,11 @@ bool chess_tcp_accept_once(ChessTcpListener *listener, int timeout_ms, ChessTcpC
         return false;
     }
 
+    if (!configure_connected_socket(client_fd)) {
+        close(client_fd);
+        return false;
+    }
+
     out_conn->fd = client_fd;
     return true;
 }
@@ -177,6 +198,10 @@ bool chess_tcp_connect_once(uint32_t remote_ipv4_host_order, uint16_t remote_por
     addr.sin_addr.s_addr = htonl(remote_ipv4_host_order);
 
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+        if (!configure_connected_socket(fd)) {
+            close(fd);
+            return false;
+        }
         (void)fcntl(fd, F_SETFL, flags);
         out_conn->fd = fd;
         return true;
@@ -204,6 +229,11 @@ bool chess_tcp_connect_once(uint32_t remote_ipv4_host_order, uint16_t remote_por
     }
 
     (void)fcntl(fd, F_SETFL, flags);
+
+    if (!configure_connected_socket(fd)) {
+        close(fd);
+        return false;
+    }
 
     out_conn->fd = fd;
     return true;
