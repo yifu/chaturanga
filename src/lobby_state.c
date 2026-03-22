@@ -91,6 +91,9 @@ void chess_lobby_set_challenge_state(
     }
 
     lobby->discovered_peers[peer_idx].challenge_state = state;
+    if (state == CHESS_CHALLENGE_NONE) {
+        lobby->discovered_peers[peer_idx].offer_sent = false;
+    }
 }
 
 ChessChallengeState chess_lobby_get_challenge_state(

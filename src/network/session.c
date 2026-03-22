@@ -18,13 +18,26 @@ void chess_network_session_init(ChessNetworkSession *session, const ChessPeerInf
 
 void chess_network_session_set_remote(ChessNetworkSession *session, const ChessPeerInfo *remote_peer)
 {
+    bool same_remote;
+
     if (!session || !remote_peer) {
         return;
     }
 
+    same_remote =
+        session->peer_available &&
+        (strncmp(session->remote_peer.uuid, remote_peer->uuid, CHESS_UUID_STRING_LEN) == 0);
+
     session->remote_peer = *remote_peer;
     session->peer_available = true;
+
+    /* Do not regress the state machine when re-selecting the same peer from the lobby. */
+    if (same_remote) {
+        return;
+    }
+
     session->transport_ready = false;
+    session->game_started = false;
     session->state = CHESS_NET_PEER_FOUND;
 }
 

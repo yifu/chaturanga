@@ -789,6 +789,19 @@ int app_run(void)
                         } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
                             chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_NONE);
                             SDL_Log("Challenge cancelled for peer %d", clicked_peer);
+                        } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
+                            ChessAcceptPayload accept;
+                            memset(&accept, 0, sizeof(accept));
+                            SDL_strlcpy(accept.acceptor_uuid, network_session.local_peer.uuid, sizeof(accept.acceptor_uuid));
+                            if (connection.fd >= 0 && chess_tcp_send_accept(&connection, &accept)) {
+                                challenge_exchange_completed = true;
+                                chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);
+                                chess_network_session_set_remote(&network_session, &lobby.discovered_peers[clicked_peer].peer);
+                                SDL_Log("Accepted challenge from peer %d (%.8s...)", clicked_peer, lobby.discovered_peers[clicked_peer].peer.uuid);
+                                SDL_Log("Challenge exchange completed (local accept), waiting START/ACK");
+                            } else {
+                                SDL_Log("Cannot accept challenge yet: transport not ready");
+                            }
                         }
                     } else {
                         /* First click: select peer */
@@ -857,6 +870,7 @@ int app_run(void)
         if (!network_session.peer_available) {
             if (chess_discovery_poll(&discovery, &discovered_peer)) {
                 chess_lobby_add_or_update_peer(&lobby, &discovered_peer.peer, discovered_peer.tcp_port);
+                chess_network_session_set_remote(&network_session, &discovered_peer.peer);
                 SDL_Log(
                         "New peer discovered: %.8s... (port=%u)",
                         discovered_peer.peer.uuid,
@@ -938,9 +952,11 @@ int app_run(void)
                 }
             }
 
-            if (hello_completed && !challenge_exchange_completed && connection.fd >= 0 && network_session.role == CHESS_ROLE_CLIENT) {
+            if (hello_completed && !challenge_exchange_completed && connection.fd >= 0) {
                 int peer_idx = lobby.selected_peer_idx;
-                if (peer_idx >= 0 && !chess_lobby_has_offer_been_sent(&lobby, peer_idx)) {
+                if (peer_idx >= 0 &&
+                    chess_lobby_get_challenge_state(&lobby, peer_idx) == CHESS_CHALLENGE_OUTGOING_PENDING &&
+                    !chess_lobby_has_offer_been_sent(&lobby, peer_idx)) {
                     ChessOfferPayload offer;
                     memset(&offer, 0, sizeof(offer));
                     SDL_strlcpy(offer.challenger_uuid, network_session.local_peer.uuid, sizeof(offer.challenger_uuid));
@@ -1012,20 +1028,12 @@ int app_run(void)
                         hello_received = true;
                         SDL_Log("Received HELLO from remote peer (%.8s...)", hello->uuid);
                     } else if (header.message_type == CHESS_MSG_OFFER && header.payload_size == sizeof(ChessOfferPayload)) {
-                        if (!challenge_exchange_completed && network_session.role == CHESS_ROLE_SERVER) {
+                        if (!challenge_exchange_completed) {
                             const ChessOfferPayload *offer = (const ChessOfferPayload *)payload;
-                            ChessAcceptPayload accept;
                             int peer_idx = -1;
                             int i;
 
                             SDL_Log("Received OFFER from remote peer (%.8s...)", offer->challenger_uuid);
-                            memset(&accept, 0, sizeof(accept));
-                            SDL_strlcpy(accept.acceptor_uuid, network_session.local_peer.uuid, sizeof(accept.acceptor_uuid));
-
-                            if (chess_tcp_send_accept(&connection, &accept)) {
-                                challenge_exchange_completed = true;
-                                SDL_Log("Sent ACCEPT to remote peer");
-                            }
 
                             for (i = 0; i < lobby.discovered_peer_count; ++i) {
                                 if (SDL_strncmp(lobby.discovered_peers[i].peer.uuid, offer->challenger_uuid, CHESS_UUID_STRING_LEN) == 0) {
@@ -1035,19 +1043,34 @@ int app_run(void)
                             }
 
                             if (peer_idx >= 0) {
-                                chess_lobby_set_challenge_state(&lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
+                                chess_lobby_set_challenge_state(&lobby, peer_idx, CHESS_CHALLENGE_INCOMING_PENDING);
                                 chess_network_session_set_remote(&network_session, &lobby.discovered_peers[peer_idx].peer);
                             }
                         }
                     } else if (header.message_type == CHESS_MSG_ACCEPT && header.payload_size == sizeof(ChessAcceptPayload)) {
-                        if (!challenge_exchange_completed && network_session.role == CHESS_ROLE_CLIENT) {
+                        if (!challenge_exchange_completed) {
                             const ChessAcceptPayload *accept = (const ChessAcceptPayload *)payload;
                             int peer_idx = lobby.selected_peer_idx;
+                            int i;
+
+                            if (peer_idx < 0) {
+                                for (i = 0; i < lobby.discovered_peer_count; ++i) {
+                                    if (SDL_strncmp(
+                                            lobby.discovered_peers[i].peer.uuid,
+                                            network_session.remote_peer.uuid,
+                                            CHESS_UUID_STRING_LEN) == 0) {
+                                        peer_idx = i;
+                                        break;
+                                    }
+                                }
+                            }
+
                             challenge_exchange_completed = true;
                             if (peer_idx >= 0) {
                                 chess_lobby_set_challenge_state(&lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
                             }
                             SDL_Log("Received ACCEPT from remote peer (%.8s...)", accept->acceptor_uuid);
+                            SDL_Log("Challenge exchange completed (remote accept), waiting START/ACK");
                         }
                     } else if (header.message_type == CHESS_MSG_START && header.payload_size == sizeof(ChessStartPayload)) {
                         if (network_session.role == CHESS_ROLE_CLIENT && !start_completed) {
@@ -1079,6 +1102,7 @@ int app_run(void)
                             if (ack->acked_message_type == CHESS_MSG_START &&
                                 ack->acked_sequence == 2u &&
                                 ack->status_code == 0u) {
+                                SDL_Log("START ACK received, switching to game view");
                                 chess_network_session_start_game(&network_session, pending_start_payload.game_id, CHESS_COLOR_WHITE);
                                 start_completed = true;
                                 chess_game_state_init(&game_state);
