@@ -673,6 +673,8 @@ typedef struct AppLoopContext {
     bool running;
 } AppLoopContext;
 
+static void reset_transport_progress(AppLoopContext *ctx);
+
 static void app_loop_context_init_defaults(AppLoopContext *ctx)
 {
     if (!ctx) {
@@ -703,6 +705,85 @@ static void app_loop_context_shutdown(AppLoopContext *ctx)
         SDL_DestroyWindow(ctx->window);
     }
     SDL_Quit();
+}
+
+static bool init_app_window_and_renderer(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return false;
+    }
+
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return false;
+    }
+
+    ctx->window = SDL_CreateWindow("SDL3 Chess Board", ctx->window_size, ctx->window_size, 0);
+    if (!ctx->window) {
+        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Quit();
+        return false;
+    }
+
+    ctx->renderer = SDL_CreateRenderer(ctx->window, NULL);
+    if (!ctx->renderer) {
+        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
+        SDL_DestroyWindow(ctx->window);
+        ctx->window = NULL;
+        SDL_Quit();
+        return false;
+    }
+
+    init_piece_textures(ctx->renderer);
+    return true;
+}
+
+static void init_app_runtime_state(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    ctx->connection.fd = -1;
+    memset(&ctx->discovered_peer, 0, sizeof(ctx->discovered_peer));
+    ctx->start_completed = false;
+    memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
+    ctx->start_failures = 0u;
+    ctx->move_sequence = 3u;
+    ctx->next_connect_attempt_at = 0;
+
+    reset_transport_progress(ctx);
+    chess_game_state_init(&ctx->game_state);
+    chess_lobby_init(&ctx->lobby);
+}
+
+static bool init_app_networking(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return false;
+    }
+
+    if (!init_local_peer(&ctx->local_peer)) {
+        return false;
+    }
+
+    if (!chess_tcp_listener_open(&ctx->listener, 0)) {
+        SDL_Log("Could not create TCP listener on ephemeral port");
+        return false;
+    }
+
+    SDL_Log("TCP listener ready on port %u", (unsigned int)ctx->listener.port);
+
+    init_app_runtime_state(ctx);
+
+    if (!chess_discovery_start(&ctx->discovery, &ctx->local_peer, ctx->listener.port)) {
+        SDL_Log("Discovery start failed");
+        return false;
+    }
+
+    chess_network_session_init(&ctx->network_session, &ctx->local_peer);
+    ctx->last_state = ctx->network_session.state;
+    return true;
 }
 
 static int find_clicked_lobby_peer(AppLoopContext *ctx, int mouse_x, int mouse_y)
@@ -1311,66 +1392,14 @@ int app_run(void)
 
     app_loop_context_init_defaults(&ctx);
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+    if (!init_app_window_and_renderer(&ctx)) {
         return 1;
     }
 
-    ctx.window = SDL_CreateWindow("SDL3 Chess Board", ctx.window_size, ctx.window_size, 0);
-    if (!ctx.window) {
-        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    ctx.renderer = SDL_CreateRenderer(ctx.window, NULL);
-    if (!ctx.renderer) {
-        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
-        SDL_DestroyWindow(ctx.window);
-        SDL_Quit();
-        return 1;
-    }
-    init_piece_textures(ctx.renderer);
-
-    if (!init_local_peer(&ctx.local_peer)) {
+    if (!init_app_networking(&ctx)) {
         app_loop_context_shutdown(&ctx);
         return 1;
     }
-
-    if (!chess_tcp_listener_open(&ctx.listener, 0)) {
-        SDL_Log("Could not create TCP listener on ephemeral port");
-        app_loop_context_shutdown(&ctx);
-        return 1;
-    }
-
-    SDL_Log("TCP listener ready on port %u", (unsigned int)ctx.listener.port);
-
-    ctx.connection.fd = -1;
-    memset(&ctx.discovered_peer, 0, sizeof(ctx.discovered_peer));
-    ctx.connect_attempted = false;
-    ctx.hello_sent = false;
-    ctx.hello_received = false;
-    ctx.hello_ack_sent = false;
-    ctx.hello_ack_received = false;
-    ctx.hello_completed = false;
-    ctx.challenge_exchange_completed = false;
-    ctx.start_sent = false;
-    ctx.start_completed = false;
-    memset(&ctx.pending_start_payload, 0, sizeof(ctx.pending_start_payload));
-    ctx.start_failures = 0u;
-    ctx.move_sequence = 3u;
-    ctx.next_connect_attempt_at = 0;
-    chess_game_state_init(&ctx.game_state);
-    chess_lobby_init(&ctx.lobby);
-
-    if (!chess_discovery_start(&ctx.discovery, &ctx.local_peer, ctx.listener.port)) {
-        SDL_Log("Discovery start failed");
-        app_loop_context_shutdown(&ctx);
-        return 1;
-    }
-    chess_network_session_init(&ctx.network_session, &ctx.local_peer);
-
-    ctx.last_state = ctx.network_session.state;
 
     while (ctx.running) {
         handle_sdl_events(&ctx);
