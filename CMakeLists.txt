@@ -16,6 +16,7 @@ endif()
 add_executable(chess_app
     src/main.c
     src/app.c
+    src/game_state.c
     src/render/board.c
     src/network/peer.c
     src/network/session.c

@@ -1,5 +1,7 @@
 #include "chess_app/app.h"
 
+#include "chess_app/game_state.h"
+
 #include "chess_app/network_discovery.h"
 #include "chess_app/network_peer.h"
 #include "chess_app/network_session.h"
@@ -8,6 +10,8 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <sys/select.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -56,6 +60,145 @@ static const char *network_state_to_string(ChessNetworkState state)
         return "TERMINATED";
     default:
         return "UNKNOWN";
+    }
+}
+
+static ChessPlayerColor opposite_color(ChessPlayerColor color)
+{
+    if (color == CHESS_COLOR_WHITE) {
+        return CHESS_COLOR_BLACK;
+    }
+    if (color == CHESS_COLOR_BLACK) {
+        return CHESS_COLOR_WHITE;
+    }
+    return CHESS_COLOR_UNASSIGNED;
+}
+
+static void render_game_overlay(SDL_Renderer *renderer, int width, int height, const ChessGameState *game_state)
+{
+    const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    int rank;
+    int file;
+
+    if (!renderer || !game_state) {
+        return;
+    }
+
+    for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
+        for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
+            ChessPiece piece = chess_game_get_piece(game_state, file, rank);
+            if (piece == CHESS_PIECE_EMPTY) {
+                continue;
+            }
+
+            if (piece == CHESS_PIECE_WHITE_PAWN) {
+                SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
+            }
+
+            SDL_FRect pawn_rect = {
+                file * cell_w + (cell_w * 0.25f),
+                rank * cell_h + (cell_h * 0.25f),
+                cell_w * 0.5f,
+                cell_h * 0.5f
+            };
+            SDL_RenderFillRect(renderer, &pawn_rect);
+        }
+    }
+
+    if (game_state->has_selection) {
+        SDL_FRect selected_rect = {
+            game_state->selected_file * cell_w + 2.0f,
+            game_state->selected_rank * cell_h + 2.0f,
+            cell_w - 4.0f,
+            cell_h - 4.0f
+        };
+        SDL_SetRenderDrawColor(renderer, 255, 204, 0, 255);
+        SDL_RenderRect(renderer, &selected_rect);
+    }
+}
+
+static void process_remote_messages(
+    ChessTcpConnection *connection,
+    ChessGameState *game_state,
+    ChessPlayerColor local_color)
+{
+    ChessPlayerColor remote_color;
+
+    if (!connection || connection->fd < 0 || !game_state) {
+        return;
+    }
+
+    remote_color = opposite_color(local_color);
+    if (remote_color == CHESS_COLOR_UNASSIGNED) {
+        return;
+    }
+
+    for (;;) {
+        fd_set rfds;
+        struct timeval tv = {0, 0};
+        int sel;
+        ChessPacketHeader header;
+
+        FD_ZERO(&rfds);
+        FD_SET(connection->fd, &rfds);
+        sel = select(connection->fd + 1, &rfds, NULL, NULL, &tv);
+        if (sel <= 0) {
+            break;
+        }
+
+        if (!chess_tcp_recv_packet_header(connection, 1, &header)) {
+            SDL_Log("Remote receive failed while reading packet header; closing connection");
+            chess_tcp_connection_close(connection);
+            break;
+        }
+
+        if (header.message_type == CHESS_MSG_MOVE && header.payload_size == sizeof(ChessMovePayload)) {
+            ChessMovePayload move;
+            if (!chess_tcp_recv_payload(connection, 1, &move, (uint32_t)sizeof(move))) {
+                SDL_Log("Remote receive failed while reading MOVE payload; closing connection");
+                chess_tcp_connection_close(connection);
+                break;
+            }
+
+            if (chess_game_apply_remote_move(game_state, remote_color, &move)) {
+                SDL_Log(
+                    "Applied remote move: (%u,%u) -> (%u,%u)",
+                    (unsigned)move.from_file,
+                    (unsigned)move.from_rank,
+                    (unsigned)move.to_file,
+                    (unsigned)move.to_rank
+                );
+            } else {
+                SDL_Log("Ignoring invalid remote MOVE payload");
+            }
+        } else {
+            if (header.payload_size > 4096u) {
+                SDL_Log("Remote sent oversized payload (%u); closing connection", (unsigned)header.payload_size);
+                chess_tcp_connection_close(connection);
+                break;
+            }
+
+            if (header.payload_size > 0u) {
+                void *discard = malloc((size_t)header.payload_size);
+                if (!discard) {
+                    SDL_Log("Out of memory while discarding unknown payload; closing connection");
+                    chess_tcp_connection_close(connection);
+                    break;
+                }
+
+                if (!chess_tcp_recv_payload(connection, 1, discard, header.payload_size)) {
+                    SDL_Log("Failed to discard unknown payload; closing connection");
+                    free(discard);
+                    chess_tcp_connection_close(connection);
+                    break;
+                }
+
+                free(discard);
+            }
+        }
     }
 }
 
@@ -108,11 +251,13 @@ int app_run(void)
     ChessTcpListener listener;
     ChessTcpConnection connection;
     ChessDiscoveredPeer discovered_peer;
+    ChessGameState game_state;
     bool connect_attempted;
     bool hello_completed;
     bool start_completed;
     unsigned int hello_failures;
     unsigned int start_failures;
+    uint32_t move_sequence;
     uint64_t next_connect_attempt_at;
     ChessNetworkState last_state;
 
@@ -140,7 +285,9 @@ int app_run(void)
     start_completed = false;
     hello_failures = 0u;
     start_failures = 0u;
+    move_sequence = 3u;
     next_connect_attempt_at = 0;
+    chess_game_state_init(&game_state);
 
     if (!chess_discovery_start(&discovery, &local_peer, listener.port)) {
         SDL_Log("Discovery start failed");
@@ -160,6 +307,55 @@ int app_run(void)
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
+            } else if (
+                event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                event.button.button == SDL_BUTTON_LEFT &&
+                network_session.game_started &&
+                connection.fd >= 0
+            ) {
+                int width = 0;
+                int height = 0;
+                float cell_w;
+                float cell_h;
+                int file;
+                int rank;
+
+                SDL_GetWindowSize(window, &width, &height);
+                cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+                cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+                file = (int)(event.button.x / cell_w);
+                rank = (int)(event.button.y / cell_h);
+
+                if (file >= 0 && file < CHESS_BOARD_SIZE && rank >= 0 && rank < CHESS_BOARD_SIZE) {
+                    if (game_state.has_selection &&
+                        game_state.selected_file == file &&
+                        game_state.selected_rank == rank) {
+                        chess_game_clear_selection(&game_state);
+                    } else if (game_state.has_selection) {
+                        ChessMovePayload move;
+                        if (chess_game_try_local_move(&game_state, network_session.local_color, file, rank, &move)) {
+                            if (!chess_tcp_send_packet(
+                                &connection,
+                                CHESS_MSG_MOVE,
+                                move_sequence++,
+                                &move,
+                                (uint32_t)sizeof(move))) {
+                                SDL_Log("Failed to send MOVE packet; closing connection");
+                                chess_tcp_connection_close(&connection);
+                            } else {
+                                SDL_Log(
+                                    "Sent local move: (%u,%u) -> (%u,%u)",
+                                    (unsigned)move.from_file,
+                                    (unsigned)move.from_rank,
+                                    (unsigned)move.to_file,
+                                    (unsigned)move.to_rank
+                                );
+                            }
+                        }
+                    } else {
+                        (void)chess_game_select_local_pawn(&game_state, network_session.local_color, file, rank);
+                    }
+                }
             }
         }
 
@@ -298,6 +494,7 @@ int app_run(void)
 
             if (start_ok) {
                 start_completed = true;
+                chess_game_state_init(&game_state);
                 SDL_Log(
                     "Game started (game_id=%u, local_color=%s, first_turn=%s)",
                     network_session.game_id,
@@ -310,6 +507,10 @@ int app_run(void)
                     SDL_Log("START exchange failed (%u failures), will retry", start_failures);
                 }
             }
+        }
+
+        if (network_session.game_started && connection.fd >= 0) {
+            process_remote_messages(&connection, &game_state, network_session.local_color);
         }
 
         chess_network_session_step(&network_session);
@@ -340,6 +541,7 @@ int app_run(void)
         SDL_RenderClear(renderer);
 
         render_board(renderer, width, height);
+        render_game_overlay(renderer, width, height, &game_state);
 
         SDL_RenderPresent(renderer);
     }
