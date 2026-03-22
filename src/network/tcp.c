@@ -398,3 +398,61 @@ bool chess_tcp_recv_start(ChessTcpConnection *conn, int timeout_ms, ChessStartPa
 
     return chess_tcp_recv_payload(conn, timeout_ms, out_start, (uint32_t)sizeof(*out_start));
 }
+
+bool chess_tcp_send_offer(ChessTcpConnection *conn, const ChessOfferPayload *offer)
+{
+    if (!conn || conn->fd < 0 || !offer) {
+        return false;
+    }
+
+    return chess_tcp_send_packet(conn, CHESS_MSG_OFFER, 1u, offer, (uint32_t)sizeof(*offer));
+}
+
+bool chess_tcp_recv_offer(ChessTcpConnection *conn, int timeout_ms, ChessOfferPayload *out_offer)
+{
+    ChessPacketHeader header;
+
+    if (!conn || conn->fd < 0 || !out_offer) {
+        return false;
+    }
+
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
+        return false;
+    }
+
+    if (header.message_type != CHESS_MSG_OFFER ||
+        header.payload_size != sizeof(*out_offer)) {
+        return false;
+    }
+
+    return chess_tcp_recv_payload(conn, timeout_ms, out_offer, (uint32_t)sizeof(*out_offer));
+}
+
+bool chess_tcp_send_accept(ChessTcpConnection *conn, const ChessAcceptPayload *accept)
+{
+    if (!conn || conn->fd < 0 || !accept) {
+        return false;
+    }
+
+    return chess_tcp_send_packet(conn, CHESS_MSG_ACCEPT, 1u, accept, (uint32_t)sizeof(*accept));
+}
+
+bool chess_tcp_recv_accept(ChessTcpConnection *conn, int timeout_ms, ChessAcceptPayload *out_accept)
+{
+    ChessPacketHeader header;
+
+    if (!conn || conn->fd < 0 || !out_accept) {
+        return false;
+    }
+
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
+        return false;
+    }
+
+    if (header.message_type != CHESS_MSG_ACCEPT ||
+        header.payload_size != sizeof(*out_accept)) {
+        return false;
+    }
+
+    return chess_tcp_recv_payload(conn, timeout_ms, out_accept, (uint32_t)sizeof(*out_accept));
+}

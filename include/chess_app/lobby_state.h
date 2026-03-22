@@ -20,6 +20,7 @@ typedef struct ChessDiscoveredPeerState {
     uint16_t tcp_port;
     ChessChallengeState challenge_state;
     uint64_t discovered_at_ms;
+    bool offer_sent;
 } ChessDiscoveredPeerState;
 
 typedef struct ChessLobbyState {
@@ -45,6 +46,11 @@ void chess_lobby_set_challenge_state(
     ChessChallengeState state
 );
 ChessChallengeState chess_lobby_get_challenge_state(
+    const ChessLobbyState *lobby,
+    int peer_idx
+);
+void chess_lobby_mark_offer_sent(ChessLobbyState *lobby, int peer_idx);
+bool chess_lobby_has_offer_been_sent(
     const ChessLobbyState *lobby,
     int peer_idx
 );

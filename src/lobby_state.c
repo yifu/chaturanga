@@ -103,3 +103,23 @@ ChessChallengeState chess_lobby_get_challenge_state(
 
     return lobby->discovered_peers[peer_idx].challenge_state;
 }
+
+void chess_lobby_mark_offer_sent(ChessLobbyState *lobby, int peer_idx)
+{
+    if (!lobby || peer_idx < 0 || peer_idx >= lobby->discovered_peer_count) {
+        return;
+    }
+
+    lobby->discovered_peers[peer_idx].offer_sent = true;
+}
+
+bool chess_lobby_has_offer_been_sent(
+    const ChessLobbyState *lobby,
+    int peer_idx)
+{
+    if (!lobby || peer_idx < 0 || peer_idx >= lobby->discovered_peer_count) {
+        return false;
+    }
+
+    return lobby->discovered_peers[peer_idx].offer_sent;
+}

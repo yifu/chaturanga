@@ -66,4 +66,14 @@ typedef struct ChessHeartbeatPayload {
     uint32_t tick;
 } ChessHeartbeatPayload;
 
+typedef struct ChessOfferPayload {
+    char challenger_uuid[CHESS_UUID_STRING_LEN];
+    uint16_t challenger_port;
+} ChessOfferPayload;
+
+typedef struct ChessAcceptPayload {
+    char acceptor_uuid[CHESS_UUID_STRING_LEN];
+    uint16_t acceptor_port;
+} ChessAcceptPayload;
+
 #endif

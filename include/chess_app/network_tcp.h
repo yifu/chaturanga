@@ -32,5 +32,9 @@ bool chess_tcp_send_ack(ChessTcpConnection *conn, uint32_t acked_message_type, u
 bool chess_tcp_recv_ack(ChessTcpConnection *conn, int timeout_ms, ChessAckPayload *out_ack);
 bool chess_tcp_send_start(ChessTcpConnection *conn, const ChessStartPayload *start);
 bool chess_tcp_recv_start(ChessTcpConnection *conn, int timeout_ms, ChessStartPayload *out_start);
+bool chess_tcp_send_offer(ChessTcpConnection *conn, const ChessOfferPayload *offer);
+bool chess_tcp_recv_offer(ChessTcpConnection *conn, int timeout_ms, ChessOfferPayload *out_offer);
+bool chess_tcp_send_accept(ChessTcpConnection *conn, const ChessAcceptPayload *accept);
+bool chess_tcp_recv_accept(ChessTcpConnection *conn, int timeout_ms, ChessAcceptPayload *out_accept);
 
 #endif
