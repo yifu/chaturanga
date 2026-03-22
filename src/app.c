@@ -673,8 +673,9 @@ typedef struct AppLoopContext {
     bool running;
 } AppLoopContext;
 
-static void reset_transport_progress(AppLoopContext *ctx);
+static void net_reset_transport_progress(AppLoopContext *ctx);
 
+/* App context and startup helpers */
 static void app_loop_context_init_defaults(AppLoopContext *ctx)
 {
     if (!ctx) {
@@ -707,7 +708,7 @@ static void app_loop_context_shutdown(AppLoopContext *ctx)
     SDL_Quit();
 }
 
-static bool init_app_window_and_renderer(AppLoopContext *ctx)
+static bool app_init_window_and_renderer(AppLoopContext *ctx)
 {
     if (!ctx) {
         return false;
@@ -738,7 +739,7 @@ static bool init_app_window_and_renderer(AppLoopContext *ctx)
     return true;
 }
 
-static void init_app_runtime_state(AppLoopContext *ctx)
+static void app_init_runtime_state(AppLoopContext *ctx)
 {
     if (!ctx) {
         return;
@@ -752,12 +753,12 @@ static void init_app_runtime_state(AppLoopContext *ctx)
     ctx->move_sequence = 3u;
     ctx->next_connect_attempt_at = 0;
 
-    reset_transport_progress(ctx);
+    net_reset_transport_progress(ctx);
     chess_game_state_init(&ctx->game_state);
     chess_lobby_init(&ctx->lobby);
 }
 
-static bool init_app_networking(AppLoopContext *ctx)
+static bool app_init_networking(AppLoopContext *ctx)
 {
     if (!ctx) {
         return false;
@@ -774,7 +775,7 @@ static bool init_app_networking(AppLoopContext *ctx)
 
     SDL_Log("TCP listener ready on port %u", (unsigned int)ctx->listener.port);
 
-    init_app_runtime_state(ctx);
+    app_init_runtime_state(ctx);
 
     if (!chess_discovery_start(&ctx->discovery, &ctx->local_peer, ctx->listener.port)) {
         SDL_Log("Discovery start failed");
@@ -786,7 +787,8 @@ static bool init_app_networking(AppLoopContext *ctx)
     return true;
 }
 
-static int find_clicked_lobby_peer(AppLoopContext *ctx, int mouse_x, int mouse_y)
+/* App input helpers */
+static int app_find_clicked_lobby_peer(AppLoopContext *ctx, int mouse_x, int mouse_y)
 {
     const int peer_row_height = 60;
     const int margin = 10;
@@ -818,7 +820,7 @@ static int find_clicked_lobby_peer(AppLoopContext *ctx, int mouse_x, int mouse_y
     return -1;
 }
 
-static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
+static void app_handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
 {
     if (!ctx || clicked_peer < 0 || clicked_peer >= ctx->lobby.discovered_peer_count) {
         return;
@@ -858,7 +860,7 @@ static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
     }
 }
 
-static void handle_board_click(AppLoopContext *ctx, int mouse_x, int mouse_y)
+static void app_handle_board_click(AppLoopContext *ctx, int mouse_x, int mouse_y)
 {
     int width = 0;
     int height = 0;
@@ -921,7 +923,7 @@ static void handle_board_click(AppLoopContext *ctx, int mouse_x, int mouse_y)
     (void)chess_game_select_local_piece(&ctx->game_state, ctx->network_session.local_color, file, rank);
 }
 
-static void handle_sdl_events(AppLoopContext *ctx)
+static void app_handle_events(AppLoopContext *ctx)
 {
     SDL_Event event;
 
@@ -940,20 +942,21 @@ static void handle_sdl_events(AppLoopContext *ctx)
         }
 
         if (!ctx->network_session.game_started && ctx->lobby.discovered_peer_count > 0) {
-            const int clicked_peer = find_clicked_lobby_peer(ctx, event.button.x, event.button.y);
+            const int clicked_peer = app_find_clicked_lobby_peer(ctx, event.button.x, event.button.y);
             if (clicked_peer >= 0) {
-                handle_lobby_click(ctx, clicked_peer);
+                app_handle_lobby_click(ctx, clicked_peer);
             }
             continue;
         }
 
         if (ctx->network_session.game_started && ctx->connection.fd >= 0) {
-            handle_board_click(ctx, event.button.x, event.button.y);
+            app_handle_board_click(ctx, event.button.x, event.button.y);
         }
     }
 }
 
-static void poll_discovery_and_update_lobby(AppLoopContext *ctx)
+/* App frame helpers */
+static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
 {
     if (!ctx) {
         return;
@@ -972,7 +975,7 @@ static void poll_discovery_and_update_lobby(AppLoopContext *ctx)
     }
 }
 
-static void render_frame(AppLoopContext *ctx)
+static void app_render_frame(AppLoopContext *ctx)
 {
     int width = 0;
     int height = 0;
@@ -996,7 +999,7 @@ static void render_frame(AppLoopContext *ctx)
     SDL_RenderPresent(ctx->renderer);
 }
 
-static void log_network_state_transition(AppLoopContext *ctx)
+static void app_log_network_state_transition(AppLoopContext *ctx)
 {
     if (!ctx) {
         return;
@@ -1023,7 +1026,8 @@ static void log_network_state_transition(AppLoopContext *ctx)
     ctx->last_state = ctx->network_session.state;
 }
 
-static void reset_transport_progress(AppLoopContext *ctx)
+/* Network tick helpers */
+static void net_reset_transport_progress(AppLoopContext *ctx)
 {
     if (!ctx) {
         return;
@@ -1039,7 +1043,7 @@ static void reset_transport_progress(AppLoopContext *ctx)
     ctx->start_sent = false;
 }
 
-static bool receive_next_packet(AppLoopContext *ctx, ChessPacketHeader *header, uint8_t *payload, size_t payload_capacity)
+static bool net_receive_next_packet(AppLoopContext *ctx, ChessPacketHeader *header, uint8_t *payload, size_t payload_capacity)
 {
     if (!ctx || !header || !payload) {
         return false;
@@ -1048,28 +1052,28 @@ static bool receive_next_packet(AppLoopContext *ctx, ChessPacketHeader *header, 
     if (!chess_tcp_recv_packet_header(&ctx->connection, 1, header)) {
         SDL_Log("Failed to read packet header; closing connection");
         chess_tcp_connection_close(&ctx->connection);
-        reset_transport_progress(ctx);
+        net_reset_transport_progress(ctx);
         return false;
     }
 
     if (header->payload_size > payload_capacity) {
         SDL_Log("Received oversized payload (%u); closing connection", (unsigned)header->payload_size);
         chess_tcp_connection_close(&ctx->connection);
-        reset_transport_progress(ctx);
+        net_reset_transport_progress(ctx);
         return false;
     }
 
     if (header->payload_size > 0u && !chess_tcp_recv_payload(&ctx->connection, 1, payload, header->payload_size)) {
         SDL_Log("Failed to read packet payload; closing connection");
         chess_tcp_connection_close(&ctx->connection);
-        reset_transport_progress(ctx);
+        net_reset_transport_progress(ctx);
         return false;
     }
 
     return true;
 }
 
-static void handle_hello_packet(AppLoopContext *ctx, const ChessHelloPayload *hello)
+static void net_handle_hello_packet(AppLoopContext *ctx, const ChessHelloPayload *hello)
 {
     if (!ctx || !hello) {
         return;
@@ -1079,7 +1083,7 @@ static void handle_hello_packet(AppLoopContext *ctx, const ChessHelloPayload *he
     SDL_Log("Received HELLO from remote peer (%.8s...)", hello->uuid);
 }
 
-static void handle_offer_packet(AppLoopContext *ctx, const ChessOfferPayload *offer)
+static void net_handle_offer_packet(AppLoopContext *ctx, const ChessOfferPayload *offer)
 {
     int peer_idx = -1;
     int i;
@@ -1103,7 +1107,7 @@ static void handle_offer_packet(AppLoopContext *ctx, const ChessOfferPayload *of
     }
 }
 
-static void handle_accept_packet(AppLoopContext *ctx, const ChessAcceptPayload *accept)
+static void net_handle_accept_packet(AppLoopContext *ctx, const ChessAcceptPayload *accept)
 {
     int peer_idx;
     int i;
@@ -1134,7 +1138,7 @@ static void handle_accept_packet(AppLoopContext *ctx, const ChessAcceptPayload *
     SDL_Log("Challenge exchange completed (remote accept), waiting START/ACK");
 }
 
-static void handle_start_packet(AppLoopContext *ctx, const ChessStartPayload *start_payload)
+static void net_handle_start_packet(AppLoopContext *ctx, const ChessStartPayload *start_payload)
 {
     if (!ctx || !start_payload) {
         return;
@@ -1161,7 +1165,7 @@ static void handle_start_packet(AppLoopContext *ctx, const ChessStartPayload *st
     }
 }
 
-static void handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ack)
+static void net_handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ack)
 {
     if (!ctx || !ack || ctx->network_session.role != CHESS_ROLE_SERVER) {
         return;
@@ -1192,7 +1196,7 @@ static void handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ack)
     }
 }
 
-static void handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *move)
+static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *move)
 {
     ChessPlayerColor remote_color;
 
@@ -1218,28 +1222,28 @@ static void handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *move
     }
 }
 
-static void handle_incoming_packet(AppLoopContext *ctx, const ChessPacketHeader *header, const uint8_t *payload)
+static void net_dispatch_incoming_packet(AppLoopContext *ctx, const ChessPacketHeader *header, const uint8_t *payload)
 {
     if (!ctx || !header || !payload) {
         return;
     }
 
     if (header->message_type == CHESS_MSG_HELLO && header->payload_size == sizeof(ChessHelloPayload)) {
-        handle_hello_packet(ctx, (const ChessHelloPayload *)payload);
+        net_handle_hello_packet(ctx, (const ChessHelloPayload *)payload);
     } else if (header->message_type == CHESS_MSG_OFFER && header->payload_size == sizeof(ChessOfferPayload)) {
-        handle_offer_packet(ctx, (const ChessOfferPayload *)payload);
+        net_handle_offer_packet(ctx, (const ChessOfferPayload *)payload);
     } else if (header->message_type == CHESS_MSG_ACCEPT && header->payload_size == sizeof(ChessAcceptPayload)) {
-        handle_accept_packet(ctx, (const ChessAcceptPayload *)payload);
+        net_handle_accept_packet(ctx, (const ChessAcceptPayload *)payload);
     } else if (header->message_type == CHESS_MSG_START && header->payload_size == sizeof(ChessStartPayload)) {
-        handle_start_packet(ctx, (const ChessStartPayload *)payload);
+        net_handle_start_packet(ctx, (const ChessStartPayload *)payload);
     } else if (header->message_type == CHESS_MSG_ACK && header->payload_size == sizeof(ChessAckPayload)) {
-        handle_ack_packet(ctx, (const ChessAckPayload *)payload);
+        net_handle_ack_packet(ctx, (const ChessAckPayload *)payload);
     } else if (header->message_type == CHESS_MSG_MOVE && header->payload_size == sizeof(ChessMovePayload)) {
-        handle_move_packet(ctx, (const ChessMovePayload *)payload);
+        net_handle_move_packet(ctx, (const ChessMovePayload *)payload);
     }
 }
 
-static void drain_incoming_packets(AppLoopContext *ctx)
+static void net_drain_incoming_packets(AppLoopContext *ctx)
 {
     const int max_packets_per_frame = 8;
     int packet_idx;
@@ -1258,15 +1262,15 @@ static void drain_incoming_packets(AppLoopContext *ctx)
             break;
         }
 
-        if (!receive_next_packet(ctx, &header, payload, sizeof(payload))) {
+        if (!net_receive_next_packet(ctx, &header, payload, sizeof(payload))) {
             break;
         }
 
-        handle_incoming_packet(ctx, &header, payload);
+        net_dispatch_incoming_packet(ctx, &header, payload);
     }
 }
 
-static void advance_transport_connection(AppLoopContext *ctx, const ChessSocketEvents *socket_events)
+static void net_advance_transport_connection(AppLoopContext *ctx, const ChessSocketEvents *socket_events)
 {
     if (!ctx || !socket_events) {
         return;
@@ -1314,7 +1318,7 @@ static void advance_transport_connection(AppLoopContext *ctx, const ChessSocketE
     }
 }
 
-static void advance_hello_handshake(AppLoopContext *ctx)
+static void net_advance_hello_handshake(AppLoopContext *ctx)
 {
     if (!ctx || ctx->connection.fd < 0) {
         return;
@@ -1366,7 +1370,7 @@ static void advance_hello_handshake(AppLoopContext *ctx)
     }
 }
 
-static void send_pending_offer_if_needed(AppLoopContext *ctx)
+static void net_send_pending_offer_if_needed(AppLoopContext *ctx)
 {
     if (!ctx || !ctx->hello_completed || ctx->challenge_exchange_completed || ctx->connection.fd < 0) {
         return;
@@ -1388,7 +1392,7 @@ static void send_pending_offer_if_needed(AppLoopContext *ctx)
     }
 }
 
-static void send_start_if_needed(AppLoopContext *ctx)
+static void net_send_start_if_needed(AppLoopContext *ctx)
 {
     if (!ctx) {
         return;
@@ -1421,7 +1425,7 @@ static void send_start_if_needed(AppLoopContext *ctx)
     }
 }
 
-static void tick_network(AppLoopContext *ctx)
+static void app_tick_network(AppLoopContext *ctx)
 {
     ChessSocketEvents connection_phase_events;
 
@@ -1430,12 +1434,12 @@ static void tick_network(AppLoopContext *ctx)
     }
 
     poll_socket_events(&ctx->listener, &ctx->connection, &connection_phase_events);
-    advance_transport_connection(ctx, &connection_phase_events);
-    advance_hello_handshake(ctx);
-    send_pending_offer_if_needed(ctx);
+    net_advance_transport_connection(ctx, &connection_phase_events);
+    net_advance_hello_handshake(ctx);
+    net_send_pending_offer_if_needed(ctx);
 
-    drain_incoming_packets(ctx);
-    send_start_if_needed(ctx);
+    net_drain_incoming_packets(ctx);
+    net_send_start_if_needed(ctx);
 }
 
 int app_run(void)
@@ -1444,25 +1448,25 @@ int app_run(void)
 
     app_loop_context_init_defaults(&ctx);
 
-    if (!init_app_window_and_renderer(&ctx)) {
+    if (!app_init_window_and_renderer(&ctx)) {
         return 1;
     }
 
-    if (!init_app_networking(&ctx)) {
+    if (!app_init_networking(&ctx)) {
         app_loop_context_shutdown(&ctx);
         return 1;
     }
 
     while (ctx.running) {
-        handle_sdl_events(&ctx);
-        poll_discovery_and_update_lobby(&ctx);
-        tick_network(&ctx);
+        app_handle_events(&ctx);
+        app_poll_discovery_and_update_lobby(&ctx);
+        app_tick_network(&ctx);
 
         chess_network_session_step(&ctx.network_session);
 
-        log_network_state_transition(&ctx);
+        app_log_network_state_transition(&ctx);
 
-        render_frame(&ctx);
+        app_render_frame(&ctx);
     }
 
     app_loop_context_shutdown(&ctx);
