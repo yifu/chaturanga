@@ -28,6 +28,8 @@ typedef enum ChessPiece {
 typedef struct ChessGameState {
     uint8_t board[CHESS_BOARD_SIZE][CHESS_BOARD_SIZE]; /* [rank][file] */
     ChessPlayerColor side_to_move;
+    uint16_t halfmove_clock;
+    uint16_t fullmove_number;
     bool has_selection;
     int selected_file;
     int selected_rank;
