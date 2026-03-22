@@ -66,34 +66,89 @@ static const char *network_state_to_string(ChessNetworkState state)
 
 /* ---------- chess piece glyph textures (optional, falls back to rectangles) ---------- */
 
-static TTF_Font    *s_chess_font     = NULL;
-static SDL_Texture *s_white_pawn_tex = NULL;
-static SDL_Texture *s_black_pawn_tex = NULL;
+static TTF_Font    *s_chess_font                     = NULL;
+static SDL_Texture *s_piece_textures[CHESS_PIECE_COUNT];
 
-static SDL_Texture *make_glyph_texture(SDL_Renderer *renderer, TTF_Font *font, Uint32 codepoint)
+/* Renders a chess glyph with a contrasting outline for readability on any square. */
+static SDL_Texture *make_outlined_glyph_texture(
+    SDL_Renderer *renderer,
+    TTF_Font     *font,
+    Uint32        codepoint,
+    SDL_Color     fg,
+    SDL_Color     outline_col,
+    int           outline_px)
 {
-    /* Both piece colours are rendered in near-black so they are readable on any
-     * board square.  White pawns use U+2659 (outlined glyph) and black pawns
-     * use U+265F (filled glyph), so shape alone distinguishes the two sides. */
-    SDL_Color color = {30, 30, 30, 255};
-    SDL_Surface *surface = TTF_RenderGlyph_Blended(font, codepoint, color);
-    SDL_Texture *tex;
-    if (!surface) {
-        return NULL;
+    SDL_Surface *outline_surf = NULL;
+    SDL_Surface *fill_surf    = NULL;
+    SDL_Surface *combined     = NULL;
+    SDL_Texture *tex          = NULL;
+    SDL_Rect     fill_dst;
+
+    TTF_SetFontOutline(font, outline_px);
+    outline_surf = TTF_RenderGlyph_Blended(font, codepoint, outline_col);
+    TTF_SetFontOutline(font, 0);
+    fill_surf    = TTF_RenderGlyph_Blended(font, codepoint, fg);
+
+    if (!outline_surf || !fill_surf) {
+        goto cleanup;
     }
-    tex = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_DestroySurface(surface);
+
+    combined = SDL_CreateSurface(outline_surf->w, outline_surf->h, SDL_PIXELFORMAT_ARGB8888);
+    if (!combined) {
+        goto cleanup;
+    }
+    SDL_FillSurfaceRect(combined, NULL, 0u);
+
+    SDL_SetSurfaceBlendMode(outline_surf, SDL_BLENDMODE_BLEND);
+    SDL_BlitSurface(outline_surf, NULL, combined, NULL);
+
+    fill_dst.x = outline_px;
+    fill_dst.y = outline_px;
+    fill_dst.w = fill_surf->w;
+    fill_dst.h = fill_surf->h;
+    SDL_SetSurfaceBlendMode(fill_surf, SDL_BLENDMODE_BLEND);
+    SDL_BlitSurface(fill_surf, NULL, combined, &fill_dst);
+
+    tex = SDL_CreateTextureFromSurface(renderer, combined);
+    SDL_DestroySurface(combined);
+    combined = NULL;
+
+cleanup:
+    if (outline_surf) SDL_DestroySurface(outline_surf);
+    if (fill_surf)    SDL_DestroySurface(fill_surf);
+    if (combined)     SDL_DestroySurface(combined);
     return tex;
 }
 
 static void init_piece_textures(SDL_Renderer *renderer)
 {
-    /* Ordered list of fonts known to carry U+2659 / U+265F on macOS */
+    /* Ordered list of fonts known to carry chess glyphs (U+2654-265F) on macOS */
     static const char * const font_paths[] = {
         "/Library/Fonts/Arial Unicode.ttf",
         "/System/Library/Fonts/Apple Symbols.ttf",
         NULL
     };
+    /* Codepoints indexed by ChessPiece enum value (0 = EMPTY, skipped) */
+    static const Uint32 piece_codepoints[CHESS_PIECE_COUNT] = {
+        [CHESS_PIECE_WHITE_PAWN]   = 0x2659u, /* ♙ */
+        [CHESS_PIECE_WHITE_KNIGHT] = 0x2658u, /* ♘ */
+        [CHESS_PIECE_WHITE_BISHOP] = 0x2657u, /* ♗ */
+        [CHESS_PIECE_WHITE_ROOK]   = 0x2656u, /* ♖ */
+        [CHESS_PIECE_WHITE_QUEEN]  = 0x2655u, /* ♕ */
+        [CHESS_PIECE_WHITE_KING]   = 0x2654u, /* ♔ */
+        [CHESS_PIECE_BLACK_PAWN]   = 0x265Fu, /* ♟ */
+        [CHESS_PIECE_BLACK_KNIGHT] = 0x265Eu, /* ♞ */
+        [CHESS_PIECE_BLACK_BISHOP] = 0x265Du, /* ♝ */
+        [CHESS_PIECE_BLACK_ROOK]   = 0x265Cu, /* ♜ */
+        [CHESS_PIECE_BLACK_QUEEN]  = 0x265Bu, /* ♛ */
+        [CHESS_PIECE_BLACK_KING]   = 0x265Au, /* ♚ */
+    };
+    /* White pieces: creamy fill + dark-brown outline (readable on both square colours)
+     * Black pieces: dark-brown fill + warm-cream outline */
+    const SDL_Color white_fg      = {245, 238, 200, 255};
+    const SDL_Color white_outline = { 50,  35,  20, 255};
+    const SDL_Color black_fg      = { 45,  30,  20, 255};
+    const SDL_Color black_outline = {215, 210, 175, 255};
     int i;
     float font_size = 52.0f;
 
@@ -115,19 +170,28 @@ static void init_piece_textures(SDL_Renderer *renderer)
         return;
     }
 
-    s_white_pawn_tex = make_glyph_texture(renderer, s_chess_font, 0x2659u); /* ♙ */
-    s_black_pawn_tex = make_glyph_texture(renderer, s_chess_font, 0x265Fu); /* ♟ */
-
-    if (!s_white_pawn_tex || !s_black_pawn_tex) {
-        SDL_Log("Failed to create glyph textures: %s", SDL_GetError());
+    for (i = 1; i < CHESS_PIECE_COUNT; ++i) {
+        bool is_white = (i < (int)CHESS_PIECE_BLACK_PAWN);
+        SDL_Color fg      = is_white ? white_fg      : black_fg;
+        SDL_Color outline = is_white ? white_outline  : black_outline;
+        s_piece_textures[i] = make_outlined_glyph_texture(
+            renderer, s_chess_font, piece_codepoints[i], fg, outline, 2);
+        if (!s_piece_textures[i]) {
+            SDL_Log("Failed to create texture for piece %d: %s", i, SDL_GetError());
+        }
     }
 }
 
 static void destroy_piece_textures(void)
 {
-    if (s_white_pawn_tex) { SDL_DestroyTexture(s_white_pawn_tex); s_white_pawn_tex = NULL; }
-    if (s_black_pawn_tex) { SDL_DestroyTexture(s_black_pawn_tex); s_black_pawn_tex = NULL; }
-    if (s_chess_font)     { TTF_CloseFont(s_chess_font); s_chess_font = NULL; TTF_Quit(); }
+    int i;
+    for (i = 1; i < CHESS_PIECE_COUNT; ++i) {
+        if (s_piece_textures[i]) {
+            SDL_DestroyTexture(s_piece_textures[i]);
+            s_piece_textures[i] = NULL;
+        }
+    }
+    if (s_chess_font) { TTF_CloseFont(s_chess_font); s_chess_font = NULL; TTF_Quit(); }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -162,9 +226,9 @@ static void render_game_overlay(SDL_Renderer *renderer, int width, int height, c
             }
 
             {
-                SDL_Texture *tex = (piece == CHESS_PIECE_WHITE_PAWN)
-                    ? s_white_pawn_tex
-                    : s_black_pawn_tex;
+                SDL_Texture *tex = ((int)piece > 0 && (int)piece < CHESS_PIECE_COUNT)
+                    ? s_piece_textures[(int)piece]
+                    : NULL;
 
                 if (tex) {
                     float tex_w = 0.0f;
@@ -177,14 +241,14 @@ static void render_game_overlay(SDL_Renderer *renderer, int width, int height, c
                     dst.h = tex_h;
                     SDL_RenderTexture(renderer, tex, NULL, &dst);
                 } else {
-                    /* Fallback: coloured rectangle when font is unavailable */
+                    /* Fallback: coloured rectangle when font unavailable */
                     SDL_FRect pawn_rect = {
                         file * cell_w + (cell_w * 0.25f),
                         rank * cell_h + (cell_h * 0.25f),
                         cell_w * 0.5f,
                         cell_h * 0.5f
                     };
-                    if (piece == CHESS_PIECE_WHITE_PAWN) {
+                    if ((int)piece < (int)CHESS_PIECE_BLACK_PAWN) {
                         SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
                     } else {
                         SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
@@ -441,7 +505,7 @@ int app_run(void)
                             }
                         }
                     } else {
-                        (void)chess_game_select_local_pawn(&game_state, network_session.local_color, file, rank);
+                        (void)chess_game_select_local_piece(&game_state, network_session.local_color, file, rank);
                     }
                 }
             }

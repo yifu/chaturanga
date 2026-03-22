@@ -11,7 +11,18 @@
 typedef enum ChessPiece {
     CHESS_PIECE_EMPTY = 0,
     CHESS_PIECE_WHITE_PAWN,
-    CHESS_PIECE_BLACK_PAWN
+    CHESS_PIECE_WHITE_KNIGHT,
+    CHESS_PIECE_WHITE_BISHOP,
+    CHESS_PIECE_WHITE_ROOK,
+    CHESS_PIECE_WHITE_QUEEN,
+    CHESS_PIECE_WHITE_KING,
+    CHESS_PIECE_BLACK_PAWN,
+    CHESS_PIECE_BLACK_KNIGHT,
+    CHESS_PIECE_BLACK_BISHOP,
+    CHESS_PIECE_BLACK_ROOK,
+    CHESS_PIECE_BLACK_QUEEN,
+    CHESS_PIECE_BLACK_KING,
+    CHESS_PIECE_COUNT
 } ChessPiece;
 
 typedef struct ChessGameState {
@@ -25,7 +36,7 @@ typedef struct ChessGameState {
 void chess_game_state_init(ChessGameState *state);
 void chess_game_clear_selection(ChessGameState *state);
 ChessPiece chess_game_get_piece(const ChessGameState *state, int file, int rank);
-bool chess_game_select_local_pawn(ChessGameState *state, ChessPlayerColor local_color, int file, int rank);
+bool chess_game_select_local_piece(ChessGameState *state, ChessPlayerColor local_color, int file, int rank);
 bool chess_game_try_local_move(
     ChessGameState *state,
     ChessPlayerColor local_color,

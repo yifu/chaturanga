@@ -7,15 +7,15 @@ static bool in_bounds(int file, int rank)
     return file >= 0 && file < CHESS_BOARD_SIZE && rank >= 0 && rank < CHESS_BOARD_SIZE;
 }
 
-static ChessPiece color_to_pawn(ChessPlayerColor color)
+static ChessPlayerColor piece_color(ChessPiece piece)
 {
-    if (color == CHESS_COLOR_WHITE) {
-        return CHESS_PIECE_WHITE_PAWN;
+    if (piece >= CHESS_PIECE_WHITE_PAWN && piece <= CHESS_PIECE_WHITE_KING) {
+        return CHESS_COLOR_WHITE;
     }
-    if (color == CHESS_COLOR_BLACK) {
-        return CHESS_PIECE_BLACK_PAWN;
+    if (piece >= CHESS_PIECE_BLACK_PAWN && piece <= CHESS_PIECE_BLACK_KING) {
+        return CHESS_COLOR_BLACK;
     }
-    return CHESS_PIECE_EMPTY;
+    return CHESS_COLOR_UNASSIGNED;
 }
 
 static ChessPlayerColor opposite_color(ChessPlayerColor color)
@@ -64,10 +64,30 @@ void chess_game_state_init(ChessGameState *state)
     state->selected_file = -1;
     state->selected_rank = -1;
 
+    /* Black back rank */
+    state->board[0][0] = CHESS_PIECE_BLACK_ROOK;
+    state->board[0][1] = CHESS_PIECE_BLACK_KNIGHT;
+    state->board[0][2] = CHESS_PIECE_BLACK_BISHOP;
+    state->board[0][3] = CHESS_PIECE_BLACK_QUEEN;
+    state->board[0][4] = CHESS_PIECE_BLACK_KING;
+    state->board[0][5] = CHESS_PIECE_BLACK_BISHOP;
+    state->board[0][6] = CHESS_PIECE_BLACK_KNIGHT;
+    state->board[0][7] = CHESS_PIECE_BLACK_ROOK;
     for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
         state->board[1][file] = CHESS_PIECE_BLACK_PAWN;
+    }
+    /* White back rank */
+    for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
         state->board[6][file] = CHESS_PIECE_WHITE_PAWN;
     }
+    state->board[7][0] = CHESS_PIECE_WHITE_ROOK;
+    state->board[7][1] = CHESS_PIECE_WHITE_KNIGHT;
+    state->board[7][2] = CHESS_PIECE_WHITE_BISHOP;
+    state->board[7][3] = CHESS_PIECE_WHITE_QUEEN;
+    state->board[7][4] = CHESS_PIECE_WHITE_KING;
+    state->board[7][5] = CHESS_PIECE_WHITE_BISHOP;
+    state->board[7][6] = CHESS_PIECE_WHITE_KNIGHT;
+    state->board[7][7] = CHESS_PIECE_WHITE_ROOK;
 }
 
 void chess_game_clear_selection(ChessGameState *state)
@@ -90,9 +110,9 @@ ChessPiece chess_game_get_piece(const ChessGameState *state, int file, int rank)
     return (ChessPiece)state->board[rank][file];
 }
 
-bool chess_game_select_local_pawn(ChessGameState *state, ChessPlayerColor local_color, int file, int rank)
+bool chess_game_select_local_piece(ChessGameState *state, ChessPlayerColor local_color, int file, int rank)
 {
-    ChessPiece expected;
+    ChessPiece piece;
 
     if (!state || !in_bounds(file, rank)) {
         return false;
@@ -102,8 +122,8 @@ bool chess_game_select_local_pawn(ChessGameState *state, ChessPlayerColor local_
         return false;
     }
 
-    expected = color_to_pawn(local_color);
-    if ((ChessPiece)state->board[rank][file] != expected) {
+    piece = (ChessPiece)state->board[rank][file];
+    if (piece_color(piece) != local_color) {
         return false;
     }
 
@@ -120,8 +140,6 @@ bool chess_game_try_local_move(
     int to_rank,
     ChessMovePayload *out_move)
 {
-    ChessPiece expected;
-
     if (!state || !out_move || !in_bounds(to_file, to_rank) || !state->has_selection) {
         return false;
     }
@@ -130,8 +148,7 @@ bool chess_game_try_local_move(
         return false;
     }
 
-    expected = color_to_pawn(local_color);
-    if ((ChessPiece)state->board[state->selected_rank][state->selected_file] != expected) {
+    if (piece_color((ChessPiece)state->board[state->selected_rank][state->selected_file]) != local_color) {
         return false;
     }
 
@@ -151,8 +168,6 @@ bool chess_game_try_local_move(
 
 bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote_color, const ChessMovePayload *move)
 {
-    ChessPiece expected;
-
     if (!state || !move) {
         return false;
     }
@@ -166,8 +181,7 @@ bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote
         return false;
     }
 
-    expected = color_to_pawn(remote_color);
-    if ((ChessPiece)state->board[move->from_rank][move->from_file] != expected) {
+    if (piece_color((ChessPiece)state->board[move->from_rank][move->from_file]) != remote_color) {
         return false;
     }
 
