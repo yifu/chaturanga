@@ -705,6 +705,206 @@ static void app_loop_context_shutdown(AppLoopContext *ctx)
     SDL_Quit();
 }
 
+static void handle_sdl_events(AppLoopContext *ctx)
+{
+    SDL_Event event;
+
+    if (!ctx) {
+        return;
+    }
+
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_QUIT) {
+            ctx->running = false;
+        } else if (
+            event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            event.button.button == SDL_BUTTON_LEFT &&
+            !ctx->network_session.game_started &&
+            ctx->lobby.discovered_peer_count > 0
+        ) {
+            const int peer_row_height = 60;
+            const int margin = 10;
+            const int peer_item_width = 400;
+            int width = 0;
+            int height = 0;
+            int peer_item_x;
+            int lobby_start_y;
+            int clicked_peer = -1;
+            int i;
+
+            SDL_GetWindowSize(ctx->window, &width, &height);
+            peer_item_x = (width - peer_item_width) / 2;
+            lobby_start_y = margin + 50;
+
+            for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
+                int peer_y = lobby_start_y + i * peer_row_height;
+                if (event.button.x >= peer_item_x &&
+                    event.button.x < peer_item_x + peer_item_width &&
+                    event.button.y >= peer_y &&
+                    event.button.y < peer_y + peer_row_height) {
+                    clicked_peer = i;
+                    break;
+                }
+            }
+
+            if (clicked_peer >= 0) {
+                if (ctx->lobby.selected_peer_idx == clicked_peer) {
+                    ChessChallengeState current_state = chess_lobby_get_challenge_state(&ctx->lobby, clicked_peer);
+                    if (current_state == CHESS_CHALLENGE_NONE) {
+                        chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
+                        chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[clicked_peer].peer);
+                        SDL_Log("Challenge sent to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.uuid);
+                    } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
+                        chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_NONE);
+                        SDL_Log("Challenge cancelled for peer %d", clicked_peer);
+                    } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
+                        ChessAcceptPayload accept;
+                        memset(&accept, 0, sizeof(accept));
+                        SDL_strlcpy(accept.acceptor_uuid, ctx->network_session.local_peer.uuid, sizeof(accept.acceptor_uuid));
+                        if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
+                            ctx->challenge_exchange_completed = true;
+                            chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);
+                            chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[clicked_peer].peer);
+                            SDL_Log("Accepted challenge from peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.uuid);
+                            SDL_Log("Challenge exchange completed (local accept), waiting START/ACK");
+                        } else {
+                            SDL_Log("Cannot accept challenge yet: transport not ready");
+                        }
+                    }
+                } else {
+                    ctx->lobby.selected_peer_idx = clicked_peer;
+                    SDL_Log("Selected peer %d", clicked_peer);
+                }
+            }
+        } else if (
+            event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            event.button.button == SDL_BUTTON_LEFT &&
+            ctx->network_session.game_started &&
+            ctx->connection.fd >= 0
+        ) {
+            int width = 0;
+            int height = 0;
+            float cell_w;
+            float cell_h;
+            bool black_perspective;
+            int screen_file;
+            int screen_rank;
+            int file;
+            int rank;
+
+            SDL_GetWindowSize(ctx->window, &width, &height);
+            cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+            cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+            black_perspective = use_black_perspective(ctx->network_session.local_color);
+            screen_file = (int)(event.button.x / cell_w);
+            screen_rank = (int)(event.button.y / cell_h);
+            file = screen_to_board_index(screen_file, black_perspective);
+            rank = screen_to_board_index(screen_rank, black_perspective);
+
+            if (file >= 0 && file < CHESS_BOARD_SIZE && rank >= 0 && rank < CHESS_BOARD_SIZE) {
+                if (ctx->game_state.has_selection &&
+                    ctx->game_state.selected_file == file &&
+                    ctx->game_state.selected_rank == rank) {
+                    chess_game_clear_selection(&ctx->game_state);
+                } else if (ctx->game_state.has_selection) {
+                    ChessMovePayload move;
+                    if (chess_game_try_local_move(&ctx->game_state, ctx->network_session.local_color, file, rank, &move)) {
+                        if (!chess_tcp_send_packet(
+                            &ctx->connection,
+                            CHESS_MSG_MOVE,
+                            ctx->move_sequence++,
+                            &move,
+                            (uint32_t)sizeof(move))) {
+                            SDL_Log("Failed to send MOVE packet; closing connection");
+                            chess_tcp_connection_close(&ctx->connection);
+                        } else {
+                            SDL_Log(
+                                "Sent local move: (%u,%u) -> (%u,%u)",
+                                (unsigned)move.from_file,
+                                (unsigned)move.from_rank,
+                                (unsigned)move.to_file,
+                                (unsigned)move.to_rank
+                            );
+                        }
+                    }
+                } else {
+                    (void)chess_game_select_local_piece(&ctx->game_state, ctx->network_session.local_color, file, rank);
+                }
+            }
+        }
+    }
+}
+
+static void poll_discovery_and_update_lobby(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    if (!ctx->network_session.peer_available) {
+        if (chess_discovery_poll(&ctx->discovery, &ctx->discovered_peer)) {
+            chess_lobby_add_or_update_peer(&ctx->lobby, &ctx->discovered_peer.peer, ctx->discovered_peer.tcp_port);
+            chess_network_session_set_remote(&ctx->network_session, &ctx->discovered_peer.peer);
+            SDL_Log(
+                "New peer discovered: %.8s... (port=%u)",
+                ctx->discovered_peer.peer.uuid,
+                (unsigned int)ctx->discovered_peer.tcp_port
+            );
+        }
+    }
+}
+
+static void render_frame(AppLoopContext *ctx)
+{
+    int width = 0;
+    int height = 0;
+
+    if (!ctx || !ctx->renderer || !ctx->window) {
+        return;
+    }
+
+    SDL_GetWindowSize(ctx->window, &width, &height);
+    SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 255);
+    SDL_RenderClear(ctx->renderer);
+
+    if (!ctx->network_session.game_started) {
+        render_lobby(ctx->renderer, width, height, &ctx->lobby, s_coord_font);
+    } else {
+        render_board(ctx->renderer, width, height);
+        render_game_overlay(ctx->renderer, width, height, &ctx->game_state, ctx->network_session.local_color);
+        render_board_coordinates(ctx->renderer, width, height, ctx->network_session.local_color);
+    }
+
+    SDL_RenderPresent(ctx->renderer);
+}
+
+static void log_network_state_transition(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    if (ctx->network_session.state == ctx->last_state) {
+        return;
+    }
+
+    SDL_Log(
+        "Network state changed: %s -> %s",
+        network_state_to_string(ctx->last_state),
+        network_state_to_string(ctx->network_session.state)
+    );
+
+    if (ctx->network_session.state == CHESS_NET_CONNECTING) {
+        if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+            SDL_Log("Local role: SERVER (smaller IP)");
+        } else if (ctx->network_session.role == CHESS_ROLE_CLIENT) {
+            SDL_Log("Local role: CLIENT");
+        }
+    }
+
+    ctx->last_state = ctx->network_session.state;
+}
+
 int app_run(void)
 {
     AppLoopContext ctx;
@@ -800,143 +1000,8 @@ int app_run(void)
     last_state = network_session.state;
 
     while (running) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT) {
-                running = false;
-            } else if (
-                event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-                event.button.button == SDL_BUTTON_LEFT &&
-                !network_session.game_started &&
-                lobby.discovered_peer_count > 0
-            ) {
-                /* Lobby click handler */
-                const int peer_row_height = 60;
-                const int margin = 10;
-                const int peer_item_width = 400;
-                int width = 0;
-                int height = 0;
-                int peer_item_x;
-                int lobby_start_y;
-                int clicked_peer = -1;
-                int i;
-
-                SDL_GetWindowSize(window, &width, &height);
-                peer_item_x = (width - peer_item_width) / 2;
-                lobby_start_y = margin + 50;
-
-                /* Check which peer row was clicked */
-                for (i = 0; i < lobby.discovered_peer_count; ++i) {
-                    int peer_y = lobby_start_y + i * peer_row_height;
-                    if (event.button.x >= peer_item_x &&
-                        event.button.x < peer_item_x + peer_item_width &&
-                        event.button.y >= peer_y &&
-                        event.button.y < peer_y + peer_row_height) {
-                        clicked_peer = i;
-                        break;
-                    }
-                }
-
-                if (clicked_peer >= 0) {
-                    if (lobby.selected_peer_idx == clicked_peer) {
-                        /* Second click: toggle challenge state */
-                        ChessChallengeState current_state = chess_lobby_get_challenge_state(&lobby, clicked_peer);
-                        if (current_state == CHESS_CHALLENGE_NONE) {
-                            chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
-                            chess_network_session_set_remote(&network_session, &lobby.discovered_peers[clicked_peer].peer);
-                            SDL_Log("Challenge sent to peer %d (%.8s...)", clicked_peer, lobby.discovered_peers[clicked_peer].peer.uuid);
-                        } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
-                            chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_NONE);
-                            SDL_Log("Challenge cancelled for peer %d", clicked_peer);
-                        } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
-                            ChessAcceptPayload accept;
-                            memset(&accept, 0, sizeof(accept));
-                            SDL_strlcpy(accept.acceptor_uuid, network_session.local_peer.uuid, sizeof(accept.acceptor_uuid));
-                            if (connection.fd >= 0 && chess_tcp_send_accept(&connection, &accept)) {
-                                challenge_exchange_completed = true;
-                                chess_lobby_set_challenge_state(&lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);
-                                chess_network_session_set_remote(&network_session, &lobby.discovered_peers[clicked_peer].peer);
-                                SDL_Log("Accepted challenge from peer %d (%.8s...)", clicked_peer, lobby.discovered_peers[clicked_peer].peer.uuid);
-                                SDL_Log("Challenge exchange completed (local accept), waiting START/ACK");
-                            } else {
-                                SDL_Log("Cannot accept challenge yet: transport not ready");
-                            }
-                        }
-                    } else {
-                        /* First click: select peer */
-                        lobby.selected_peer_idx = clicked_peer;
-                        SDL_Log("Selected peer %d", clicked_peer);
-                    }
-                }
-            } else if (
-                event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-                event.button.button == SDL_BUTTON_LEFT &&
-                network_session.game_started &&
-                connection.fd >= 0
-            ) {
-                int width = 0;
-                int height = 0;
-                float cell_w;
-                float cell_h;
-                bool black_perspective;
-                int screen_file;
-                int screen_rank;
-                int file;
-                int rank;
-
-                SDL_GetWindowSize(window, &width, &height);
-                cell_w = (float)width / (float)CHESS_BOARD_SIZE;
-                cell_h = (float)height / (float)CHESS_BOARD_SIZE;
-                black_perspective = use_black_perspective(network_session.local_color);
-                screen_file = (int)(event.button.x / cell_w);
-                screen_rank = (int)(event.button.y / cell_h);
-                file = screen_to_board_index(screen_file, black_perspective);
-                rank = screen_to_board_index(screen_rank, black_perspective);
-
-                if (file >= 0 && file < CHESS_BOARD_SIZE && rank >= 0 && rank < CHESS_BOARD_SIZE) {
-                    if (game_state.has_selection &&
-                        game_state.selected_file == file &&
-                        game_state.selected_rank == rank) {
-                        chess_game_clear_selection(&game_state);
-                    } else if (game_state.has_selection) {
-                        ChessMovePayload move;
-                        if (chess_game_try_local_move(&game_state, network_session.local_color, file, rank, &move)) {
-                            if (!chess_tcp_send_packet(
-                                &connection,
-                                CHESS_MSG_MOVE,
-                                move_sequence++,
-                                &move,
-                                (uint32_t)sizeof(move))) {
-                                SDL_Log("Failed to send MOVE packet; closing connection");
-                                chess_tcp_connection_close(&connection);
-                            } else {
-                                SDL_Log(
-                                    "Sent local move: (%u,%u) -> (%u,%u)",
-                                    (unsigned)move.from_file,
-                                    (unsigned)move.from_rank,
-                                    (unsigned)move.to_file,
-                                    (unsigned)move.to_rank
-                                );
-                            }
-                        }
-                    } else {
-                        (void)chess_game_select_local_piece(&game_state, network_session.local_color, file, rank);
-                    }
-                }
-            }
-        }
-
-        if (!network_session.peer_available) {
-            if (chess_discovery_poll(&discovery, &discovered_peer)) {
-                chess_lobby_add_or_update_peer(&lobby, &discovered_peer.peer, discovered_peer.tcp_port);
-                chess_network_session_set_remote(&network_session, &discovered_peer.peer);
-                SDL_Log(
-                        "New peer discovered: %.8s... (port=%u)",
-                        discovered_peer.peer.uuid,
-                    (unsigned int)discovered_peer.tcp_port
-                );
-            }
-        }
+        handle_sdl_events(&ctx);
+        poll_discovery_and_update_lobby(&ctx);
 
         {
             ChessSocketEvents socket_events;
@@ -1222,40 +1287,9 @@ int app_run(void)
 
         chess_network_session_step(&network_session);
 
-        if (network_session.state != last_state) {
-            SDL_Log(
-                "Network state changed: %s -> %s",
-                network_state_to_string(last_state),
-                network_state_to_string(network_session.state)
-            );
+        log_network_state_transition(&ctx);
 
-            if (network_session.state == CHESS_NET_CONNECTING) {
-                if (network_session.role == CHESS_ROLE_SERVER) {
-                    SDL_Log("Local role: SERVER (smaller IP)");
-                } else if (network_session.role == CHESS_ROLE_CLIENT) {
-                    SDL_Log("Local role: CLIENT");
-                }
-            }
-
-            last_state = network_session.state;
-        }
-
-        int width = 0;
-        int height = 0;
-        SDL_GetWindowSize(window, &width, &height);
-
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
-
-        if (!network_session.game_started) {
-            render_lobby(renderer, width, height, &lobby, s_coord_font);
-        } else {
-            render_board(renderer, width, height);
-            render_game_overlay(renderer, width, height, &game_state, network_session.local_color);
-            render_board_coordinates(renderer, width, height, network_session.local_color);
-        }
-
-        SDL_RenderPresent(renderer);
+        render_frame(&ctx);
     }
 
     app_loop_context_shutdown(&ctx);
