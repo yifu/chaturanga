@@ -207,10 +207,31 @@ static ChessPlayerColor opposite_color(ChessPlayerColor color)
     return CHESS_COLOR_UNASSIGNED;
 }
 
-static void render_game_overlay(SDL_Renderer *renderer, int width, int height, const ChessGameState *game_state)
+static bool use_black_perspective(ChessPlayerColor local_color)
+{
+    return local_color == CHESS_COLOR_BLACK;
+}
+
+static int board_to_screen_index(int idx, bool black_perspective)
+{
+    return black_perspective ? (CHESS_BOARD_SIZE - 1 - idx) : idx;
+}
+
+static int screen_to_board_index(int idx, bool black_perspective)
+{
+    return black_perspective ? (CHESS_BOARD_SIZE - 1 - idx) : idx;
+}
+
+static void render_game_overlay(
+    SDL_Renderer *renderer,
+    int width,
+    int height,
+    const ChessGameState *game_state,
+    ChessPlayerColor local_color)
 {
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
     const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    const bool black_perspective = use_black_perspective(local_color);
     int rank;
     int file;
 
@@ -233,18 +254,22 @@ static void render_game_overlay(SDL_Renderer *renderer, int width, int height, c
                 if (tex) {
                     float tex_w = 0.0f;
                     float tex_h = 0.0f;
+                    int screen_file = board_to_screen_index(file, black_perspective);
+                    int screen_rank = board_to_screen_index(rank, black_perspective);
                     SDL_FRect dst;
                     SDL_GetTextureSize(tex, &tex_w, &tex_h);
-                    dst.x = file * cell_w + (cell_w - tex_w) * 0.5f;
-                    dst.y = rank * cell_h + (cell_h - tex_h) * 0.5f;
+                    dst.x = screen_file * cell_w + (cell_w - tex_w) * 0.5f;
+                    dst.y = screen_rank * cell_h + (cell_h - tex_h) * 0.5f;
                     dst.w = tex_w;
                     dst.h = tex_h;
                     SDL_RenderTexture(renderer, tex, NULL, &dst);
                 } else {
                     /* Fallback: coloured rectangle when font unavailable */
+                    int screen_file = board_to_screen_index(file, black_perspective);
+                    int screen_rank = board_to_screen_index(rank, black_perspective);
                     SDL_FRect pawn_rect = {
-                        file * cell_w + (cell_w * 0.25f),
-                        rank * cell_h + (cell_h * 0.25f),
+                        screen_file * cell_w + (cell_w * 0.25f),
+                        screen_rank * cell_h + (cell_h * 0.25f),
                         cell_w * 0.5f,
                         cell_h * 0.5f
                     };
@@ -260,9 +285,11 @@ static void render_game_overlay(SDL_Renderer *renderer, int width, int height, c
     }
 
     if (game_state->has_selection) {
+        int screen_file = board_to_screen_index(game_state->selected_file, black_perspective);
+        int screen_rank = board_to_screen_index(game_state->selected_rank, black_perspective);
         SDL_FRect selected_rect = {
-            game_state->selected_file * cell_w + 2.0f,
-            game_state->selected_rank * cell_h + 2.0f,
+            screen_file * cell_w + 2.0f,
+            screen_rank * cell_h + 2.0f,
             cell_w - 4.0f,
             cell_h - 4.0f
         };
@@ -469,14 +496,20 @@ int app_run(void)
                 int height = 0;
                 float cell_w;
                 float cell_h;
+                bool black_perspective;
+                int screen_file;
+                int screen_rank;
                 int file;
                 int rank;
 
                 SDL_GetWindowSize(window, &width, &height);
                 cell_w = (float)width / (float)CHESS_BOARD_SIZE;
                 cell_h = (float)height / (float)CHESS_BOARD_SIZE;
-                file = (int)(event.button.x / cell_w);
-                rank = (int)(event.button.y / cell_h);
+                black_perspective = use_black_perspective(network_session.local_color);
+                screen_file = (int)(event.button.x / cell_w);
+                screen_rank = (int)(event.button.y / cell_h);
+                file = screen_to_board_index(screen_file, black_perspective);
+                rank = screen_to_board_index(screen_rank, black_perspective);
 
                 if (file >= 0 && file < CHESS_BOARD_SIZE && rank >= 0 && rank < CHESS_BOARD_SIZE) {
                     if (game_state.has_selection &&
@@ -693,7 +726,7 @@ int app_run(void)
         SDL_RenderClear(renderer);
 
         render_board(renderer, width, height);
-        render_game_overlay(renderer, width, height, &game_state);
+        render_game_overlay(renderer, width, height, &game_state, network_session.local_color);
 
         SDL_RenderPresent(renderer);
     }
