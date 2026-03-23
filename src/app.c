@@ -69,11 +69,15 @@ static const char *network_state_to_string(ChessNetworkState state)
 
 static TTF_Font    *s_chess_font                     = NULL;
 static TTF_Font    *s_coord_font                     = NULL;
+static TTF_Font    *s_lobby_font                     = NULL;
 static SDL_Texture *s_piece_textures[CHESS_PIECE_COUNT];
 static SDL_Texture *s_file_label_textures[CHESS_BOARD_SIZE][2];
 static SDL_Texture *s_rank_label_textures[CHESS_BOARD_SIZE][2];
 static bool         s_ttf_initialized                = false;
-static bool         s_lobby_unicode_icons_available  = false;
+static bool         s_lobby_icon_pending_available   = false;
+static bool         s_lobby_icon_incoming_available  = false;
+static bool         s_lobby_icon_matched_available   = false;
+static const char  *s_lobby_font_path                = NULL;
 
 static TTF_Font *open_font_from_candidates(const char * const *font_paths, float font_size)
 {
@@ -131,12 +135,10 @@ static bool text_surface_equals(SDL_Surface *a, SDL_Surface *b)
     return true;
 }
 
-static bool font_supports_lobby_icons(TTF_Font *font)
+static bool font_supports_icon(TTF_Font *font, const char *icon_utf8)
 {
     const SDL_Color color = {255, 255, 255, 255};
-    SDL_Surface *hourglass = NULL;
-    SDL_Surface *swords = NULL;
-    SDL_Surface *check = NULL;
+    SDL_Surface *icon = NULL;
     SDL_Surface *tofu_square = NULL;
     SDL_Surface *question = NULL;
     bool supported = false;
@@ -145,44 +147,23 @@ static bool font_supports_lobby_icons(TTF_Font *font)
         return false;
     }
 
-    hourglass = TTF_RenderText_Blended(font, "⏳", SDL_strlen("⏳"), color);
-    swords = TTF_RenderText_Blended(font, "⚔", SDL_strlen("⚔"), color);
-    check = TTF_RenderText_Blended(font, "✓", SDL_strlen("✓"), color);
+    icon = TTF_RenderText_Blended(font, icon_utf8, SDL_strlen(icon_utf8), color);
     tofu_square = TTF_RenderText_Blended(font, "□", SDL_strlen("□"), color);
     question = TTF_RenderText_Blended(font, "?", SDL_strlen("?"), color);
 
-    if (!hourglass || !swords || !check || !tofu_square || !question) {
+    if (!icon || !tofu_square || !question) {
         goto cleanup;
     }
 
-    /* Conservative check: accept unicode icons only if each icon has a distinct raster
-     * and none match common fallback glyph shapes. */
-    if (text_surface_equals(hourglass, swords) ||
-        text_surface_equals(hourglass, check) ||
-        text_surface_equals(swords, check)) {
-        goto cleanup;
-    }
-
-    if (text_surface_equals(hourglass, tofu_square) ||
-        text_surface_equals(swords, tofu_square) ||
-        text_surface_equals(check, tofu_square) ||
-        text_surface_equals(hourglass, question) ||
-        text_surface_equals(swords, question) ||
-        text_surface_equals(check, question)) {
+    if (text_surface_equals(icon, tofu_square) || text_surface_equals(icon, question)) {
         goto cleanup;
     }
 
     supported = true;
 
 cleanup:
-    if (hourglass) {
-        SDL_DestroySurface(hourglass);
-    }
-    if (swords) {
-        SDL_DestroySurface(swords);
-    }
-    if (check) {
-        SDL_DestroySurface(check);
+    if (icon) {
+        SDL_DestroySurface(icon);
     }
     if (tofu_square) {
         SDL_DestroySurface(tofu_square);
@@ -194,30 +175,86 @@ cleanup:
     return supported;
 }
 
-static const char *lobby_state_suffix(ChessChallengeState state)
+static int lobby_icon_coverage_score(TTF_Font *font)
 {
-    if (s_lobby_unicode_icons_available) {
-        switch (state) {
-        case CHESS_CHALLENGE_NONE:
-            return "";
-        case CHESS_CHALLENGE_OUTGOING_PENDING:
-            return " [⏳]";
-        case CHESS_CHALLENGE_INCOMING_PENDING:
-            return " [⚔]";
-        case CHESS_CHALLENGE_MATCHED:
-            return " [✓]";
-        }
+    int score = 0;
+
+    if (!font) {
+        return 0;
     }
 
+    if (font_supports_icon(font, "⏳")) {
+        score += 1;
+    }
+    if (font_supports_icon(font, "⚔")) {
+        score += 1;
+    }
+    if (font_supports_icon(font, "✓")) {
+        score += 1;
+    }
+
+    return score;
+}
+
+static TTF_Font *open_lobby_font_from_candidates(const char * const *font_paths, float font_size, const char **out_font_path)
+{
+    int i;
+    int best_score = 0;
+    TTF_Font *best_font = NULL;
+    const char *best_path = NULL;
+
+    if (out_font_path) {
+        *out_font_path = NULL;
+    }
+
+    for (i = 0; font_paths[i] != NULL; ++i) {
+        TTF_Font *font = TTF_OpenFont(font_paths[i], font_size);
+        int score;
+        if (!font) {
+            continue;
+        }
+
+        score = lobby_icon_coverage_score(font);
+        if (score > best_score) {
+            if (best_font) {
+                TTF_CloseFont(best_font);
+            }
+            best_font = font;
+            best_path = font_paths[i];
+            best_score = score;
+            continue;
+        }
+
+        TTF_CloseFont(font);
+    }
+
+    if (best_font) {
+        SDL_Log(
+            "UI: loaded best lobby icon font %s (size=%.1f, coverage=%d/3)",
+            best_path ? best_path : "(unknown)",
+            (double)font_size,
+            best_score
+        );
+        if (out_font_path) {
+            *out_font_path = best_path;
+        }
+        return best_font;
+    }
+
+    return NULL;
+}
+
+static const char *lobby_state_suffix(ChessChallengeState state)
+{
     switch (state) {
     case CHESS_CHALLENGE_NONE:
         return "";
     case CHESS_CHALLENGE_OUTGOING_PENDING:
-        return " [PENDING]";
+        return s_lobby_icon_pending_available ? " [⏳]" : " [PENDING]";
     case CHESS_CHALLENGE_INCOMING_PENDING:
-        return " [INCOMING]";
+        return s_lobby_icon_incoming_available ? " [⚔]" : " [INCOMING]";
     case CHESS_CHALLENGE_MATCHED:
-        return " [MATCHED]";
+        return s_lobby_icon_matched_available ? " [✓]" : " [MATCHED]";
     }
 
     return "";
@@ -277,9 +314,28 @@ cleanup:
 static void init_piece_textures(SDL_Renderer *renderer)
 {
     /* Ordered list of fonts known to carry chess glyphs (U+2654-265F) on macOS */
-    static const char * const font_paths[] = {
+    static const char * const chess_font_paths[] = {
         "/Library/Fonts/Arial Unicode.ttf",
         "/System/Library/Fonts/Apple Symbols.ttf",
+        NULL
+    };
+    /* Coordinate labels: keep broad compatibility with readable latin glyphs */
+    static const char * const coord_font_paths[] = {
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        NULL
+    };
+    /* Lobby status icons: prefer symbol-complete fonts first */
+    static const char * const lobby_icon_font_paths[] = {
+        "/System/Library/Fonts/Supplemental/STIXTwoMath.otf",
+        "/System/Library/Fonts/Apple Color Emoji.ttc",
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        "/System/Library/Fonts/CJKSymbolsFallback.ttc",
+        "/System/Library/Fonts/Symbol.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/Library/Fonts/NotoSansSymbols2-Regular.ttf",
+        "/System/Library/Fonts/Supplemental/NotoSansSymbols2-Regular.ttf",
         NULL
     };
     /* Codepoints indexed by ChessPiece enum value (0 = EMPTY, skipped) */
@@ -314,7 +370,7 @@ static void init_piece_textures(SDL_Renderer *renderer)
     }
     s_ttf_initialized = true;
 
-    s_chess_font = open_font_from_candidates(font_paths, font_size);
+    s_chess_font = open_font_from_candidates(chess_font_paths, font_size);
     if (!s_chess_font) {
         SDL_Log("UI: no chess font found, piece rendering will use fallback rectangles");
     }
@@ -332,15 +388,10 @@ static void init_piece_textures(SDL_Renderer *renderer)
         }
     }
 
-    s_coord_font = open_font_from_candidates(font_paths, 16.0f);
+    s_coord_font = open_font_from_candidates(coord_font_paths, 16.0f);
     if (!s_coord_font) {
         SDL_Log("UI: no coordinate font found, board coordinates disabled");
     } else {
-        s_lobby_unicode_icons_available = font_supports_lobby_icons(s_coord_font);
-        if (!s_lobby_unicode_icons_available) {
-            SDL_Log("UI: lobby unicode icons unavailable in current font, using ASCII fallback labels");
-        }
-
         for (i = 0; i < CHESS_BOARD_SIZE; ++i) {
             char file_label[2] = { (char)('a' + i), '\0' };
             char rank_label[2] = { (char)('8' - i), '\0' };
@@ -350,6 +401,28 @@ static void init_piece_textures(SDL_Renderer *renderer)
             s_rank_label_textures[i][0] = make_text_texture(renderer, s_coord_font, rank_label, coord_on_light);
             s_rank_label_textures[i][1] = make_text_texture(renderer, s_coord_font, rank_label, coord_on_dark);
         }
+    }
+
+    s_lobby_font = open_lobby_font_from_candidates(lobby_icon_font_paths, 16.0f, &s_lobby_font_path);
+    if (s_lobby_font) {
+        s_lobby_icon_pending_available = font_supports_icon(s_lobby_font, "⏳");
+        s_lobby_icon_incoming_available = font_supports_icon(s_lobby_font, "⚔");
+        s_lobby_icon_matched_available = font_supports_icon(s_lobby_font, "✓");
+        SDL_Log(
+            "UI: lobby rendering font %s (icons: pending=%s incoming=%s matched=%s)",
+            s_lobby_font_path ? s_lobby_font_path : "(unknown)",
+            s_lobby_icon_pending_available ? "yes" : "no",
+            s_lobby_icon_incoming_available ? "yes" : "no",
+            s_lobby_icon_matched_available ? "yes" : "no"
+        );
+    } else {
+        s_lobby_icon_pending_available = false;
+        s_lobby_icon_incoming_available = false;
+        s_lobby_icon_matched_available = false;
+        s_lobby_font = s_coord_font;
+        s_lobby_font_path = "(fallback: coordinate font)";
+        SDL_Log("UI: no icon-capable lobby font found, using ASCII fallback labels");
+        SDL_Log("UI: lobby rendering font %s", s_lobby_font_path);
     }
 }
 
@@ -386,6 +459,14 @@ static void destroy_piece_textures(void)
         TTF_CloseFont(s_chess_font);
         s_chess_font = NULL;
     }
+    if (s_lobby_font && s_lobby_font != s_coord_font) {
+        TTF_CloseFont(s_lobby_font);
+        s_lobby_font = NULL;
+    }
+    s_lobby_icon_pending_available = false;
+    s_lobby_icon_incoming_available = false;
+    s_lobby_icon_matched_available = false;
+    s_lobby_font_path = NULL;
     if (s_coord_font) {
         TTF_CloseFont(s_coord_font);
         s_coord_font = NULL;
@@ -1234,7 +1315,7 @@ static void app_render_frame(AppLoopContext *ctx)
     SDL_RenderClear(ctx->renderer);
 
     if (!ctx->network_session.game_started) {
-        render_lobby(ctx->renderer, width, height, &ctx->lobby, s_coord_font);
+        render_lobby(ctx->renderer, width, height, &ctx->lobby, s_lobby_font ? s_lobby_font : s_coord_font);
     } else {
         render_board(ctx->renderer, width, height);
         render_game_overlay(
