@@ -19,11 +19,17 @@ endif()
 add_executable(chess_app
     src/main.c
     src/app.c
+    src/input_handler.c
+    src/persistence.c
+    src/ui/fonts.c
+    src/ui/lobby.c
+    src/ui/game.c
     src/game_state.c
     src/lobby_state.c
     src/render/board.c
     src/network/peer.c
     src/network/session.c
+    src/network/handler.c
     src/network/discovery.c
     src/network/tcp.c
 )

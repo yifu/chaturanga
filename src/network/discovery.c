@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 /* ============================================================
  * DNS-SD (Bonjour) backend — macOS
  * ============================================================ */
@@ -108,7 +109,8 @@ static bool dnssd_pump(DNSServiceRef ref)
     FD_SET(fd, &rfds);
 
     if (select(fd + 1, &rfds, NULL, NULL, &tv) > 0) {
-        return DNSServiceProcessResult(ref) == kDNSServiceErr_NoError;
+        const bool ok = DNSServiceProcessResult(ref) == kDNSServiceErr_NoError;
+        return ok;
     }
 
     return true;
@@ -142,6 +144,7 @@ static void self_addr_callback(
             ctx->local_peer.ipv4_host_order = ip;
         }
     }
+
 }
 
 static void addr_callback(
