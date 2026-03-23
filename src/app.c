@@ -879,10 +879,13 @@ typedef struct AppLoopContext {
     int remote_move_to_rank;
     uint64_t remote_move_anim_started_at_ms;
     uint32_t remote_move_anim_duration_ms;
+    char status_message[192];
+    uint64_t status_message_until_ms;
     bool running;
 } AppLoopContext;
 
 static void net_reset_transport_progress(AppLoopContext *ctx);
+static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason);
 
 /* App context and startup helpers */
 static void app_loop_context_init_defaults(AppLoopContext *ctx)
@@ -975,10 +978,71 @@ static void app_init_runtime_state(AppLoopContext *ctx)
     ctx->remote_move_to_rank = -1;
     ctx->remote_move_anim_started_at_ms = 0;
     ctx->remote_move_anim_duration_ms = s_remote_move_anim_default_ms;
+    ctx->status_message[0] = '\0';
+    ctx->status_message_until_ms = 0;
 
     net_reset_transport_progress(ctx);
     chess_game_state_init(&ctx->game_state);
     chess_lobby_init(&ctx->lobby);
+}
+
+static void app_set_status_message(AppLoopContext *ctx, const char *message, uint32_t duration_ms)
+{
+    if (!ctx || !message) {
+        return;
+    }
+
+    SDL_strlcpy(ctx->status_message, message, sizeof(ctx->status_message));
+    ctx->status_message_until_ms = SDL_GetTicks() + (uint64_t)duration_ms;
+}
+
+static void app_clear_challenges(AppLoopContext *ctx)
+{
+    int i;
+
+    if (!ctx) {
+        return;
+    }
+
+    for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
+        chess_lobby_set_challenge_state(&ctx->lobby, i, CHESS_CHALLENGE_NONE);
+    }
+}
+
+static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
+{
+    if (!ctx) {
+        return;
+    }
+
+    if (reason && reason[0] != '\0') {
+        SDL_Log("NET: peer disconnected (%s)", reason);
+    } else {
+        SDL_Log("NET: peer disconnected");
+    }
+
+    chess_tcp_connection_close(&ctx->connection);
+    net_reset_transport_progress(ctx);
+
+    ctx->start_completed = false;
+    ctx->start_failures = 0u;
+    ctx->pending_start_payload.game_id = 0u;
+    ctx->network_session.transport_ready = false;
+    ctx->network_session.game_started = false;
+    ctx->network_session.role = CHESS_ROLE_UNKNOWN;
+    ctx->network_session.state = CHESS_NET_IDLE_DISCOVERY;
+    ctx->drag_active = false;
+    ctx->drag_piece = CHESS_PIECE_EMPTY;
+    ctx->remote_move_anim_active = false;
+    ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
+    chess_game_clear_selection(&ctx->game_state);
+    app_clear_challenges(ctx);
+
+    app_set_status_message(
+        ctx,
+        "Opponent disconnected. Waiting for reconnection support; back in lobby.",
+        5000u
+    );
 }
 
 static bool app_init_networking(AppLoopContext *ctx)
@@ -1137,7 +1201,7 @@ static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_ran
             &move,
             (uint32_t)sizeof(move))) {
         SDL_Log("NET: failed to send MOVE packet, closing connection");
-        chess_tcp_connection_close(&ctx->connection);
+        app_handle_peer_disconnect(ctx, "failed to send MOVE packet");
         return false;
     }
 
@@ -1409,6 +1473,50 @@ static void app_render_remote_move_animation(AppLoopContext *ctx, int width, int
     }
 }
 
+static void app_render_status_message(AppLoopContext *ctx, int width)
+{
+    SDL_Texture *msg_tex;
+
+    if (!ctx || !ctx->renderer || !ctx->status_message[0]) {
+        return;
+    }
+
+    if (SDL_GetTicks() >= ctx->status_message_until_ms) {
+        ctx->status_message[0] = '\0';
+        return;
+    }
+
+    msg_tex = make_text_texture(
+        ctx->renderer,
+        s_lobby_font ? s_lobby_font : s_coord_font,
+        ctx->status_message,
+        (SDL_Color){255, 240, 130, 255}
+    );
+    if (msg_tex) {
+        float tex_w = 0.0f;
+        float tex_h = 0.0f;
+        SDL_FRect bg_rect;
+        SDL_FRect dst;
+
+        SDL_GetTextureSize(msg_tex, &tex_w, &tex_h);
+        bg_rect.w = tex_w + 16.0f;
+        bg_rect.h = tex_h + 10.0f;
+        bg_rect.x = ((float)width - bg_rect.w) * 0.5f;
+        bg_rect.y = 8.0f;
+        dst.w = tex_w;
+        dst.h = tex_h;
+        dst.x = bg_rect.x + 8.0f;
+        dst.y = bg_rect.y + 5.0f;
+
+        SDL_SetRenderDrawColor(ctx->renderer, 35, 35, 35, 230);
+        SDL_RenderFillRect(ctx->renderer, &bg_rect);
+        SDL_SetRenderDrawColor(ctx->renderer, 215, 170, 70, 255);
+        SDL_RenderRect(ctx->renderer, &bg_rect);
+        SDL_RenderTexture(ctx->renderer, msg_tex, NULL, &dst);
+        SDL_DestroyTexture(msg_tex);
+    }
+}
+
 static void app_render_frame(AppLoopContext *ctx)
 {
     int width = 0;
@@ -1452,6 +1560,8 @@ static void app_render_frame(AppLoopContext *ctx)
         app_render_drag_preview(ctx, width, height);
         render_board_coordinates(ctx->renderer, width, height, ctx->network_session.local_color);
     }
+
+    app_render_status_message(ctx, width);
 
     SDL_RenderPresent(ctx->renderer);
 }
@@ -1508,22 +1618,19 @@ static bool net_receive_next_packet(AppLoopContext *ctx, ChessPacketHeader *head
 
     if (!chess_tcp_recv_packet_header(&ctx->connection, 1, header)) {
         SDL_Log("NET: failed to read packet header, closing connection");
-        chess_tcp_connection_close(&ctx->connection);
-        net_reset_transport_progress(ctx);
+        app_handle_peer_disconnect(ctx, "failed to read packet header");
         return false;
     }
 
     if (header->payload_size > payload_capacity) {
         SDL_Log("NET: received oversized payload (%u), closing connection", (unsigned)header->payload_size);
-        chess_tcp_connection_close(&ctx->connection);
-        net_reset_transport_progress(ctx);
+        app_handle_peer_disconnect(ctx, "received oversized payload");
         return false;
     }
 
     if (header->payload_size > 0u && !chess_tcp_recv_payload(&ctx->connection, 1, payload, header->payload_size)) {
         SDL_Log("NET: failed to read packet payload, closing connection");
-        chess_tcp_connection_close(&ctx->connection);
-        net_reset_transport_progress(ctx);
+        app_handle_peer_disconnect(ctx, "failed to read packet payload");
         return false;
     }
 
