@@ -1248,8 +1248,8 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
     float white_header_h = 0.0f;
     float black_header_w = 0.0f;
     float black_header_h = 0.0f;
-    int row_height = 24;
-    int start_y = 72;
+    int row_height = 20;
+    int start_y = 64;
     int max_rows;
     int total_turns;
     int first_turn;
@@ -1300,7 +1300,7 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
     header_rect.x = (float)(panel_left + 1);
     header_rect.y = 0.0f;
     header_rect.w = (float)(window_width - panel_left - 1);
-    header_rect.h = 64.0f;
+    header_rect.h = 56.0f;
     SDL_SetRenderDrawColor(ctx->renderer, 28, 28, 34, 255);
     SDL_RenderFillRect(ctx->renderer, &header_rect);
 
@@ -1360,7 +1360,7 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
     }
 
     SDL_SetRenderDrawColor(ctx->renderer, 74, 74, 84, 255);
-    SDL_RenderLine(ctx->renderer, (float)(panel_left + 1), 64.0f, (float)panel_right, 64.0f);
+    SDL_RenderLine(ctx->renderer, (float)(panel_left + 1), 56.0f, (float)panel_right, 56.0f);
     SDL_RenderLine(ctx->renderer, (float)col_sep_x, 38.0f, (float)col_sep_x, (float)window_height);
 
     max_rows = (window_height - start_y - 8) / row_height;
@@ -1381,7 +1381,7 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
             SDL_FRect dst;
             SDL_GetTextureSize(empty_tex, &tw, &th);
             dst.x = (float)panel_left + 12.0f;
-            dst.y = 84.0f;
+            dst.y = 72.0f;
             dst.w = tw;
             dst.h = th;
             SDL_RenderTexture(ctx->renderer, empty_tex, NULL, &dst);
