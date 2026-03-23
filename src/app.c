@@ -78,6 +78,7 @@ static bool         s_lobby_icon_pending_available   = false;
 static bool         s_lobby_icon_incoming_available  = false;
 static bool         s_lobby_icon_matched_available   = false;
 static const char  *s_lobby_font_path                = NULL;
+static const uint32_t s_remote_move_anim_default_ms  = 160u;
 
 static TTF_Font *open_font_from_candidates(const char * const *font_paths, float font_size)
 {
@@ -870,6 +871,14 @@ typedef struct AppLoopContext {
     int drag_from_rank;
     int drag_mouse_x;
     int drag_mouse_y;
+    bool remote_move_anim_active;
+    ChessPiece remote_move_anim_piece;
+    int remote_move_from_file;
+    int remote_move_from_rank;
+    int remote_move_to_file;
+    int remote_move_to_rank;
+    uint64_t remote_move_anim_started_at_ms;
+    uint32_t remote_move_anim_duration_ms;
     bool running;
 } AppLoopContext;
 
@@ -958,6 +967,14 @@ static void app_init_runtime_state(AppLoopContext *ctx)
     ctx->drag_from_rank = -1;
     ctx->drag_mouse_x = 0;
     ctx->drag_mouse_y = 0;
+    ctx->remote_move_anim_active = false;
+    ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
+    ctx->remote_move_from_file = -1;
+    ctx->remote_move_from_rank = -1;
+    ctx->remote_move_to_file = -1;
+    ctx->remote_move_to_rank = -1;
+    ctx->remote_move_anim_started_at_ms = 0;
+    ctx->remote_move_anim_duration_ms = s_remote_move_anim_default_ms;
 
     net_reset_transport_progress(ctx);
     chess_game_state_init(&ctx->game_state);
@@ -1301,10 +1318,104 @@ static void app_render_drag_preview(AppLoopContext *ctx, int width, int height)
     }
 }
 
+static void app_update_remote_move_animation(AppLoopContext *ctx)
+{
+    uint64_t now;
+    uint64_t elapsed;
+
+    if (!ctx || !ctx->remote_move_anim_active) {
+        return;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->remote_move_anim_started_at_ms;
+    if (ctx->remote_move_anim_duration_ms == 0u || elapsed >= (uint64_t)ctx->remote_move_anim_duration_ms) {
+        ctx->remote_move_anim_active = false;
+        ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
+        ctx->remote_move_from_file = -1;
+        ctx->remote_move_from_rank = -1;
+        ctx->remote_move_to_file = -1;
+        ctx->remote_move_to_rank = -1;
+    }
+}
+
+static void app_render_remote_move_animation(AppLoopContext *ctx, int width, int height)
+{
+    const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    const bool black_perspective = use_black_perspective(ctx->network_session.local_color);
+    uint64_t now;
+    uint64_t elapsed;
+    float t;
+    int from_screen_file;
+    int from_screen_rank;
+    int to_screen_file;
+    int to_screen_rank;
+    float interp_file;
+    float interp_rank;
+
+    if (!ctx || !ctx->renderer || !ctx->remote_move_anim_active ||
+        ctx->remote_move_anim_piece <= CHESS_PIECE_EMPTY ||
+        ctx->remote_move_anim_piece >= CHESS_PIECE_COUNT) {
+        return;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->remote_move_anim_started_at_ms;
+    if (ctx->remote_move_anim_duration_ms == 0u) {
+        t = 1.0f;
+    } else {
+        t = (float)elapsed / (float)ctx->remote_move_anim_duration_ms;
+        if (t > 1.0f) {
+            t = 1.0f;
+        }
+    }
+
+    from_screen_file = board_to_screen_index(ctx->remote_move_from_file, black_perspective);
+    from_screen_rank = board_to_screen_index(ctx->remote_move_from_rank, black_perspective);
+    to_screen_file = board_to_screen_index(ctx->remote_move_to_file, black_perspective);
+    to_screen_rank = board_to_screen_index(ctx->remote_move_to_rank, black_perspective);
+    interp_file = (1.0f - t) * (float)from_screen_file + t * (float)to_screen_file;
+    interp_rank = (1.0f - t) * (float)from_screen_rank + t * (float)to_screen_rank;
+
+    {
+        SDL_Texture *tex = s_piece_textures[(int)ctx->remote_move_anim_piece];
+        if (tex) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+
+            SDL_GetTextureSize(tex, &tex_w, &tex_h);
+            dst.x = interp_file * cell_w + (cell_w - tex_w) * 0.5f;
+            dst.y = interp_rank * cell_h + (cell_h - tex_h) * 0.5f;
+            dst.w = tex_w;
+            dst.h = tex_h;
+            SDL_RenderTexture(ctx->renderer, tex, NULL, &dst);
+        } else {
+            SDL_FRect piece_rect = {
+                interp_file * cell_w + cell_w * 0.25f,
+                interp_rank * cell_h + cell_h * 0.25f,
+                cell_w * 0.5f,
+                cell_h * 0.5f
+            };
+
+            if ((int)ctx->remote_move_anim_piece < (int)CHESS_PIECE_BLACK_PAWN) {
+                SDL_SetRenderDrawColor(ctx->renderer, 245, 245, 245, 255);
+            } else {
+                SDL_SetRenderDrawColor(ctx->renderer, 25, 25, 25, 255);
+            }
+            SDL_RenderFillRect(ctx->renderer, &piece_rect);
+        }
+    }
+}
+
 static void app_render_frame(AppLoopContext *ctx)
 {
     int width = 0;
     int height = 0;
+    bool hide_piece = false;
+    int hidden_file = -1;
+    int hidden_rank = -1;
 
     if (!ctx || !ctx->renderer || !ctx->window) {
         return;
@@ -1317,6 +1428,16 @@ static void app_render_frame(AppLoopContext *ctx)
     if (!ctx->network_session.game_started) {
         render_lobby(ctx->renderer, width, height, &ctx->lobby, s_lobby_font ? s_lobby_font : s_coord_font);
     } else {
+        if (ctx->drag_active) {
+            hide_piece = true;
+            hidden_file = ctx->drag_from_file;
+            hidden_rank = ctx->drag_from_rank;
+        } else if (ctx->remote_move_anim_active) {
+            hide_piece = true;
+            hidden_file = ctx->remote_move_to_file;
+            hidden_rank = ctx->remote_move_to_rank;
+        }
+
         render_board(ctx->renderer, width, height);
         render_game_overlay(
             ctx->renderer,
@@ -1324,9 +1445,10 @@ static void app_render_frame(AppLoopContext *ctx)
             height,
             &ctx->game_state,
             ctx->network_session.local_color,
-            ctx->drag_active,
-            ctx->drag_from_file,
-            ctx->drag_from_rank);
+            hide_piece,
+            hidden_file,
+            hidden_rank);
+        app_render_remote_move_animation(ctx, width, height);
         app_render_drag_preview(ctx, width, height);
         render_board_coordinates(ctx->renderer, width, height, ctx->network_session.local_color);
     }
@@ -1533,6 +1655,7 @@ static void net_handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ac
 
 static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *move)
 {
+    ChessPiece moving_piece;
     ChessPlayerColor remote_color;
 
     if (!ctx || !move || !ctx->network_session.game_started) {
@@ -1544,7 +1667,27 @@ static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *
         return;
     }
 
+    moving_piece = chess_game_get_piece(&ctx->game_state, (int)move->from_file, (int)move->from_rank);
+
     if (chess_game_apply_remote_move(&ctx->game_state, remote_color, move)) {
+        ChessPiece piece_to_animate = moving_piece;
+        if (piece_to_animate == CHESS_PIECE_EMPTY) {
+            piece_to_animate = chess_game_get_piece(&ctx->game_state, (int)move->to_file, (int)move->to_rank);
+        }
+
+        if (piece_to_animate != CHESS_PIECE_EMPTY) {
+            ctx->remote_move_anim_active = true;
+            ctx->remote_move_anim_piece = piece_to_animate;
+            ctx->remote_move_from_file = (int)move->from_file;
+            ctx->remote_move_from_rank = (int)move->from_rank;
+            ctx->remote_move_to_file = (int)move->to_file;
+            ctx->remote_move_to_rank = (int)move->to_rank;
+            ctx->remote_move_anim_started_at_ms = SDL_GetTicks();
+            if (ctx->remote_move_anim_duration_ms == 0u) {
+                ctx->remote_move_anim_duration_ms = s_remote_move_anim_default_ms;
+            }
+        }
+
         SDL_Log(
             "GAME: applied remote move (%u,%u) -> (%u,%u)",
             (unsigned)move->from_file,
@@ -1800,6 +1943,7 @@ int app_run(void)
         chess_network_session_step(&ctx.network_session);
 
         app_log_network_state_transition(&ctx);
+        app_update_remote_move_animation(&ctx);
 
         app_render_frame(&ctx);
     }
