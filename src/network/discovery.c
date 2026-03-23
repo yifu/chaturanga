@@ -70,6 +70,7 @@ static void fill_peer_identity_from_txt(
 {
     char user[CHESS_PEER_USERNAME_MAX_LEN];
     char host[CHESS_PEER_HOSTNAME_MAX_LEN];
+    char profile_id[CHESS_PROFILE_ID_STRING_LEN];
 
     if (!peer) {
         return;
@@ -77,12 +78,17 @@ static void fill_peer_identity_from_txt(
 
     user[0] = '\0';
     host[0] = '\0';
+    profile_id[0] = '\0';
 
     txt_copy_to_buffer(txt_record, txt_len, "user", user, sizeof(user));
     txt_copy_to_buffer(txt_record, txt_len, "host", host, sizeof(host));
+    txt_copy_to_buffer(txt_record, txt_len, "profile", profile_id, sizeof(profile_id));
 
     if (user[0] != '\0' || host[0] != '\0') {
         chess_peer_set_identity_tokens(peer, user, host);
+    }
+    if (profile_id[0] != '\0') {
+        SDL_strlcpy(peer->profile_id, profile_id, sizeof(peer->profile_id));
     }
 }
 
@@ -385,6 +391,10 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
                           "host",
                           (uint8_t)SDL_strlen(ctx->local_peer.hostname),
                           ctx->local_peer.hostname);
+        TXTRecordSetValue(&txt_record,
+                  "profile",
+                  (uint8_t)SDL_strlen(ctx->local_peer.profile_id),
+                  ctx->local_peer.profile_id);
 
         err = DNSServiceRegister(
             &dnssd->register_ref,

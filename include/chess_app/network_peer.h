@@ -6,12 +6,14 @@
 #include <stdint.h>
 
 #define CHESS_UUID_STRING_LEN 37
+#define CHESS_PROFILE_ID_STRING_LEN 37
 #define CHESS_PEER_USERNAME_MAX_LEN 64
 #define CHESS_PEER_HOSTNAME_MAX_LEN 64
 
 typedef struct ChessPeerInfo {
     uint32_t ipv4_host_order;
     char uuid[CHESS_UUID_STRING_LEN];
+    char profile_id[CHESS_PROFILE_ID_STRING_LEN];
     char username[CHESS_PEER_USERNAME_MAX_LEN];
     char hostname[CHESS_PEER_HOSTNAME_MAX_LEN];
 } ChessPeerInfo;

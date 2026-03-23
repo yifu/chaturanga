@@ -99,6 +99,22 @@ cmake --build build -j
 ./build/chess_app
 ```
 
+## Identite persistante
+
+L'application conserve un `profile_id` stable entre les redemarrages, tout en
+gardant un `uuid` de session runtime pour le transport.
+
+Chemins de stockage du profil (`profile.json`):
+- macOS: `~/Library/Application Support/chess_app/profile.json`
+- Linux (XDG): `$XDG_DATA_HOME/chess_app/profile.json`
+- Linux fallback: `~/.local/share/chess_app/profile.json`
+
+Override pour tests multi-instances:
+
+```sh
+CHESS_APP_PROFILE_DIR=/tmp/chess_profile_a ./build/chess_app
+```
+
 ## Tests automatises
 
 Commande unique depuis la racine du depot:

@@ -6,8 +6,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 static int s_failed = 0;
 static int s_passed = 0;
@@ -223,6 +225,35 @@ static void test_role_election_uuid_fallback(void)
     EXPECT_EQ_INT(chess_elect_role(&remote, &local), CHESS_ROLE_CLIENT);
 }
 
+static void test_persistent_profile_id(void)
+{
+    char tmp_template[] = "/tmp/chess_profile_test_XXXXXX";
+    char profile_file[256];
+    char *dir;
+    ChessPeerInfo p1;
+    ChessPeerInfo p2;
+
+    dir = mkdtemp(tmp_template);
+    EXPECT_TRUE(dir != NULL);
+    if (!dir) {
+        return;
+    }
+
+    EXPECT_TRUE(setenv("CHESS_APP_PROFILE_DIR", dir, 1) == 0);
+    EXPECT_TRUE(chess_peer_init_local_identity(&p1));
+    EXPECT_TRUE(chess_peer_init_local_identity(&p2));
+
+    EXPECT_TRUE(p1.profile_id[0] != '\0');
+    EXPECT_EQ_INT(strcmp(p1.profile_id, p2.profile_id), 0);
+    EXPECT_TRUE(p1.uuid[0] != '\0');
+    EXPECT_TRUE(p2.uuid[0] != '\0');
+
+    (void)snprintf(profile_file, sizeof(profile_file), "%s/profile.json", dir);
+    (void)unlink(profile_file);
+    (void)rmdir(dir);
+    (void)unsetenv("CHESS_APP_PROFILE_DIR");
+}
+
 static void test_tcp_packet_flow_basic(void)
 {
     int fds[2] = { -1, -1 };
@@ -313,6 +344,7 @@ int main(void)
     test_fifty_move_rule();
     test_network_session_flow();
     test_role_election_uuid_fallback();
+    test_persistent_profile_id();
     test_tcp_packet_flow_basic();
     test_lobby_remove_peer_by_uuid();
 
