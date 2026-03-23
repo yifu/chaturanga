@@ -175,6 +175,17 @@ static void net_handle_hello_packet(AppContext *ctx, const ChessHelloPayload *he
     }
 
     ctx->hello_received = true;
+
+    /* When the connection was accepted before mDNS discovery,
+     * register minimal identity so that the later set_remote()
+     * from mDNS sees same_remote == true and does not reset. */
+    if (!ctx->network_session.peer_available && hello->uuid[0] != '\0') {
+        memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
+        SDL_strlcpy(ctx->network_session.remote_peer.uuid, hello->uuid,
+                     sizeof(ctx->network_session.remote_peer.uuid));
+        ctx->network_session.peer_available = true;
+    }
+
     SDL_Log("NET: received HELLO from remote peer (%.8s...)", hello->uuid);
 }
 
@@ -604,7 +615,24 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
         return;
     }
 
-    if (ctx->network_session.state != CHESS_NET_CONNECTING || ctx->hello_completed) {
+    if (ctx->hello_completed) {
+        return;
+    }
+
+    /* Accept inbound TCP connections eagerly — even before mDNS
+     * resolves the remote peer.  The HELLO handshake identifies
+     * the peer.  This eliminates ~800 ms of Bonjour propagation
+     * delay on reconnect. */
+    if (ctx->connection.fd < 0 &&
+        ctx->listener.fd >= 0 &&
+        socket_events->listener_readable) {
+        if (chess_tcp_accept_once(&ctx->listener, 0, &ctx->connection)) {
+            SDL_Log("NET: accepted TCP client connection");
+        }
+    }
+
+    /* Client outbound connect: requires election to have completed. */
+    if (ctx->network_session.state != CHESS_NET_CONNECTING) {
         return;
     }
 
@@ -620,13 +648,7 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
             }
         }
 
-        if (ctx->network_session.role == CHESS_ROLE_SERVER &&
-            ctx->connection.fd < 0 &&
-            socket_events->listener_readable) {
-            if (chess_tcp_accept_once(&ctx->listener, 0, &ctx->connection)) {
-                SDL_Log("NET: accepted TCP client connection");
-            }
-        } else if (ctx->network_session.role == CHESS_ROLE_CLIENT && should_attempt_client_connect) {
+        if (ctx->network_session.role == CHESS_ROLE_CLIENT && should_attempt_client_connect) {
             uint16_t remote_port = ctx->discovered_peer.tcp_port;
             if (ctx->lobby.selected_peer_idx >= 0 &&
                 ctx->lobby.selected_peer_idx < ctx->lobby.discovered_peer_count) {
@@ -648,11 +670,24 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
 
 static void net_advance_hello_handshake(AppContext *ctx)
 {
+    ChessRole effective_role;
+
     if (!ctx || ctx->connection.fd < 0) {
         return;
     }
 
-    if (ctx->network_session.state != CHESS_NET_CONNECTING || ctx->hello_completed) {
+    if (ctx->hello_completed) {
+        return;
+    }
+
+    /* Infer server role when we accepted an inbound connection
+     * before the mDNS election completed (role still UNKNOWN). */
+    effective_role = ctx->network_session.role;
+    if (effective_role == CHESS_ROLE_UNKNOWN && !ctx->connect_attempted) {
+        effective_role = CHESS_ROLE_SERVER;
+    }
+
+    if (effective_role == CHESS_ROLE_UNKNOWN) {
         return;
     }
 
@@ -660,39 +695,51 @@ static void net_advance_hello_handshake(AppContext *ctx)
         ChessHelloPayload local_hello;
         memset(&local_hello, 0, sizeof(local_hello));
         SDL_strlcpy(local_hello.uuid, ctx->network_session.local_peer.uuid, sizeof(local_hello.uuid));
-        local_hello.role = (uint32_t)ctx->network_session.role;
+        local_hello.role = (uint32_t)effective_role;
 
-        if (ctx->network_session.role == CHESS_ROLE_CLIENT && !ctx->hello_sent) {
+        if (effective_role == CHESS_ROLE_CLIENT && !ctx->hello_sent) {
             if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
                 ctx->hello_sent = true;
             }
         }
 
-        if (ctx->network_session.role == CHESS_ROLE_CLIENT && ctx->hello_received && !ctx->hello_ack_sent) {
+        if (effective_role == CHESS_ROLE_CLIENT && ctx->hello_received && !ctx->hello_ack_sent) {
             if (chess_tcp_send_ack(&ctx->connection, CHESS_MSG_HELLO, 1u, 0u)) {
                 ctx->hello_ack_sent = true;
             }
         }
 
-        if (ctx->network_session.role == CHESS_ROLE_SERVER && ctx->hello_received && !ctx->hello_sent) {
+        if (effective_role == CHESS_ROLE_SERVER && ctx->hello_received && !ctx->hello_sent) {
             if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
                 ctx->hello_sent = true;
             }
         }
 
-        if (ctx->network_session.role == CHESS_ROLE_CLIENT &&
+        if (effective_role == CHESS_ROLE_CLIENT &&
             ctx->hello_sent &&
             ctx->hello_received &&
             ctx->hello_ack_sent) {
             ctx->hello_completed = true;
             chess_network_session_set_transport_ready(&ctx->network_session, true);
+            if (ctx->network_session.role == CHESS_ROLE_UNKNOWN) {
+                ctx->network_session.role = effective_role;
+            }
+            if (ctx->network_session.state < CHESS_NET_IN_GAME) {
+                ctx->network_session.state = CHESS_NET_IN_GAME;
+            }
             SDL_Log("NET: HELLO handshake completed (client)");
-        } else if (ctx->network_session.role == CHESS_ROLE_SERVER &&
+        } else if (effective_role == CHESS_ROLE_SERVER &&
                    ctx->hello_received &&
                    ctx->hello_sent &&
                    ctx->hello_ack_received) {
             ctx->hello_completed = true;
             chess_network_session_set_transport_ready(&ctx->network_session, true);
+            if (ctx->network_session.role == CHESS_ROLE_UNKNOWN) {
+                ctx->network_session.role = effective_role;
+            }
+            if (ctx->network_session.state < CHESS_NET_IN_GAME) {
+                ctx->network_session.state = CHESS_NET_IN_GAME;
+            }
             SDL_Log("NET: HELLO handshake completed (server)");
         }
     }

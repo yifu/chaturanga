@@ -341,7 +341,13 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
                 ctx->resume_remote_profile_id,
                 CHESS_PROFILE_ID_STRING_LEN) == 0;
         } else {
-            should_select_peer = !ctx->network_session.peer_available;
+            /* Also re-select the same peer so mDNS-resolved attributes
+             * (IP, hostname, profile) update an early HELLO-only peer. */
+            should_select_peer = !ctx->network_session.peer_available ||
+                (ctx->network_session.remote_peer.uuid[0] != '\0' &&
+                 SDL_strncmp(ctx->network_session.remote_peer.uuid,
+                             ctx->discovered_peer.peer.uuid,
+                             CHESS_UUID_STRING_LEN) == 0);
         }
 
         if (should_select_peer) {
