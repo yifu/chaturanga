@@ -1231,6 +1231,54 @@ static void app_append_move_history(AppLoopContext *ctx, const char *notation)
     SDL_strlcpy(ctx->move_history[s_history_max_entries - 1], notation, (size_t)s_history_entry_len);
 }
 
+static void app_copy_move_history_to_clipboard(AppLoopContext *ctx)
+{
+    size_t capacity;
+    char *buffer;
+    int turn;
+    int total_turns;
+
+    if (!ctx) {
+        return;
+    }
+
+    if (ctx->move_history_count == 0u) {
+        app_set_status_message(ctx, "No moves to copy", 1200u);
+        return;
+    }
+
+    total_turns = ((int)ctx->move_history_count + 1) / 2;
+    capacity = ((size_t)total_turns * 48u) + 1u;
+    buffer = (char *)SDL_malloc(capacity);
+    if (!buffer) {
+        app_set_status_message(ctx, "Failed to allocate clipboard buffer", 1800u);
+        return;
+    }
+
+    buffer[0] = '\0';
+    for (turn = 1; turn <= total_turns; ++turn) {
+        char line[96];
+        int white_idx = (turn - 1) * 2;
+        int black_idx = white_idx + 1;
+        const char *white_move = (white_idx < (int)ctx->move_history_count) ? ctx->move_history[white_idx] : "";
+        const char *black_move = (black_idx < (int)ctx->move_history_count) ? ctx->move_history[black_idx] : "";
+
+        if (black_move[0] != '\0') {
+            SDL_snprintf(line, sizeof(line), "%d. %s %s\n", turn, white_move, black_move);
+        } else {
+            SDL_snprintf(line, sizeof(line), "%d. %s\n", turn, white_move);
+        }
+        SDL_strlcat(buffer, line, capacity);
+    }
+
+    if (SDL_SetClipboardText(buffer)) {
+        app_set_status_message(ctx, "Move history copied to clipboard", 1400u);
+    } else {
+        app_set_status_message(ctx, "Failed to copy move history", 1800u);
+    }
+    SDL_free(buffer);
+}
+
 static void app_render_move_history_panel(AppLoopContext *ctx, int window_width, int window_height, int board_width)
 {
     SDL_FRect panel_rect;
@@ -1304,7 +1352,7 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
     SDL_SetRenderDrawColor(ctx->renderer, 28, 28, 34, 255);
     SDL_RenderFillRect(ctx->renderer, &header_rect);
 
-    title_tex = make_text_texture(ctx->renderer, s_coord_font, "Moves", (SDL_Color){232, 232, 238, 255});
+    title_tex = make_text_texture(ctx->renderer, s_coord_font, "Moves (Ctrl/Cmd+C)", (SDL_Color){232, 232, 238, 255});
     turn_tex = NULL;
     white_header_tex = make_text_texture(ctx->renderer, s_coord_font, "White", white_black_header_color);
     black_header_tex = make_text_texture(ctx->renderer, s_coord_font, "Black", white_black_header_color);
@@ -1884,6 +1932,14 @@ static void app_handle_events(AppLoopContext *ctx)
 
         if (ctx->connection.fd < 0) {
             continue;
+        }
+
+        if (event.type == SDL_EVENT_KEY_DOWN) {
+            SDL_Keymod mods = SDL_GetModState();
+            if ((mods & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0 && event.key.key == SDLK_C) {
+                app_copy_move_history_to_clipboard(ctx);
+                continue;
+            }
         }
 
         if (event.type == SDL_EVENT_KEY_DOWN && ctx->promotion_pending) {
