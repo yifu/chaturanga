@@ -452,12 +452,23 @@ ChessRole chess_elect_role(const ChessPeerInfo *local_peer, const ChessPeerInfo 
     /* Primary: compare IPs (from getifaddrs for local; from DNS-SD for remote —
      * loopback is substituted with the local LAN IP in addr_callback so both
      * sides see the same value when running on the same machine).
-     * Fallback: UUID, which is always unique and symmetric. */
+     * Secondary: persistent profile_id so role assignment is stable across app restarts.
+     * Fallback: UUID, which is unique but ephemeral across runs. */
     if (local_peer->ipv4_host_order < remote_peer->ipv4_host_order) {
         return CHESS_ROLE_SERVER;
     }
     if (local_peer->ipv4_host_order > remote_peer->ipv4_host_order) {
         return CHESS_ROLE_CLIENT;
+    }
+
+    if (local_peer->profile_id[0] != '\0' && remote_peer->profile_id[0] != '\0') {
+        cmp = strncmp(local_peer->profile_id, remote_peer->profile_id, CHESS_PROFILE_ID_STRING_LEN);
+        if (cmp < 0) {
+            return CHESS_ROLE_SERVER;
+        }
+        if (cmp > 0) {
+            return CHESS_ROLE_CLIENT;
+        }
     }
 
     cmp = strncmp(local_peer->uuid, remote_peer->uuid, CHESS_UUID_STRING_LEN);
