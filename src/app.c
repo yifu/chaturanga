@@ -711,14 +711,15 @@ static bool init_local_peer(ChessPeerInfo *local_peer)
         return false;
     }
 
-    memset(local_peer, 0, sizeof(*local_peer));
-
-    if (!chess_generate_peer_uuid(local_peer->uuid, sizeof(local_peer->uuid))) {
-        SDL_Log("NET: could not generate local peer UUID");
+    if (!chess_peer_init_local_identity(local_peer)) {
+        SDL_Log("NET: could not initialize local peer identity");
         return false;
     }
 
-    SDL_Log("NET: local peer initialized (uuid=%s)", local_peer->uuid);
+        SDL_Log("NET: local peer initialized (uuid=%s display=%s@%s)",
+            local_peer->uuid,
+            local_peer->username,
+            local_peer->hostname);
     return true;
 }
 
@@ -788,32 +789,85 @@ static void render_lobby(
         SDL_SetRenderDrawColor(renderer, 180, 180, 180, 255);
         SDL_RenderRect(renderer, &peer_rect);
 
-        /* Draw peer UUID and challenge state */
+        /* Draw peer label and challenge state */
         {
-            char peer_label[128];
             const char *challenge_icon = lobby_state_suffix(peer_state->challenge_state);
+            SDL_Texture *name_tex = NULL;
+            SDL_Texture *host_tex = NULL;
+            SDL_Texture *status_tex = NULL;
+            float name_w = 0.0f;
+            float name_h = 0.0f;
+            float host_w = 0.0f;
+            float host_h = 0.0f;
+            float status_w = 0.0f;
+            float status_h = 0.0f;
+            float cursor_x = peer_rect.x + 15.0f;
+            float text_y;
+            float max_h = 0.0f;
+            const SDL_Color host_color = (SDL_Color){170, 170, 170, 255};
 
-            SDL_snprintf(
-                peer_label,
-                sizeof(peer_label),
-                "%.8s...%s",
-                peer_state->peer.uuid,
-                challenge_icon
-            );
-
-            SDL_Texture *label_tex = make_text_texture(renderer, font, peer_label, text_color);
-            if (label_tex) {
-                float tex_w = 0.0f;
-                float tex_h = 0.0f;
-                SDL_FRect dst;
-                SDL_GetTextureSize(label_tex, &tex_w, &tex_h);
-                dst.x = peer_rect.x + 15.0f;
-                dst.y = peer_rect.y + (peer_rect.h - tex_h) / 2.0f;
-                dst.w = tex_w;
-                dst.h = tex_h;
-                SDL_RenderTexture(renderer, label_tex, NULL, &dst);
-                SDL_DestroyTexture(label_tex);
+            if (peer_state->peer.username[0] != '\0' && peer_state->peer.hostname[0] != '\0') {
+                char host_label[CHESS_PEER_HOSTNAME_MAX_LEN + 2];
+                SDL_snprintf(host_label, sizeof(host_label), "@%s", peer_state->peer.hostname);
+                name_tex = make_text_texture(renderer, font, peer_state->peer.username, text_color);
+                host_tex = make_text_texture(renderer, font, host_label, host_color);
+            } else {
+                char uuid_label[16];
+                SDL_snprintf(uuid_label, sizeof(uuid_label), "%.8s...", peer_state->peer.uuid);
+                name_tex = make_text_texture(renderer, font, uuid_label, text_color);
             }
+
+            status_tex = make_text_texture(renderer, font, challenge_icon, text_color);
+
+            if (name_tex) {
+                SDL_GetTextureSize(name_tex, &name_w, &name_h);
+                if (name_h > max_h) {
+                    max_h = name_h;
+                }
+            }
+            if (host_tex) {
+                SDL_GetTextureSize(host_tex, &host_w, &host_h);
+                if (host_h > max_h) {
+                    max_h = host_h;
+                }
+            }
+            if (status_tex) {
+                SDL_GetTextureSize(status_tex, &status_w, &status_h);
+                if (status_h > max_h) {
+                    max_h = status_h;
+                }
+            }
+            if (max_h <= 0.0f) {
+                max_h = 18.0f;
+            }
+
+            text_y = peer_rect.y + (peer_rect.h - max_h) / 2.0f;
+
+            if (name_tex) {
+                SDL_FRect dst = {cursor_x, text_y + (max_h - name_h) / 2.0f, name_w, name_h};
+                /* Slightly thicken username to approximate bold emphasis. */
+                SDL_RenderTexture(renderer, name_tex, NULL, &dst);
+                dst.x += 1.0f;
+                SDL_RenderTexture(renderer, name_tex, NULL, &dst);
+                cursor_x += name_w + 2.0f;
+            }
+
+            if (host_tex) {
+                SDL_FRect dst = {cursor_x, text_y + (max_h - host_h) / 2.0f, host_w, host_h};
+                SDL_RenderTexture(renderer, host_tex, NULL, &dst);
+                cursor_x += host_w + 10.0f;
+            } else {
+                cursor_x += 10.0f;
+            }
+
+            if (status_tex) {
+                SDL_FRect dst = {cursor_x, text_y + (max_h - status_h) / 2.0f, status_w, status_h};
+                SDL_RenderTexture(renderer, status_tex, NULL, &dst);
+            }
+
+            if (status_tex) { SDL_DestroyTexture(status_tex); }
+            if (host_tex) { SDL_DestroyTexture(host_tex); }
+            if (name_tex) { SDL_DestroyTexture(name_tex); }
         }
 
         y += peer_row_height;

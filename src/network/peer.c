@@ -1,6 +1,7 @@
 #include "chess_app/network_peer.h"
 
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -8,6 +9,95 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+static void copy_sanitized_token(
+    char *dst,
+    size_t dst_size,
+    const char *src,
+    const char *fallback)
+{
+    size_t i = 0;
+
+    if (!dst || dst_size == 0) {
+        return;
+    }
+
+    if (!src || src[0] == '\0') {
+        src = fallback;
+    }
+    if (!src || src[0] == '\0') {
+        src = "unknown";
+    }
+
+    while (src[i] != '\0' && i + 1 < dst_size) {
+        unsigned char c = (unsigned char)src[i];
+        if (isalnum(c) || c == '-' || c == '_' || c == '.') {
+            dst[i] = (char)c;
+        } else {
+            dst[i] = '_';
+        }
+        ++i;
+    }
+
+    dst[i] = '\0';
+    if (dst[0] == '\0') {
+        (void)snprintf(dst, dst_size, "%s", "unknown");
+    }
+}
+
+void chess_peer_set_identity_tokens(ChessPeerInfo *peer, const char *username, const char *hostname)
+{
+    if (!peer) {
+        return;
+    }
+
+    copy_sanitized_token(peer->username, sizeof(peer->username), username, "player");
+    copy_sanitized_token(peer->hostname, sizeof(peer->hostname), hostname, "host");
+}
+
+bool chess_peer_init_local_identity(ChessPeerInfo *peer)
+{
+    const char *env_username;
+    const char *env_hostname;
+    const char *login_name;
+    char hostname_buf[CHESS_PEER_HOSTNAME_MAX_LEN];
+    char *dot;
+
+    if (!peer) {
+        return false;
+    }
+
+    memset(peer, 0, sizeof(*peer));
+
+    if (!chess_generate_peer_uuid(peer->uuid, sizeof(peer->uuid))) {
+        return false;
+    }
+
+    env_username = getenv("CHESS_USERNAME");
+    env_hostname = getenv("CHESS_HOSTNAME");
+    login_name = getlogin();
+
+    memset(hostname_buf, 0, sizeof(hostname_buf));
+    if (env_hostname && env_hostname[0] != '\0') {
+        (void)snprintf(hostname_buf, sizeof(hostname_buf), "%s", env_hostname);
+    } else if (gethostname(hostname_buf, sizeof(hostname_buf) - 1) != 0 || hostname_buf[0] == '\0') {
+        (void)snprintf(hostname_buf, sizeof(hostname_buf), "%s", "host");
+    }
+
+    dot = strchr(hostname_buf, '.');
+    if (dot) {
+        *dot = '\0';
+    }
+
+    {
+        const char *chosen_user = (env_username && env_username[0] != '\0') ? env_username
+                                : getenv("USER") ? getenv("USER")
+                                : login_name ? login_name
+                                : NULL;
+        chess_peer_set_identity_tokens(peer, chosen_user, hostname_buf);
+    }
+    return true;
+}
 
 bool chess_parse_ipv4(const char *ip_str, uint32_t *out_ipv4_host_order)
 {
@@ -36,11 +126,18 @@ bool chess_generate_peer_uuid(char *out_uuid, size_t out_uuid_size)
         return false;
     }
 
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    a = arc4random();
+    b = arc4random();
+    c = arc4random();
+    d = arc4random();
+#else
     srand((unsigned int)(time(NULL) ^ getpid()));
     a = (unsigned int)rand();
     b = (unsigned int)rand();
     c = (unsigned int)rand();
     d = (unsigned int)rand();
+#endif
 
     (void)snprintf(
         out_uuid,

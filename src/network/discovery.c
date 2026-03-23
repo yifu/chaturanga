@@ -32,6 +32,60 @@ typedef struct {
     char          resolving_uuid[CHESS_UUID_STRING_LEN];
 } ChessDnssdContext;
 
+static void txt_copy_to_buffer(
+    const unsigned char *txt_record,
+    uint16_t txt_len,
+    const char *key,
+    char *out,
+    size_t out_size)
+{
+    const void *value = NULL;
+    uint8_t value_len = 0;
+
+    if (!out || out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (!txt_record || txt_len == 0 || !key) {
+        return;
+    }
+
+    value = TXTRecordGetValuePtr(txt_len, txt_record, key, &value_len);
+    if (!value || value_len == 0) {
+        return;
+    }
+
+    if ((size_t)value_len >= out_size) {
+        value_len = (uint8_t)(out_size - 1u);
+    }
+    memcpy(out, value, value_len);
+    out[value_len] = '\0';
+}
+
+static void fill_peer_identity_from_txt(
+    ChessPeerInfo *peer,
+    uint16_t txt_len,
+    const unsigned char *txt_record)
+{
+    char user[CHESS_PEER_USERNAME_MAX_LEN];
+    char host[CHESS_PEER_HOSTNAME_MAX_LEN];
+
+    if (!peer) {
+        return;
+    }
+
+    user[0] = '\0';
+    host[0] = '\0';
+
+    txt_copy_to_buffer(txt_record, txt_len, "user", user, sizeof(user));
+    txt_copy_to_buffer(txt_record, txt_len, "host", host, sizeof(host));
+
+    if (user[0] != '\0' || host[0] != '\0') {
+        chess_peer_set_identity_tokens(peer, user, host);
+    }
+}
+
 /* Pump one DNS-SD service ref with a near-zero timeout (5 ms). */
 static bool dnssd_pump(DNSServiceRef ref)
 {
@@ -149,6 +203,7 @@ static void resolve_callback(
         return;
     }
 
+    fill_peer_identity_from_txt(&dnssd->pending_peer.peer, txt_len, txt_record);
     dnssd->pending_peer.tcp_port = ntohs(port);
 
     err = DNSServiceGetAddrInfo(
@@ -189,8 +244,9 @@ static void browse_callback(
         return; /* service removal — ignore */
     }
 
-    /* Skip our own advertisement */
-    if (SDL_strncmp(service_name, ctx->local_peer.uuid, CHESS_UUID_STRING_LEN - 1) == 0) {
+    /* Skip our own advertisement — use exact match so a Bonjour-renamed
+     * duplicate like "<uuid> (2)" is not mistakenly filtered. */
+    if (SDL_strcmp(service_name, ctx->local_peer.uuid) == 0) {
         SDL_Log("DNS-SD: skipping own service");
         return;
     }
@@ -202,6 +258,9 @@ static void browse_callback(
     }
 
     SDL_Log("DNS-SD: found peer service '%s', resolving...", service_name);
+    memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
+    SDL_strlcpy(dnssd->pending_peer.peer.uuid, service_name,
+                sizeof(dnssd->pending_peer.peer.uuid));
     SDL_strlcpy(dnssd->resolving_uuid, service_name, sizeof(dnssd->resolving_uuid));
 
     err = DNSServiceResolve(
@@ -261,6 +320,7 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
     {
         ChessDnssdContext  *dnssd = (ChessDnssdContext *)calloc(1, sizeof(ChessDnssdContext));
         DNSServiceErrorType err;
+        TXTRecordRef txt_record;
 
         if (!dnssd) {
             SDL_Log("DNS-SD: failed to allocate context");
@@ -316,6 +376,16 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
             }
         }
 
+        TXTRecordCreate(&txt_record, 0, NULL);
+        TXTRecordSetValue(&txt_record,
+                          "user",
+                          (uint8_t)SDL_strlen(ctx->local_peer.username),
+                          ctx->local_peer.username);
+        TXTRecordSetValue(&txt_record,
+                          "host",
+                          (uint8_t)SDL_strlen(ctx->local_peer.hostname),
+                          ctx->local_peer.hostname);
+
         err = DNSServiceRegister(
             &dnssd->register_ref,
             0, 0,
@@ -323,9 +393,10 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
             CHESS_DNSSD_SERVICE_TYPE,
             NULL, NULL,
             htons(ctx->game_port),
-            0, NULL,
+            TXTRecordGetLength(&txt_record), TXTRecordGetBytesPtr(&txt_record),
             register_callback,
             ctx);
+        TXTRecordDeallocate(&txt_record);
         if (err != kDNSServiceErr_NoError) {
             SDL_Log("DNS-SD: DNSServiceRegister failed: %d", err);
             free(dnssd);
@@ -429,6 +500,10 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
         const char *ip       = getenv("CHESS_REMOTE_IP");
         const char *uuid     = getenv("CHESS_REMOTE_UUID");
         const char *port_str = getenv("CHESS_REMOTE_PORT");
+        const char *remote_username = getenv("CHESS_REMOTE_USERNAME");
+        const char *remote_hostname = getenv("CHESS_REMOTE_HOSTNAME");
+        char parsed_user[CHESS_PEER_USERNAME_MAX_LEN];
+        char parsed_host[CHESS_PEER_HOSTNAME_MAX_LEN];
         char *endptr     = NULL;
         long  parsed_port = 0;
 
@@ -452,6 +527,21 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
 
         SDL_strlcpy(out_remote_peer->peer.uuid, uuid, sizeof(out_remote_peer->peer.uuid));
         out_remote_peer->tcp_port = (uint16_t)parsed_port;
+
+        parsed_user[0] = '\0';
+        parsed_host[0] = '\0';
+
+        if (remote_username && remote_username[0] != '\0') {
+            SDL_strlcpy(parsed_user, remote_username, sizeof(parsed_user));
+        }
+        if (remote_hostname && remote_hostname[0] != '\0') {
+            SDL_strlcpy(parsed_host, remote_hostname, sizeof(parsed_host));
+        }
+
+        chess_peer_set_identity_tokens(
+            &out_remote_peer->peer,
+            (parsed_user[0] != '\0') ? parsed_user : NULL,
+            (parsed_host[0] != '\0') ? parsed_host : NULL);
 
         if (SDL_strncmp(out_remote_peer->peer.uuid, ctx->local_peer.uuid, CHESS_UUID_STRING_LEN) == 0) {
             SDL_Log("Ignoring discovered peer because UUID matches local peer");
