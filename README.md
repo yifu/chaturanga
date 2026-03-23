@@ -1,6 +1,92 @@
 # SDL3 Chess App
 
-## Build
+## Compilation du projet
+
+### Prerequis
+
+Le projet utilise:
+- SDL3
+- SDL3_ttf
+- CMake
+- un compilateur C compatible C11
+- bibliotheque de threads POSIX (pthread, fournie par le systeme sur Linux/macOS)
+
+Dependance optionnelle pour la decouverte reseau:
+- Avahi client (Linux): active automatiquement le backend Avahi si present
+- Bonjour / DNS-SD (macOS): utilise le SDK systeme, pas de paquet additionnel requis
+
+### macOS
+
+Installer les dependances:
+
+```sh
+brew update
+brew install cmake sdl3 sdl3_ttf pkg-config
+```
+
+Compiler:
+
+```sh
+cmake -S . -B build
+cmake --build build -j
+```
+
+Optionnel (decouverte reseau):
+- aucun paquet supplementaire (Bonjour / DNS-SD est fourni par macOS)
+
+### Linux (Debian/Ubuntu)
+
+Installer les dependances:
+
+```sh
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config libsdl3-dev libsdl3-ttf-dev
+```
+
+Optionnel (decouverte reseau mDNS/Avahi), un paquet par ligne:
+
+```sh
+sudo apt install -y libavahi-client-dev
+sudo apt install -y avahi-daemon
+```
+
+### Linux (Fedora)
+
+Installer les dependances:
+
+```sh
+sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config SDL3-devel SDL3_ttf-devel
+```
+
+Optionnel (decouverte reseau mDNS/Avahi), un paquet par ligne:
+
+```sh
+sudo dnf install -y avahi-compat-libdns_sd-devel
+sudo dnf install -y avahi-devel
+sudo dnf install -y avahi
+```
+
+### Linux (Arch)
+
+Installer les dependances:
+
+```sh
+sudo pacman -Syu --needed base-devel cmake pkgconf sdl3 sdl3_ttf
+```
+
+Optionnel (decouverte reseau mDNS/Avahi), un paquet par ligne:
+
+```sh
+sudo pacman -S --needed avahi
+```
+
+Activer le service Avahi (optionnel):
+
+```sh
+sudo systemctl enable --now avahi-daemon
+```
+
+Compiler:
 
 ```sh
 cmake -S . -B build
