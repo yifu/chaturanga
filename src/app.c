@@ -1244,6 +1244,10 @@ static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_ran
         return false;
     }
 
+    if (ctx->game_state.outcome != CHESS_OUTCOME_NONE) {
+        return false;
+    }
+
     if (!chess_game_try_local_move(&ctx->game_state, ctx->network_session.local_color, to_file, to_rank, &move)) {
         return false;
     }
@@ -1276,6 +1280,10 @@ static void app_handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mo
     int rank;
 
     if (!ctx || ctx->connection.fd < 0) {
+        return;
+    }
+
+    if (ctx->game_state.outcome != CHESS_OUTCOME_NONE) {
         return;
     }
 
@@ -1527,6 +1535,112 @@ static void app_render_remote_move_animation(AppLoopContext *ctx, int width, int
     }
 }
 
+static void app_render_game_over_banner(AppLoopContext *ctx, int width, int height)
+{
+    const char *headline;
+    const char *subline;
+    SDL_Texture *headline_tex;
+    SDL_Texture *subline_tex;
+    float hw;
+    float hh;
+    float sw;
+    float sh;
+
+    if (!ctx || !ctx->renderer || ctx->game_state.outcome == CHESS_OUTCOME_NONE) {
+        return;
+    }
+
+    headline = NULL;
+    subline = NULL;
+    switch (ctx->game_state.outcome) {
+    case CHESS_OUTCOME_CHECKMATE_WHITE_WINS:
+        headline = "Checkmate";
+        subline = (ctx->network_session.local_color == CHESS_COLOR_WHITE) ? "You win!" : "Opponent wins";
+        break;
+    case CHESS_OUTCOME_CHECKMATE_BLACK_WINS:
+        headline = "Checkmate";
+        subline = (ctx->network_session.local_color == CHESS_COLOR_BLACK) ? "You win!" : "Opponent wins";
+        break;
+    case CHESS_OUTCOME_STALEMATE:
+        headline = "Draw";
+        subline = "Stalemate";
+        break;
+    case CHESS_OUTCOME_FIFTY_MOVE_RULE:
+        headline = "Draw";
+        subline = "50-move rule";
+        break;
+    default:
+        return;
+    }
+
+    {
+        SDL_FRect overlay;
+        overlay.x = 0.0f;
+        overlay.y = 0.0f;
+        overlay.w = (float)width;
+        overlay.h = (float)height;
+        SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 160);
+        SDL_RenderFillRect(ctx->renderer, &overlay);
+        SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_NONE);
+    }
+
+    hw = 0.0f;
+    hh = 0.0f;
+    sw = 0.0f;
+    sh = 0.0f;
+    headline_tex = make_text_texture(
+        ctx->renderer,
+        s_lobby_font ? s_lobby_font : s_coord_font,
+        headline,
+        (SDL_Color){ 255, 255, 255, 255 }
+    );
+    subline_tex = make_text_texture(
+        ctx->renderer,
+        s_coord_font ? s_coord_font : s_lobby_font,
+        subline,
+        (SDL_Color){ 210, 210, 210, 255 }
+    );
+    if (headline_tex) { SDL_GetTextureSize(headline_tex, &hw, &hh); }
+    if (subline_tex)  { SDL_GetTextureSize(subline_tex,  &sw, &sh); }
+
+    {
+        const float pad = 28.0f;
+        const float gap = 14.0f;
+        const float box_w = (hw > sw ? hw : sw) + pad * 2.0f;
+        const float box_h = hh + sh + gap + pad * 2.0f;
+        SDL_FRect box;
+        SDL_FRect dst;
+
+        box.x = ((float)width  - box_w) * 0.5f;
+        box.y = ((float)height - box_h) * 0.5f;
+        box.w = box_w;
+        box.h = box_h;
+
+        SDL_SetRenderDrawColor(ctx->renderer, 30, 30, 30, 255);
+        SDL_RenderFillRect(ctx->renderer, &box);
+        SDL_SetRenderDrawColor(ctx->renderer, 200, 160, 60, 255);
+        SDL_RenderRect(ctx->renderer, &box);
+
+        if (headline_tex) {
+            dst.x = box.x + (box.w - hw) * 0.5f;
+            dst.y = box.y + pad;
+            dst.w = hw;
+            dst.h = hh;
+            SDL_RenderTexture(ctx->renderer, headline_tex, NULL, &dst);
+            SDL_DestroyTexture(headline_tex);
+        }
+        if (subline_tex) {
+            dst.x = box.x + (box.w - sw) * 0.5f;
+            dst.y = box.y + pad + hh + gap;
+            dst.w = sw;
+            dst.h = sh;
+            SDL_RenderTexture(ctx->renderer, subline_tex, NULL, &dst);
+            SDL_DestroyTexture(subline_tex);
+        }
+    }
+}
+
 static void app_render_status_message(AppLoopContext *ctx, int width)
 {
     SDL_Texture *msg_tex;
@@ -1613,6 +1727,7 @@ static void app_render_frame(AppLoopContext *ctx)
         app_render_remote_move_animation(ctx, width, height);
         app_render_drag_preview(ctx, width, height);
         render_board_coordinates(ctx->renderer, width, height, ctx->network_session.local_color);
+        app_render_game_over_banner(ctx, width, height);
     }
 
     app_render_status_message(ctx, width);

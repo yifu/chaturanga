@@ -314,6 +314,32 @@ static bool is_legal_move(
     return !is_king_in_check(&copy, moving_color);
 }
 
+static bool has_any_legal_move(const ChessGameState *state, ChessPlayerColor color)
+{
+    int from_rank;
+    int from_file;
+    int to_rank;
+    int to_file;
+    ChessPiece piece;
+
+    for (from_rank = 0; from_rank < CHESS_BOARD_SIZE; ++from_rank) {
+        for (from_file = 0; from_file < CHESS_BOARD_SIZE; ++from_file) {
+            piece = (ChessPiece)state->board[from_rank][from_file];
+            if (piece == CHESS_PIECE_EMPTY || piece_color(piece) != color) {
+                continue;
+            }
+            for (to_rank = 0; to_rank < CHESS_BOARD_SIZE; ++to_rank) {
+                for (to_file = 0; to_file < CHESS_BOARD_SIZE; ++to_file) {
+                    if (is_legal_move(state, color, from_file, from_rank, to_file, to_rank)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 static bool apply_move(ChessGameState *state, int from_file, int from_rank, int to_file, int to_rank)
 {
     uint8_t piece;
@@ -355,6 +381,22 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
     state->has_selection = false;
     state->selected_file = -1;
     state->selected_rank = -1;
+
+    {
+        ChessPlayerColor next_color = state->side_to_move;
+        if (state->halfmove_clock >= 100) {
+            state->outcome = CHESS_OUTCOME_FIFTY_MOVE_RULE;
+        } else if (!has_any_legal_move(state, next_color)) {
+            if (is_king_in_check(state, next_color)) {
+                state->outcome = (next_color == CHESS_COLOR_WHITE)
+                    ? CHESS_OUTCOME_CHECKMATE_BLACK_WINS
+                    : CHESS_OUTCOME_CHECKMATE_WHITE_WINS;
+            } else {
+                state->outcome = CHESS_OUTCOME_STALEMATE;
+            }
+        }
+    }
+
     return true;
 }
 

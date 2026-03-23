@@ -25,6 +25,14 @@ typedef enum ChessPiece {
     CHESS_PIECE_COUNT
 } ChessPiece;
 
+typedef enum ChessGameOutcome {
+    CHESS_OUTCOME_NONE = 0,
+    CHESS_OUTCOME_CHECKMATE_WHITE_WINS,
+    CHESS_OUTCOME_CHECKMATE_BLACK_WINS,
+    CHESS_OUTCOME_STALEMATE,
+    CHESS_OUTCOME_FIFTY_MOVE_RULE
+} ChessGameOutcome;
+
 typedef struct ChessGameState {
     uint8_t board[CHESS_BOARD_SIZE][CHESS_BOARD_SIZE]; /* [rank][file] */
     ChessPlayerColor side_to_move;
@@ -33,6 +41,7 @@ typedef struct ChessGameState {
     bool has_selection;
     int selected_file;
     int selected_rank;
+    ChessGameOutcome outcome;
 } ChessGameState;
 
 void chess_game_state_init(ChessGameState *state);
