@@ -691,6 +691,15 @@ static void net_advance_hello_handshake(AppContext *ctx)
         return;
     }
 
+    /* Commit inferred role immediately so that packet handlers
+     * (e.g. net_handle_ack_packet) see the correct role when
+     * processing packets later in the same tick. */
+    if (ctx->network_session.role == CHESS_ROLE_UNKNOWN) {
+        ctx->network_session.role = effective_role;
+        SDL_Log("NET: inferred role %s from early accept",
+                effective_role == CHESS_ROLE_SERVER ? "SERVER" : "CLIENT");
+    }
+
     {
         ChessHelloPayload local_hello;
         memset(&local_hello, 0, sizeof(local_hello));
@@ -721,9 +730,6 @@ static void net_advance_hello_handshake(AppContext *ctx)
             ctx->hello_ack_sent) {
             ctx->hello_completed = true;
             chess_network_session_set_transport_ready(&ctx->network_session, true);
-            if (ctx->network_session.role == CHESS_ROLE_UNKNOWN) {
-                ctx->network_session.role = effective_role;
-            }
             if (ctx->network_session.state < CHESS_NET_IN_GAME) {
                 ctx->network_session.state = CHESS_NET_IN_GAME;
             }
@@ -734,9 +740,6 @@ static void net_advance_hello_handshake(AppContext *ctx)
                    ctx->hello_ack_received) {
             ctx->hello_completed = true;
             chess_network_session_set_transport_ready(&ctx->network_session, true);
-            if (ctx->network_session.role == CHESS_ROLE_UNKNOWN) {
-                ctx->network_session.role = effective_role;
-            }
             if (ctx->network_session.state < CHESS_NET_IN_GAME) {
                 ctx->network_session.state = CHESS_NET_IN_GAME;
             }
