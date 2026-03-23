@@ -57,6 +57,6 @@ add_executable(chess_app_tests
 )
 
 target_include_directories(chess_app_tests PRIVATE include)
-target_link_libraries(chess_app_tests PRIVATE Threads::Threads)
+target_link_libraries(chess_app_tests PRIVATE SDL3::SDL3 Threads::Threads)
 
 add_test(NAME chess_app_tests COMMAND chess_app_tests)
