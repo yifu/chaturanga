@@ -1,4 +1,5 @@
 #include "chess_app/game_state.h"
+#include "chess_app/lobby_state.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
 
@@ -277,6 +278,31 @@ static void test_tcp_packet_flow_basic(void)
     chess_tcp_connection_close(&receiver);
 }
 
+static void test_lobby_remove_peer_by_uuid(void)
+{
+    ChessLobbyState lobby;
+    ChessPeerInfo p1;
+    ChessPeerInfo p2;
+
+    chess_lobby_init(&lobby);
+    memset(&p1, 0, sizeof(p1));
+    memset(&p2, 0, sizeof(p2));
+    (void)snprintf(p1.uuid, sizeof(p1.uuid), "%s", "11111111-1111-4111-a111-111111111111");
+    (void)snprintf(p2.uuid, sizeof(p2.uuid), "%s", "22222222-2222-4222-a222-222222222222");
+
+    chess_lobby_add_or_update_peer(&lobby, &p1, 5001u);
+    chess_lobby_add_or_update_peer(&lobby, &p2, 5002u);
+    EXPECT_EQ_INT(lobby.discovered_peer_count, 2);
+
+    lobby.selected_peer_idx = 1;
+    EXPECT_TRUE(chess_lobby_remove_peer_by_uuid(&lobby, p1.uuid));
+    EXPECT_EQ_INT(lobby.discovered_peer_count, 1);
+    EXPECT_EQ_INT(strcmp(lobby.discovered_peers[0].peer.uuid, p2.uuid), 0);
+    EXPECT_EQ_INT(lobby.selected_peer_idx, 0);
+
+    EXPECT_TRUE(!chess_lobby_remove_peer_by_uuid(&lobby, "not-found"));
+}
+
 int main(void)
 {
     test_castling_kingside();
@@ -288,6 +314,7 @@ int main(void)
     test_network_session_flow();
     test_role_election_uuid_fallback();
     test_tcp_packet_flow_basic();
+    test_lobby_remove_peer_by_uuid();
 
     fprintf(stdout, "Tests passed: %d\n", s_passed);
     if (s_failed > 0) {

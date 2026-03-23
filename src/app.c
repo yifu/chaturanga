@@ -1540,9 +1540,15 @@ static void app_clear_challenges(AppLoopContext *ctx)
 
 static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
 {
+    char remote_uuid[CHESS_UUID_STRING_LEN];
+    bool was_in_game;
+
     if (!ctx) {
         return;
     }
+
+    was_in_game = ctx->network_session.game_started;
+    SDL_strlcpy(remote_uuid, ctx->network_session.remote_peer.uuid, sizeof(remote_uuid));
 
     if (reason && reason[0] != '\0') {
         SDL_Log("NET: peer disconnected (%s)", reason);
@@ -1556,10 +1562,14 @@ static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     ctx->start_completed = false;
     ctx->start_failures = 0u;
     ctx->pending_start_payload.game_id = 0u;
+    ctx->network_session.peer_available = false;
     ctx->network_session.transport_ready = false;
     ctx->network_session.game_started = false;
     ctx->network_session.role = CHESS_ROLE_UNKNOWN;
+    memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
     ctx->network_session.state = CHESS_NET_IDLE_DISCOVERY;
+    memset(&ctx->discovered_peer, 0, sizeof(ctx->discovered_peer));
+    ctx->discovery.remote_emitted = false;
     ctx->drag_active = false;
     ctx->drag_piece = CHESS_PIECE_EMPTY;
     ctx->promotion_pending = false;
@@ -1569,13 +1579,22 @@ static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
     chess_game_clear_selection(&ctx->game_state);
     ctx->move_history_count = 0;
+    (void)chess_lobby_remove_peer_by_uuid(&ctx->lobby, remote_uuid);
     app_clear_challenges(ctx);
 
-    app_set_status_message(
-        ctx,
-        "Opponent disconnected. Waiting for reconnection support; back in lobby.",
-        5000u
-    );
+    if (was_in_game) {
+        app_set_status_message(
+            ctx,
+            "Opponent disconnected. Back to lobby; rediscovery enabled.",
+            5000u
+        );
+    } else {
+        app_set_status_message(
+            ctx,
+            "Peer disconnected. Waiting for discovery updates.",
+            3000u
+        );
+    }
 }
 
 static bool app_init_networking(AppLoopContext *ctx)

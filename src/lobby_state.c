@@ -126,3 +126,38 @@ bool chess_lobby_has_offer_been_sent(
 
     return lobby->discovered_peers[peer_idx].offer_sent;
 }
+
+bool chess_lobby_remove_peer_by_uuid(ChessLobbyState *lobby, const char *uuid)
+{
+    int idx;
+    int i;
+
+    if (!lobby || !uuid || uuid[0] == '\0') {
+        return false;
+    }
+
+    idx = -1;
+    for (i = 0; i < lobby->discovered_peer_count; ++i) {
+        if (SDL_strcmp(lobby->discovered_peers[i].peer.uuid, uuid) == 0) {
+            idx = i;
+            break;
+        }
+    }
+
+    if (idx < 0) {
+        return false;
+    }
+
+    for (i = idx; i + 1 < lobby->discovered_peer_count; ++i) {
+        lobby->discovered_peers[i] = lobby->discovered_peers[i + 1];
+    }
+    lobby->discovered_peer_count -= 1;
+
+    if (lobby->selected_peer_idx == idx) {
+        lobby->selected_peer_idx = -1;
+    } else if (lobby->selected_peer_idx > idx) {
+        lobby->selected_peer_idx -= 1;
+    }
+
+    return true;
+}

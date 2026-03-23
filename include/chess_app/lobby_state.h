@@ -54,5 +54,6 @@ bool chess_lobby_has_offer_been_sent(
     const ChessLobbyState *lobby,
     int peer_idx
 );
+bool chess_lobby_remove_peer_by_uuid(ChessLobbyState *lobby, const char *uuid);
 
 #endif
