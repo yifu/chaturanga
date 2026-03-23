@@ -42,6 +42,8 @@ typedef struct ChessGameState {
     bool white_can_castle_queenside;
     bool black_can_castle_kingside;
     bool black_can_castle_queenside;
+    int8_t en_passant_target_file;
+    int8_t en_passant_target_rank;
     bool has_selection;
     int selected_file;
     int selected_rank;

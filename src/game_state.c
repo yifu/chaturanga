@@ -53,6 +53,42 @@ static bool is_castling_king_move(ChessPiece piece, int from_file, int from_rank
     return false;
 }
 
+static bool is_en_passant_capture_move(
+    const ChessGameState *state,
+    ChessPiece piece,
+    int from_file,
+    int from_rank,
+    int to_file,
+    int to_rank)
+{
+    int dir;
+    ChessPiece adjacent_piece;
+
+    if (!state) {
+        return false;
+    }
+
+    if (piece != CHESS_PIECE_WHITE_PAWN && piece != CHESS_PIECE_BLACK_PAWN) {
+        return false;
+    }
+
+    dir = (piece == CHESS_PIECE_WHITE_PAWN) ? -1 : 1;
+    if (abs_i(to_file - from_file) != 1 || (to_rank - from_rank) != dir) {
+        return false;
+    }
+
+    if (state->en_passant_target_file != to_file || state->en_passant_target_rank != to_rank) {
+        return false;
+    }
+
+    adjacent_piece = (ChessPiece)state->board[from_rank][to_file];
+    if (piece == CHESS_PIECE_WHITE_PAWN) {
+        return adjacent_piece == CHESS_PIECE_BLACK_PAWN;
+    }
+
+    return adjacent_piece == CHESS_PIECE_WHITE_PAWN;
+}
+
 static bool path_clear_straight(const ChessGameState *state, int from_file, int from_rank, int to_file, int to_rank)
 {
     int step_file;
@@ -163,7 +199,10 @@ static bool is_pseudo_legal_move(
         }
 
         if (abs_i(df) == 1 && dr == dir) {
-            return target_piece != CHESS_PIECE_EMPTY;
+            if (target_piece != CHESS_PIECE_EMPTY) {
+                return true;
+            }
+            return is_en_passant_capture_move(state, piece, from_file, from_rank, to_file, to_rank);
         }
         return false;
     }
@@ -410,6 +449,10 @@ static bool is_legal_move(
     copy.board[to_rank][to_file] = copy.board[from_rank][from_file];
     copy.board[from_rank][from_file] = CHESS_PIECE_EMPTY;
 
+    if (is_en_passant_capture_move(state, piece, from_file, from_rank, to_file, to_rank)) {
+        copy.board[from_rank][to_file] = CHESS_PIECE_EMPTY;
+    }
+
     if (is_castling_king_move(piece, from_file, from_rank, to_file, to_rank)) {
         if (to_file == 6) {
             copy.board[to_rank][5] = copy.board[to_rank][7];
@@ -461,6 +504,7 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
     ChessPiece captured;
     bool is_pawn_move;
     bool is_castling;
+    bool is_en_passant;
 
     if (!state || !in_bounds(from_file, from_rank) || !in_bounds(to_file, to_rank)) {
         return false;
@@ -474,6 +518,7 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
     captured = (ChessPiece)state->board[to_rank][to_file];
     is_pawn_move = piece == CHESS_PIECE_WHITE_PAWN || piece == CHESS_PIECE_BLACK_PAWN;
     is_castling = is_castling_king_move((ChessPiece)piece, from_file, from_rank, to_file, to_rank);
+    is_en_passant = is_en_passant_capture_move(state, (ChessPiece)piece, from_file, from_rank, to_file, to_rank);
 
     if (piece == CHESS_PIECE_WHITE_KING) {
         state->white_can_castle_kingside = false;
@@ -522,6 +567,10 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
     state->board[to_rank][to_file] = piece;
     state->board[from_rank][from_file] = CHESS_PIECE_EMPTY;
 
+    if (is_en_passant) {
+        state->board[from_rank][to_file] = CHESS_PIECE_EMPTY;
+    }
+
     if (is_castling) {
         if (to_file == 6) {
             state->board[to_rank][5] = state->board[to_rank][7];
@@ -536,6 +585,16 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
         state->board[to_rank][to_file] = CHESS_PIECE_WHITE_QUEEN;
     } else if (piece == CHESS_PIECE_BLACK_PAWN && to_rank == 7) {
         state->board[to_rank][to_file] = CHESS_PIECE_BLACK_QUEEN;
+    }
+
+    state->en_passant_target_file = -1;
+    state->en_passant_target_rank = -1;
+    if (piece == CHESS_PIECE_WHITE_PAWN && from_rank == 6 && to_rank == 4) {
+        state->en_passant_target_file = (int8_t)from_file;
+        state->en_passant_target_rank = 5;
+    } else if (piece == CHESS_PIECE_BLACK_PAWN && from_rank == 1 && to_rank == 3) {
+        state->en_passant_target_file = (int8_t)from_file;
+        state->en_passant_target_rank = 2;
     }
 
     state->side_to_move = opposite_color(state->side_to_move);
@@ -577,6 +636,8 @@ void chess_game_state_init(ChessGameState *state)
     state->white_can_castle_queenside = true;
     state->black_can_castle_kingside = true;
     state->black_can_castle_queenside = true;
+    state->en_passant_target_file = -1;
+    state->en_passant_target_rank = -1;
     state->selected_file = -1;
     state->selected_rank = -1;
 
