@@ -132,6 +132,7 @@ void chess_net_reset_transport_progress(AppContext *ctx)
     ctx->hello_completed = false;
     ctx->challenge_exchange_completed = false;
     ctx->start_sent = false;
+    ctx->start_sent_at_ms = 0;
     ctx->resume_request_sent = false;
     ctx->pending_resume_state_sync = false;
 }
@@ -196,31 +197,47 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
     }
 
     if (peer_idx >= 0) {
-        chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_INCOMING_PENDING);
+        /* B2 fix: if we already sent an OFFER to this peer (cross-offer),
+         * auto-accept instead of overwriting with INCOMING_PENDING. */
+        if (chess_lobby_get_challenge_state(&ctx->lobby, peer_idx) == CHESS_CHALLENGE_OUTGOING_PENDING) {
+            ChessAcceptPayload accept;
+            memset(&accept, 0, sizeof(accept));
+            SDL_strlcpy(accept.acceptor_uuid, ctx->network_session.local_peer.uuid, sizeof(accept.acceptor_uuid));
+            if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
+                ctx->challenge_exchange_completed = true;
+                chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
+                SDL_Log("NET: cross-offer detected, auto-accepted (%.8s...)", offer->challenger_uuid);
+            } else {
+                chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_INCOMING_PENDING);
+            }
+        } else {
+            chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_INCOMING_PENDING);
+        }
         chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[peer_idx].peer);
     }
 }
 
 static void net_handle_accept_packet(AppContext *ctx, const ChessAcceptPayload *accept)
 {
-    int peer_idx;
+    int peer_idx = -1;
     int i;
 
     if (!ctx || !accept || ctx->challenge_exchange_completed) {
         return;
     }
 
-    peer_idx = ctx->lobby.selected_peer_idx;
-    if (peer_idx < 0) {
-        for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
-            if (SDL_strncmp(
-                    ctx->lobby.discovered_peers[i].peer.uuid,
-                    ctx->network_session.remote_peer.uuid,
-                    CHESS_UUID_STRING_LEN) == 0) {
-                peer_idx = i;
-                break;
-            }
+    /* B3 fix: lookup by acceptor UUID first, fall back to selected_peer_idx. */
+    for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
+        if (SDL_strncmp(
+                ctx->lobby.discovered_peers[i].peer.uuid,
+                accept->acceptor_uuid,
+                CHESS_UUID_STRING_LEN) == 0) {
+            peer_idx = i;
+            break;
         }
+    }
+    if (peer_idx < 0) {
+        peer_idx = ctx->lobby.selected_peer_idx;
     }
 
     ctx->challenge_exchange_completed = true;
@@ -748,6 +765,7 @@ static void net_send_start_if_needed(AppContext *ctx)
 
     if (chess_tcp_send_start(&ctx->connection, &ctx->pending_start_payload)) {
         ctx->start_sent = true;
+        ctx->start_sent_at_ms = SDL_GetTicks();
     } else {
         ctx->start_failures += 1u;
         if (ctx->start_failures == 1u || (ctx->start_failures % 5u) == 0u) {
@@ -789,6 +807,13 @@ void chess_net_tick(AppContext *ctx)
 
     if (!ctx) {
         return;
+    }
+
+    /* B1 fix: retry START after 3 seconds if ACK never arrived. */
+    if (ctx->start_sent && !ctx->start_completed &&
+        (SDL_GetTicks() - ctx->start_sent_at_ms) > 3000u) {
+        SDL_Log("NET: START ACK timeout, will retry");
+        ctx->start_sent = false;
     }
 
     poll_socket_events(&ctx->listener, &ctx->connection, &connection_phase_events);

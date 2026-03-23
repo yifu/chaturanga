@@ -41,6 +41,7 @@ typedef struct AppContext {
     bool hello_completed;
     bool challenge_exchange_completed;
     bool start_sent;
+    uint64_t start_sent_at_ms;
     bool start_completed;
     bool resume_request_sent;
     bool pending_resume_state_sync;
