@@ -1802,7 +1802,8 @@ static void net_handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ac
         ack->acked_sequence == 2u &&
         ack->status_code == 0u) {
         SDL_Log("NET: START ACK received, switching to game view");
-        chess_network_session_start_game(&ctx->network_session, ctx->pending_start_payload.game_id, CHESS_COLOR_WHITE);
+        chess_network_session_start_game(&ctx->network_session, ctx->pending_start_payload.game_id,
+            opposite_color((ChessPlayerColor)ctx->pending_start_payload.assigned_color));
         ctx->start_completed = true;
         chess_game_state_init(&ctx->game_state);
         SDL_Log(
@@ -2049,10 +2050,23 @@ static void net_send_start_if_needed(AppLoopContext *ctx)
 
     memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
     ctx->pending_start_payload.game_id = make_game_id(&ctx->network_session.local_peer, &ctx->network_session.remote_peer);
-    ctx->pending_start_payload.assigned_color = CHESS_COLOR_BLACK;
     ctx->pending_start_payload.initial_turn = CHESS_COLOR_WHITE;
-    SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
-    SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+
+    {
+        const bool server_is_white = (arc4random() % 2u) == 0u;
+        if (server_is_white) {
+            ctx->pending_start_payload.assigned_color = CHESS_COLOR_BLACK;
+            SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
+            SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+        } else {
+            ctx->pending_start_payload.assigned_color = CHESS_COLOR_WHITE;
+            SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
+            SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+        }
+        SDL_Log("NET: color assignment — server=%s, client=%s",
+            server_is_white ? "WHITE" : "BLACK",
+            server_is_white ? "BLACK" : "WHITE");
+    }
 
     if (chess_tcp_send_start(&ctx->connection, &ctx->pending_start_payload)) {
         ctx->start_sent = true;
