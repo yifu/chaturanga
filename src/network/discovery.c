@@ -500,10 +500,6 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
         const char *ip       = getenv("CHESS_REMOTE_IP");
         const char *uuid     = getenv("CHESS_REMOTE_UUID");
         const char *port_str = getenv("CHESS_REMOTE_PORT");
-        const char *remote_username = getenv("CHESS_REMOTE_USERNAME");
-        const char *remote_hostname = getenv("CHESS_REMOTE_HOSTNAME");
-        char parsed_user[CHESS_PEER_USERNAME_MAX_LEN];
-        char parsed_host[CHESS_PEER_HOSTNAME_MAX_LEN];
         char *endptr     = NULL;
         long  parsed_port = 0;
 
@@ -527,21 +523,6 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
 
         SDL_strlcpy(out_remote_peer->peer.uuid, uuid, sizeof(out_remote_peer->peer.uuid));
         out_remote_peer->tcp_port = (uint16_t)parsed_port;
-
-        parsed_user[0] = '\0';
-        parsed_host[0] = '\0';
-
-        if (remote_username && remote_username[0] != '\0') {
-            SDL_strlcpy(parsed_user, remote_username, sizeof(parsed_user));
-        }
-        if (remote_hostname && remote_hostname[0] != '\0') {
-            SDL_strlcpy(parsed_host, remote_hostname, sizeof(parsed_host));
-        }
-
-        chess_peer_set_identity_tokens(
-            &out_remote_peer->peer,
-            (parsed_user[0] != '\0') ? parsed_user : NULL,
-            (parsed_host[0] != '\0') ? parsed_host : NULL);
 
         if (SDL_strncmp(out_remote_peer->peer.uuid, ctx->local_peer.uuid, CHESS_UUID_STRING_LEN) == 0) {
             SDL_Log("Ignoring discovered peer because UUID matches local peer");
