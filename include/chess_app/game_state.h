@@ -4,6 +4,7 @@
 #include "chess_app/network_protocol.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define CHESS_BOARD_SIZE 8
@@ -67,6 +68,16 @@ bool chess_game_try_local_move(
     int to_rank,
     uint8_t promotion,
     ChessMovePayload *out_move
+);
+bool chess_move_format_algebraic_notation(
+    const ChessGameState *state,
+    int from_file,
+    int from_rank,
+    int to_file,
+    int to_rank,
+    uint8_t promotion,
+    char *out,
+    size_t out_size
 );
 bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote_color, const ChessMovePayload *move);
 

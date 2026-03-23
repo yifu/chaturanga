@@ -79,6 +79,9 @@ static bool         s_lobby_icon_incoming_available  = false;
 static bool         s_lobby_icon_matched_available   = false;
 static const char  *s_lobby_font_path                = NULL;
 static const uint32_t s_remote_move_anim_default_ms  = 160u;
+static const int s_history_panel_width               = 220;
+static const int s_history_max_entries               = 300;
+static const int s_history_entry_len                 = 24;
 
 static TTF_Font *open_font_from_candidates(const char * const *font_paths, float font_size)
 {
@@ -506,6 +509,21 @@ static int board_to_screen_index(int idx, bool black_perspective)
 static int screen_to_board_index(int idx, bool black_perspective)
 {
     return black_perspective ? (CHESS_BOARD_SIZE - 1 - idx) : idx;
+}
+
+static int app_board_width_for_window(int window_width, bool game_started)
+{
+    int board_width;
+
+    if (!game_started) {
+        return window_width;
+    }
+
+    board_width = window_width - s_history_panel_width;
+    if (board_width <= 0) {
+        return window_width;
+    }
+    return board_width;
 }
 
 static ChessPiece promotion_choice_piece(ChessPlayerColor color, uint8_t promotion)
@@ -975,6 +993,8 @@ struct AppLoopContext {
     uint32_t remote_move_anim_duration_ms;
     char status_message[192];
     uint64_t status_message_until_ms;
+    uint16_t move_history_count;
+    char move_history[300][24];
     bool running;
 };
 
@@ -1041,6 +1061,7 @@ static uint8_t promotion_choice_from_mouse(AppLoopContext *ctx, int mouse_x, int
         CHESS_PROMOTION_KNIGHT
     };
     int width;
+    int board_width;
     int height;
     size_t i;
 
@@ -1049,9 +1070,10 @@ static uint8_t promotion_choice_from_mouse(AppLoopContext *ctx, int mouse_x, int
     }
 
     SDL_GetWindowSize(ctx->window, &width, &height);
+    board_width = app_board_width_for_window(width, ctx->network_session.game_started);
     for (i = 0; i < SDL_arraysize(choices); ++i) {
         SDL_FRect rect;
-        if (promotion_choice_rect(ctx, width, height, choices[i], &rect) &&
+        if (promotion_choice_rect(ctx, board_width, height, choices[i], &rect) &&
             mouse_x >= (int)rect.x &&
             mouse_x < (int)(rect.x + rect.w) &&
             mouse_y >= (int)rect.y &&
@@ -1110,7 +1132,11 @@ static bool app_init_window_and_renderer(AppLoopContext *ctx)
         return false;
     }
 
-    ctx->window = SDL_CreateWindow("SDL3 Chess Board", ctx->window_size, ctx->window_size, 0);
+    ctx->window = SDL_CreateWindow(
+        "SDL3 Chess Board",
+        ctx->window_size + s_history_panel_width,
+        ctx->window_size,
+        0);
     if (!ctx->window) {
         SDL_Log("APP: SDL_CreateWindow failed: %s", SDL_GetError());
         SDL_Quit();
@@ -1162,6 +1188,7 @@ static void app_init_runtime_state(AppLoopContext *ctx)
     ctx->remote_move_anim_duration_ms = s_remote_move_anim_default_ms;
     ctx->status_message[0] = '\0';
     ctx->status_message_until_ms = 0;
+    ctx->move_history_count = 0;
 
     net_reset_transport_progress(ctx);
     chess_game_state_init(&ctx->game_state);
@@ -1176,6 +1203,118 @@ static void app_set_status_message(AppLoopContext *ctx, const char *message, uin
 
     SDL_strlcpy(ctx->status_message, message, sizeof(ctx->status_message));
     ctx->status_message_until_ms = SDL_GetTicks() + (uint64_t)duration_ms;
+}
+
+static void app_append_move_history(AppLoopContext *ctx, const char *notation)
+{
+    int idx;
+
+    if (!ctx || !notation || notation[0] == '\0') {
+        return;
+    }
+
+    if (ctx->move_history_count < (uint16_t)s_history_max_entries) {
+        SDL_strlcpy(
+            ctx->move_history[ctx->move_history_count],
+            notation,
+            (size_t)s_history_entry_len);
+        ctx->move_history_count += 1u;
+        return;
+    }
+
+    for (idx = 1; idx < s_history_max_entries; ++idx) {
+        SDL_memcpy(
+            ctx->move_history[idx - 1],
+            ctx->move_history[idx],
+            (size_t)s_history_entry_len);
+    }
+    SDL_strlcpy(ctx->move_history[s_history_max_entries - 1], notation, (size_t)s_history_entry_len);
+}
+
+static void app_render_move_history_panel(AppLoopContext *ctx, int window_width, int window_height, int board_width)
+{
+    SDL_FRect panel_rect;
+    SDL_FRect separator;
+    SDL_Texture *title_tex;
+    float title_w = 0.0f;
+    float title_h = 0.0f;
+    int row_height = 22;
+    int start_y = 36;
+    int max_rows;
+    int total_turns;
+    int first_turn;
+    int turn;
+
+    if (!ctx || !ctx->renderer || !s_coord_font || !ctx->network_session.game_started) {
+        return;
+    }
+
+    panel_rect.x = (float)board_width;
+    panel_rect.y = 0.0f;
+    panel_rect.w = (float)(window_width - board_width);
+    panel_rect.h = (float)window_height;
+    SDL_SetRenderDrawColor(ctx->renderer, 24, 24, 24, 255);
+    SDL_RenderFillRect(ctx->renderer, &panel_rect);
+
+    separator.x = (float)board_width;
+    separator.y = 0.0f;
+    separator.w = 1.0f;
+    separator.h = (float)window_height;
+    SDL_SetRenderDrawColor(ctx->renderer, 66, 66, 66, 255);
+    SDL_RenderFillRect(ctx->renderer, &separator);
+
+    title_tex = make_text_texture(ctx->renderer, s_coord_font, "Moves", (SDL_Color){220, 220, 220, 255});
+    if (title_tex) {
+        SDL_FRect title_dst;
+        SDL_GetTextureSize(title_tex, &title_w, &title_h);
+        title_dst.x = (float)board_width + 12.0f;
+        title_dst.y = 10.0f;
+        title_dst.w = title_w;
+        title_dst.h = title_h;
+        SDL_RenderTexture(ctx->renderer, title_tex, NULL, &title_dst);
+        SDL_DestroyTexture(title_tex);
+    }
+
+    max_rows = (window_height - start_y - 8) / row_height;
+    if (max_rows <= 0) {
+        return;
+    }
+
+    total_turns = ((int)ctx->move_history_count + 1) / 2;
+    if (total_turns <= 0) {
+        return;
+    }
+
+    first_turn = total_turns - max_rows + 1;
+    if (first_turn < 1) {
+        first_turn = 1;
+    }
+
+    for (turn = first_turn; turn <= total_turns; ++turn) {
+        char line[96];
+        int row = turn - first_turn;
+        int white_idx = (turn - 1) * 2;
+        int black_idx = white_idx + 1;
+        const char *white_move = (white_idx < (int)ctx->move_history_count) ? ctx->move_history[white_idx] : "";
+        const char *black_move = (black_idx < (int)ctx->move_history_count) ? ctx->move_history[black_idx] : "";
+        SDL_Texture *line_tex;
+
+        SDL_snprintf(line, sizeof(line), "%d. %-8s %s", turn, white_move, black_move);
+        line_tex = make_text_texture(ctx->renderer, s_coord_font, line, (SDL_Color){200, 200, 200, 255});
+        if (line_tex) {
+            float lw = 0.0f;
+            float lh = 0.0f;
+            SDL_FRect dst;
+
+            SDL_GetTextureSize(line_tex, &lw, &lh);
+            dst.x = (float)board_width + 10.0f;
+            dst.y = (float)(start_y + row * row_height);
+            dst.w = lw;
+            dst.h = lh;
+            SDL_RenderTexture(ctx->renderer, line_tex, NULL, &dst);
+            SDL_DestroyTexture(line_tex);
+        }
+    }
 }
 
 static void app_clear_challenges(AppLoopContext *ctx)
@@ -1221,6 +1360,7 @@ static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     ctx->remote_move_anim_active = false;
     ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
     chess_game_clear_selection(&ctx->game_state);
+    ctx->move_history_count = 0;
     app_clear_challenges(ctx);
 
     app_set_status_message(
@@ -1340,6 +1480,7 @@ static bool app_screen_to_board_square(
     int *out_rank)
 {
     int width = 0;
+    int board_width = 0;
     int height = 0;
     float cell_w;
     float cell_h;
@@ -1352,7 +1493,12 @@ static bool app_screen_to_board_square(
     }
 
     SDL_GetWindowSize(ctx->window, &width, &height);
-    cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+    board_width = app_board_width_for_window(width, ctx->network_session.game_started);
+    if (mouse_x < 0 || mouse_x >= board_width) {
+        return false;
+    }
+
+    cell_w = (float)board_width / (float)CHESS_BOARD_SIZE;
     cell_h = (float)height / (float)CHESS_BOARD_SIZE;
     black_perspective = use_black_perspective(ctx->network_session.local_color);
     screen_file = (int)(mouse_x / cell_w);
@@ -1386,6 +1532,8 @@ static uint8_t app_key_to_promotion_choice(SDL_Keycode key)
 static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, uint8_t promotion)
 {
     ChessMovePayload move;
+    char notation[24];
+    bool notation_ready = false;
 
     if (!ctx || ctx->connection.fd < 0) {
         return false;
@@ -1408,6 +1556,19 @@ static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_ran
         return false;
     }
 
+    if (ctx->game_state.has_selection &&
+        chess_move_format_algebraic_notation(
+            &ctx->game_state,
+            ctx->game_state.selected_file,
+            ctx->game_state.selected_rank,
+            to_file,
+            to_rank,
+            promotion,
+            notation,
+            sizeof(notation))) {
+        notation_ready = true;
+    }
+
     if (!chess_game_try_local_move(
             &ctx->game_state,
             ctx->network_session.local_color,
@@ -1416,6 +1577,10 @@ static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_ran
             promotion,
             &move)) {
         return false;
+    }
+
+    if (notation_ready) {
+        app_append_move_history(ctx, notation);
     }
 
     ctx->promotion_pending = false;
@@ -1950,6 +2115,7 @@ static void app_render_status_message(AppLoopContext *ctx, int width)
 static void app_render_frame(AppLoopContext *ctx)
 {
     int width = 0;
+    int board_width = 0;
     int height = 0;
     bool hide_piece = false;
     int hidden_file = -1;
@@ -1960,6 +2126,7 @@ static void app_render_frame(AppLoopContext *ctx)
     }
 
     SDL_GetWindowSize(ctx->window, &width, &height);
+    board_width = app_board_width_for_window(width, ctx->network_session.game_started);
     SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 255);
     SDL_RenderClear(ctx->renderer);
 
@@ -1976,24 +2143,25 @@ static void app_render_frame(AppLoopContext *ctx)
             hidden_rank = ctx->remote_move_to_rank;
         }
 
-        render_board(ctx->renderer, width, height);
+        render_board(ctx->renderer, board_width, height);
         render_game_overlay(
             ctx->renderer,
-            width,
+            board_width,
             height,
             &ctx->game_state,
             ctx->network_session.local_color,
             hide_piece,
             hidden_file,
             hidden_rank);
-        app_render_promotion_overlay(ctx, width, height);
-        app_render_remote_move_animation(ctx, width, height);
-        app_render_drag_preview(ctx, width, height);
-        render_board_coordinates(ctx->renderer, width, height, ctx->network_session.local_color);
-        app_render_game_over_banner(ctx, width, height);
+        app_render_promotion_overlay(ctx, board_width, height);
+        app_render_remote_move_animation(ctx, board_width, height);
+        app_render_drag_preview(ctx, board_width, height);
+        render_board_coordinates(ctx->renderer, board_width, height, ctx->network_session.local_color);
+        app_render_game_over_banner(ctx, board_width, height);
+        app_render_move_history_panel(ctx, width, height, board_width);
     }
 
-    app_render_status_message(ctx, width);
+    app_render_status_message(ctx, board_width);
 
     SDL_RenderPresent(ctx->renderer);
 }
@@ -2152,6 +2320,7 @@ static void net_handle_start_packet(AppLoopContext *ctx, const ChessStartPayload
         );
         ctx->start_completed = true;
         chess_game_state_init(&ctx->game_state);
+        ctx->move_history_count = 0;
         SDL_Log(
             "GAME: started (game_id=%u, local_color=%s, first_turn=%s)",
             ctx->network_session.game_id,
@@ -2184,6 +2353,7 @@ static void net_handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ac
             opposite_color((ChessPlayerColor)ctx->pending_start_payload.assigned_color));
         ctx->start_completed = true;
         chess_game_state_init(&ctx->game_state);
+        ctx->move_history_count = 0;
         SDL_Log(
             "GAME: started (game_id=%u, local_color=%s, first_turn=%s)",
             ctx->network_session.game_id,
@@ -2197,6 +2367,8 @@ static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *
 {
     ChessPiece moving_piece;
     ChessPlayerColor remote_color;
+    char notation[24];
+    bool notation_ready = false;
 
     if (!ctx || !move || !ctx->network_session.game_started) {
         return;
@@ -2208,6 +2380,18 @@ static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *
     }
 
     moving_piece = chess_game_get_piece(&ctx->game_state, (int)move->from_file, (int)move->from_rank);
+
+    if (chess_move_format_algebraic_notation(
+            &ctx->game_state,
+            (int)move->from_file,
+            (int)move->from_rank,
+            (int)move->to_file,
+            (int)move->to_rank,
+            move->promotion,
+            notation,
+            sizeof(notation))) {
+        notation_ready = true;
+    }
 
     if (chess_game_apply_remote_move(&ctx->game_state, remote_color, move)) {
         ChessPiece piece_to_animate = moving_piece;
@@ -2226,6 +2410,10 @@ static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *
             if (ctx->remote_move_anim_duration_ms == 0u) {
                 ctx->remote_move_anim_duration_ms = s_remote_move_anim_default_ms;
             }
+        }
+
+        if (notation_ready) {
+            app_append_move_history(ctx, notation);
         }
 
         SDL_Log(
