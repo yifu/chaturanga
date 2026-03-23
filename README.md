@@ -117,6 +117,10 @@ Quality gate minimal (recommande):
 - tout nouveau changement de regles ou flux reseau doit garder `ctest` vert
 - aucun PR ne doit etre merge si `ctest` echoue
 
+CI GitHub Actions:
+- workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- declenchement sur chaque Pull Request et sur chaque push vers `main`
+
 ## LAN Discovery (current implementation)
 
 The networking layer now has:
