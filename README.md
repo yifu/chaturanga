@@ -110,6 +110,7 @@ cmake -S . -B build && cmake --build build -j && ctest --test-dir build --output
 Ce que couvre la suite actuelle:
 - regles avancees du moteur: roque, en passant, promotion, echec/mat, regle des 50 coups
 - transitions reseau de base: election de role et progression de session jusqu'au mode in-game
+- echange de paquets reseau basique: HELLO, ACK et MOVE (integration locale via socketpair)
 - synchronisation locale/distante via les memes primitives de validation de coups
 
 Quality gate minimal (recommande):

@@ -1,10 +1,12 @@
 #include "chess_app/game_state.h"
 #include "chess_app/network_session.h"
+#include "chess_app/network_tcp.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 
 static int s_failed = 0;
 static int s_passed = 0;
@@ -220,6 +222,61 @@ static void test_role_election_uuid_fallback(void)
     EXPECT_EQ_INT(chess_elect_role(&remote, &local), CHESS_ROLE_CLIENT);
 }
 
+static void test_tcp_packet_flow_basic(void)
+{
+    int fds[2] = { -1, -1 };
+    ChessTcpConnection sender;
+    ChessTcpConnection receiver;
+    ChessHelloPayload hello_out;
+    ChessHelloPayload hello_in;
+    ChessAckPayload ack;
+    ChessMovePayload move_out;
+    ChessMovePayload move_in;
+    ChessPacketHeader header;
+
+    EXPECT_TRUE(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
+    if (fds[0] < 0 || fds[1] < 0) {
+        return;
+    }
+
+    sender.fd = fds[0];
+    receiver.fd = fds[1];
+
+    memset(&hello_out, 0, sizeof(hello_out));
+    memset(&hello_in, 0, sizeof(hello_in));
+    (void)snprintf(hello_out.uuid, sizeof(hello_out.uuid), "%s", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
+    hello_out.role = CHESS_ROLE_SERVER;
+
+    EXPECT_TRUE(chess_tcp_send_hello(&sender, &hello_out));
+    EXPECT_TRUE(chess_tcp_recv_hello(&receiver, 100, &hello_in));
+    EXPECT_EQ_INT(strcmp(hello_in.uuid, hello_out.uuid), 0);
+    EXPECT_EQ_INT((int)hello_in.role, (int)hello_out.role);
+
+    EXPECT_TRUE(chess_tcp_send_ack(&receiver, CHESS_MSG_HELLO, 1u, 0u));
+    EXPECT_TRUE(chess_tcp_recv_ack(&sender, 100, &ack));
+    EXPECT_EQ_INT((int)ack.acked_message_type, CHESS_MSG_HELLO);
+    EXPECT_EQ_INT((int)ack.acked_sequence, 1);
+    EXPECT_EQ_INT((int)ack.status_code, 0);
+
+    move_out.from_file = 4;
+    move_out.from_rank = 6;
+    move_out.to_file = 4;
+    move_out.to_rank = 4;
+    move_out.promotion = CHESS_PROMOTION_NONE;
+    memset(&move_in, 0, sizeof(move_in));
+
+    EXPECT_TRUE(chess_tcp_send_packet(&sender, CHESS_MSG_MOVE, 3u, &move_out, (uint32_t)sizeof(move_out)));
+    EXPECT_TRUE(chess_tcp_recv_packet_header(&receiver, 100, &header));
+    EXPECT_EQ_INT((int)header.message_type, CHESS_MSG_MOVE);
+    EXPECT_EQ_INT((int)header.payload_size, (int)sizeof(move_in));
+    EXPECT_TRUE(chess_tcp_recv_payload(&receiver, 100, &move_in, (uint32_t)sizeof(move_in)));
+    EXPECT_EQ_INT((int)move_in.from_file, (int)move_out.from_file);
+    EXPECT_EQ_INT((int)move_in.to_rank, (int)move_out.to_rank);
+
+    chess_tcp_connection_close(&sender);
+    chess_tcp_connection_close(&receiver);
+}
+
 int main(void)
 {
     test_castling_kingside();
@@ -230,6 +287,7 @@ int main(void)
     test_fifty_move_rule();
     test_network_session_flow();
     test_role_election_uuid_fallback();
+    test_tcp_packet_flow_basic();
 
     fprintf(stdout, "Tests passed: %d\n", s_passed);
     if (s_failed > 0) {
