@@ -466,7 +466,7 @@ void chess_discovery_stop(ChessDiscoveryContext *ctx)
 
 bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer)
 {
-    if (!ctx || !ctx->started || !out_remote_peer || ctx->remote_emitted) {
+    if (!ctx || !ctx->started || !out_remote_peer) {
         return false;
     }
 
@@ -499,7 +499,8 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
 
         if (dnssd->pending_peer_ready) {
             *out_remote_peer = dnssd->pending_peer;
-            ctx->remote_emitted = true;
+            dnssd->pending_peer_ready = false;
+            memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
             return true;
         }
 
@@ -519,7 +520,6 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
 
         if (!chess_parse_ipv4(ip, &out_remote_peer->peer.ipv4_host_order)) {
             SDL_Log("Ignoring CHESS_REMOTE_IP: invalid IPv4 '%s'", ip);
-            ctx->remote_emitted = true;
             return false;
         }
 
@@ -527,7 +527,6 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
         parsed_port = strtol(port_str, &endptr, 10);
         if (errno != 0 || endptr == port_str || *endptr != '\0' || parsed_port <= 0 || parsed_port > 65535) {
             SDL_Log("Ignoring CHESS_REMOTE_PORT: invalid port '%s'", port_str);
-            ctx->remote_emitted = true;
             return false;
         }
 
@@ -536,11 +535,9 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
 
         if (SDL_strncmp(out_remote_peer->peer.uuid, ctx->local_peer.uuid, CHESS_UUID_STRING_LEN) == 0) {
             SDL_Log("Ignoring discovered peer because UUID matches local peer");
-            ctx->remote_emitted = true;
             return false;
         }
 
-        ctx->remote_emitted = true;
         return true;
     }
 #endif

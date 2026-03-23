@@ -36,5 +36,11 @@ bool chess_tcp_send_offer(ChessTcpConnection *conn, const ChessOfferPayload *off
 bool chess_tcp_recv_offer(ChessTcpConnection *conn, int timeout_ms, ChessOfferPayload *out_offer);
 bool chess_tcp_send_accept(ChessTcpConnection *conn, const ChessAcceptPayload *accept);
 bool chess_tcp_recv_accept(ChessTcpConnection *conn, int timeout_ms, ChessAcceptPayload *out_accept);
+bool chess_tcp_send_resume_request(ChessTcpConnection *conn, const ChessResumeRequestPayload *request);
+bool chess_tcp_recv_resume_request(ChessTcpConnection *conn, int timeout_ms, ChessResumeRequestPayload *out_request);
+bool chess_tcp_send_resume_response(ChessTcpConnection *conn, const ChessResumeResponsePayload *response);
+bool chess_tcp_recv_resume_response(ChessTcpConnection *conn, int timeout_ms, ChessResumeResponsePayload *out_response);
+bool chess_tcp_send_state_snapshot(ChessTcpConnection *conn, const ChessStateSnapshotPayload *snapshot);
+bool chess_tcp_recv_state_snapshot(ChessTcpConnection *conn, int timeout_ms, ChessStateSnapshotPayload *out_snapshot);
 
 #endif

@@ -456,3 +456,90 @@ bool chess_tcp_recv_accept(ChessTcpConnection *conn, int timeout_ms, ChessAccept
 
     return chess_tcp_recv_payload(conn, timeout_ms, out_accept, (uint32_t)sizeof(*out_accept));
 }
+
+bool chess_tcp_send_resume_request(ChessTcpConnection *conn, const ChessResumeRequestPayload *request)
+{
+    if (!conn || conn->fd < 0 || !request) {
+        return false;
+    }
+
+    return chess_tcp_send_packet(conn, CHESS_MSG_RESUME_REQUEST, 3u, request, (uint32_t)sizeof(*request));
+}
+
+bool chess_tcp_recv_resume_request(ChessTcpConnection *conn, int timeout_ms, ChessResumeRequestPayload *out_request)
+{
+    ChessPacketHeader header;
+
+    if (!conn || conn->fd < 0 || !out_request) {
+        return false;
+    }
+
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
+        return false;
+    }
+
+    if (header.message_type != CHESS_MSG_RESUME_REQUEST ||
+        header.payload_size != sizeof(*out_request)) {
+        return false;
+    }
+
+    return chess_tcp_recv_payload(conn, timeout_ms, out_request, (uint32_t)sizeof(*out_request));
+}
+
+bool chess_tcp_send_resume_response(ChessTcpConnection *conn, const ChessResumeResponsePayload *response)
+{
+    if (!conn || conn->fd < 0 || !response) {
+        return false;
+    }
+
+    return chess_tcp_send_packet(conn, CHESS_MSG_RESUME_RESPONSE, 3u, response, (uint32_t)sizeof(*response));
+}
+
+bool chess_tcp_recv_resume_response(ChessTcpConnection *conn, int timeout_ms, ChessResumeResponsePayload *out_response)
+{
+    ChessPacketHeader header;
+
+    if (!conn || conn->fd < 0 || !out_response) {
+        return false;
+    }
+
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
+        return false;
+    }
+
+    if (header.message_type != CHESS_MSG_RESUME_RESPONSE ||
+        header.payload_size != sizeof(*out_response)) {
+        return false;
+    }
+
+    return chess_tcp_recv_payload(conn, timeout_ms, out_response, (uint32_t)sizeof(*out_response));
+}
+
+bool chess_tcp_send_state_snapshot(ChessTcpConnection *conn, const ChessStateSnapshotPayload *snapshot)
+{
+    if (!conn || conn->fd < 0 || !snapshot) {
+        return false;
+    }
+
+    return chess_tcp_send_packet(conn, CHESS_MSG_STATE_SNAPSHOT, 4u, snapshot, (uint32_t)sizeof(*snapshot));
+}
+
+bool chess_tcp_recv_state_snapshot(ChessTcpConnection *conn, int timeout_ms, ChessStateSnapshotPayload *out_snapshot)
+{
+    ChessPacketHeader header;
+
+    if (!conn || conn->fd < 0 || !out_snapshot) {
+        return false;
+    }
+
+    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
+        return false;
+    }
+
+    if (header.message_type != CHESS_MSG_STATE_SNAPSHOT ||
+        header.payload_size != sizeof(*out_snapshot)) {
+        return false;
+    }
+
+    return chess_tcp_recv_payload(conn, timeout_ms, out_snapshot, (uint32_t)sizeof(*out_snapshot));
+}

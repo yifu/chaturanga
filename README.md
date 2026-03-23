@@ -115,6 +115,17 @@ Override pour tests multi-instances:
 CHESS_APP_PROFILE_DIR=/tmp/chess_profile_a ./build/chess_app
 ```
 
+Reprise automatique apres crash client:
+- le serveur persiste des snapshots de partie sous `matches/<game_id>.json`
+- le client persiste son contexte de reprise dans `resume_state.json`
+- au redemarrage, le client recharge ce contexte et tente une reprise automatique
+	quand un pair decouvert a le meme `remote_profile_id`
+
+Fichier de reprise client (`resume_state.json`):
+- macOS: `~/Library/Application Support/chess_app/resume_state.json`
+- Linux (XDG): `$XDG_STATE_HOME/chess_app/resume_state.json`
+- Linux fallback: `~/.local/state/chess_app/resume_state.json`
+
 ## Tests automatises
 
 Commande unique depuis la racine du depot:

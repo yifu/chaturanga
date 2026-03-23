@@ -7,6 +7,9 @@
 
 #define CHESS_PROTOCOL_VERSION 1u
 #define CHESS_DISCOVERY_SERVICE "_chess._tcp.local"
+#define CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS 64u
+#define CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES 300u
+#define CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN 24u
 
 typedef enum ChessMessageType {
     CHESS_MSG_HELLO = 1,
@@ -18,9 +21,17 @@ typedef enum ChessMessageType {
     CHESS_MSG_RESIGN,
     CHESS_MSG_DRAW_OFFER,
     CHESS_MSG_DRAW_ACCEPT,
+    CHESS_MSG_RESUME_REQUEST,
+    CHESS_MSG_RESUME_RESPONSE,
+    CHESS_MSG_STATE_SNAPSHOT,
     CHESS_MSG_HEARTBEAT,
     CHESS_MSG_DISCONNECT
 } ChessMessageType;
+
+typedef enum ChessResumeStatus {
+    CHESS_RESUME_REJECTED = 0,
+    CHESS_RESUME_ACCEPTED = 1
+} ChessResumeStatus;
 
 typedef enum ChessPlayerColor {
     CHESS_COLOR_UNASSIGNED = 0,
@@ -68,7 +79,39 @@ typedef struct ChessStartPayload {
     uint32_t initial_turn;
     char white_uuid[CHESS_UUID_STRING_LEN];
     char black_uuid[CHESS_UUID_STRING_LEN];
+    char resume_token[CHESS_UUID_STRING_LEN];
 } ChessStartPayload;
+
+typedef struct ChessResumeRequestPayload {
+    uint32_t game_id;
+    char profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    char resume_token[CHESS_UUID_STRING_LEN];
+} ChessResumeRequestPayload;
+
+typedef struct ChessResumeResponsePayload {
+    uint32_t status;
+    uint32_t game_id;
+} ChessResumeResponsePayload;
+
+typedef struct ChessStateSnapshotPayload {
+    uint32_t game_id;
+    uint32_t side_to_move;
+    uint32_t fullmove_number;
+    uint32_t halfmove_clock;
+    uint32_t outcome;
+    uint8_t white_can_castle_kingside;
+    uint8_t white_can_castle_queenside;
+    uint8_t black_can_castle_kingside;
+    uint8_t black_can_castle_queenside;
+    int8_t en_passant_target_file;
+    int8_t en_passant_target_rank;
+    uint8_t _padding[2];
+    uint16_t move_history_count;
+    uint8_t _padding2[2];
+    char resume_token[CHESS_UUID_STRING_LEN];
+    uint8_t board[CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS];
+    char move_history[CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES][CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN];
+} ChessStateSnapshotPayload;
 
 typedef struct ChessHeartbeatPayload {
     uint32_t tick;

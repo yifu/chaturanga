@@ -11,9 +11,13 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -80,8 +84,8 @@ static bool         s_lobby_icon_matched_available   = false;
 static const char  *s_lobby_font_path                = NULL;
 static const uint32_t s_remote_move_anim_default_ms  = 160u;
 static const int s_history_panel_width               = 220;
-static const int s_history_max_entries               = 300;
-static const int s_history_entry_len                 = 24;
+static const int s_history_max_entries               = (int)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES;
+static const int s_history_entry_len                 = (int)CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN;
 
 static TTF_Font *open_font_from_candidates(const char * const *font_paths, float font_size)
 {
@@ -500,6 +504,90 @@ static bool use_black_perspective(ChessPlayerColor local_color)
 }
 
 typedef struct AppLoopContext AppLoopContext;
+static bool app_save_match_snapshot(AppLoopContext *ctx);
+
+static bool app_ensure_directory_recursive(const char *path)
+{
+    char tmp[PATH_MAX];
+    char *p;
+    size_t len;
+
+    if (!path || path[0] == '\0') {
+        return false;
+    }
+
+    (void)snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    if (len == 0) {
+        return false;
+    }
+    if (tmp[len - 1] == '/') {
+        tmp[len - 1] = '\0';
+    }
+
+    for (p = tmp + 1; *p != '\0'; ++p) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
+                return false;
+            }
+            *p = '/';
+        }
+    }
+
+    if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
+        return false;
+    }
+    return true;
+}
+
+static bool app_build_app_state_dir(char *out_dir, size_t out_dir_size)
+{
+    const char *override_dir = getenv("CHESS_APP_PROFILE_DIR");
+    const char *home = getenv("HOME");
+    const char *xdg_state_home = getenv("XDG_STATE_HOME");
+
+    if (!out_dir || out_dir_size == 0) {
+        return false;
+    }
+
+    if (override_dir && override_dir[0] != '\0') {
+        (void)snprintf(out_dir, out_dir_size, "%s", override_dir);
+        return app_ensure_directory_recursive(out_dir);
+    }
+
+    if (!home || home[0] == '\0') {
+        return false;
+    }
+
+#if defined(__APPLE__)
+    (void)snprintf(out_dir, out_dir_size, "%s/Library/Application Support/chess_app", home);
+#else
+    if (xdg_state_home && xdg_state_home[0] != '\0') {
+        (void)snprintf(out_dir, out_dir_size, "%s/chess_app", xdg_state_home);
+    } else {
+        (void)snprintf(out_dir, out_dir_size, "%s/.local/state/chess_app", home);
+    }
+#endif
+
+    return app_ensure_directory_recursive(out_dir);
+}
+
+static bool app_build_snapshot_dir(char *out_dir, size_t out_dir_size)
+{
+    char base_dir[PATH_MAX];
+
+    if (!out_dir || out_dir_size == 0u) {
+        return false;
+    }
+
+    if (!app_build_app_state_dir(base_dir, sizeof(base_dir))) {
+        return false;
+    }
+
+    (void)snprintf(out_dir, out_dir_size, "%s/matches", base_dir);
+    return app_ensure_directory_recursive(out_dir);
+}
 
 static int board_to_screen_index(int idx, bool black_perspective)
 {
@@ -969,11 +1057,15 @@ struct AppLoopContext {
     bool challenge_exchange_completed;
     bool start_sent;
     bool start_completed;
+    bool resume_request_sent;
+    bool pending_resume_state_sync;
     ChessStartPayload pending_start_payload;
     unsigned int start_failures;
     uint32_t move_sequence;
     uint64_t next_connect_attempt_at;
     ChessNetworkState last_state;
+    bool resume_state_loaded;
+    char resume_remote_profile_id[CHESS_PROFILE_ID_STRING_LEN];
     bool drag_active;
     ChessPiece drag_piece;
     int drag_from_file;
@@ -997,6 +1089,675 @@ struct AppLoopContext {
     char move_history[300][24];
     bool running;
 };
+
+static bool app_extract_snapshot_string(const char *json, const char *key, char *out_value, size_t out_size)
+{
+    const char *pos;
+    const char *start;
+    const char *end;
+    size_t len;
+
+    if (!json || !key || !out_value || out_size == 0u) {
+        return false;
+    }
+
+    pos = strstr(json, key);
+    if (!pos) {
+        return false;
+    }
+
+    start = strchr(pos, '"');
+    if (!start) {
+        return false;
+    }
+    start = strchr(start + 1, '"');
+    if (!start) {
+        return false;
+    }
+    start = strchr(start + 1, '"');
+    if (!start) {
+        return false;
+    }
+    start += 1;
+    end = strchr(start, '"');
+    if (!end || end < start) {
+        return false;
+    }
+
+    len = (size_t)(end - start);
+    if (len >= out_size) {
+        len = out_size - 1u;
+    }
+    memcpy(out_value, start, len);
+    out_value[len] = '\0';
+    return true;
+}
+
+static bool app_extract_snapshot_u32(const char *json, const char *key, uint32_t *out_value)
+{
+    const char *pos;
+    const char *colon;
+    unsigned int parsed;
+
+    if (!json || !key || !out_value) {
+        return false;
+    }
+
+    pos = strstr(json, key);
+    if (!pos) {
+        return false;
+    }
+
+    colon = strchr(pos, ':');
+    if (!colon) {
+        return false;
+    }
+
+    if (sscanf(colon + 1, " %u", &parsed) != 1) {
+        return false;
+    }
+
+    *out_value = (uint32_t)parsed;
+    return true;
+}
+
+static bool app_extract_snapshot_i32(const char *json, const char *key, int32_t *out_value)
+{
+    const char *pos;
+    const char *colon;
+    int parsed;
+
+    if (!json || !key || !out_value) {
+        return false;
+    }
+
+    pos = strstr(json, key);
+    if (!pos) {
+        return false;
+    }
+
+    colon = strchr(pos, ':');
+    if (!colon) {
+        return false;
+    }
+
+    if (sscanf(colon + 1, " %d", &parsed) != 1) {
+        return false;
+    }
+
+    *out_value = (int32_t)parsed;
+    return true;
+}
+
+static const char *app_skip_json_ws(const char *p)
+{
+    if (!p) {
+        return NULL;
+    }
+
+    while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
+        ++p;
+    }
+    return p;
+}
+
+static bool app_load_snapshot_metadata(
+    uint32_t game_id,
+    char *out_white_profile_id,
+    size_t out_white_size,
+    char *out_black_profile_id,
+    size_t out_black_size,
+    char *out_resume_token,
+    size_t out_resume_token_size)
+{
+    char dir[PATH_MAX];
+    char path[PATH_MAX];
+    FILE *fp;
+    char json[8192];
+    size_t bytes_read;
+    uint32_t snapshot_game_id;
+
+    if (!out_white_profile_id || !out_black_profile_id || !out_resume_token) {
+        return false;
+    }
+
+    out_white_profile_id[0] = '\0';
+    out_black_profile_id[0] = '\0';
+    out_resume_token[0] = '\0';
+
+    if (!app_build_snapshot_dir(dir, sizeof(dir))) {
+        return false;
+    }
+
+    (void)snprintf(path, sizeof(path), "%s/%u.json", dir, game_id);
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return false;
+    }
+
+    bytes_read = fread(json, 1, sizeof(json) - 1u, fp);
+    (void)fclose(fp);
+    if (bytes_read == 0u) {
+        return false;
+    }
+    json[bytes_read] = '\0';
+
+    if (!app_extract_snapshot_u32(json, "\"game_id\"", &snapshot_game_id) || snapshot_game_id != game_id) {
+        return false;
+    }
+
+    if (!app_extract_snapshot_string(json, "\"white_profile_id\"", out_white_profile_id, out_white_size)) {
+        return false;
+    }
+    if (!app_extract_snapshot_string(json, "\"black_profile_id\"", out_black_profile_id, out_black_size)) {
+        return false;
+    }
+    if (!app_extract_snapshot_string(json, "\"resume_token\"", out_resume_token, out_resume_token_size)) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool app_load_match_snapshot(AppLoopContext *ctx, uint32_t game_id, const char *expected_resume_token)
+{
+    char dir[PATH_MAX];
+    char path[PATH_MAX];
+    FILE *fp;
+    char json[32768];
+    size_t bytes_read;
+    uint32_t snapshot_game_id;
+    uint32_t side_to_move;
+    uint32_t fullmove_number;
+    uint32_t halfmove_clock;
+    uint32_t outcome;
+    uint32_t white_castle_k;
+    uint32_t white_castle_q;
+    uint32_t black_castle_k;
+    uint32_t black_castle_q;
+    int32_t en_passant_file;
+    int32_t en_passant_rank;
+    char snapshot_resume_token[CHESS_UUID_STRING_LEN];
+    const char *board_key;
+    const char *history_key;
+    const char *p;
+    int idx;
+
+    if (!ctx || game_id == 0u) {
+        return false;
+    }
+
+    if (!app_build_snapshot_dir(dir, sizeof(dir))) {
+        return false;
+    }
+
+    (void)snprintf(path, sizeof(path), "%s/%u.json", dir, game_id);
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return false;
+    }
+
+    bytes_read = fread(json, 1, sizeof(json) - 1u, fp);
+    (void)fclose(fp);
+    if (bytes_read == 0u) {
+        return false;
+    }
+    json[bytes_read] = '\0';
+
+    if (!app_extract_snapshot_u32(json, "\"game_id\"", &snapshot_game_id) || snapshot_game_id != game_id) {
+        return false;
+    }
+
+    snapshot_resume_token[0] = '\0';
+    if (!app_extract_snapshot_string(json, "\"resume_token\"", snapshot_resume_token, sizeof(snapshot_resume_token))) {
+        return false;
+    }
+    if (expected_resume_token && expected_resume_token[0] != '\0' &&
+        SDL_strncmp(snapshot_resume_token, expected_resume_token, CHESS_UUID_STRING_LEN) != 0) {
+        return false;
+    }
+
+    if (!app_extract_snapshot_u32(json, "\"side_to_move\"", &side_to_move) ||
+        !app_extract_snapshot_u32(json, "\"fullmove_number\"", &fullmove_number) ||
+        !app_extract_snapshot_u32(json, "\"halfmove_clock\"", &halfmove_clock) ||
+        !app_extract_snapshot_u32(json, "\"outcome\"", &outcome) ||
+        !app_extract_snapshot_u32(json, "\"white_can_castle_kingside\"", &white_castle_k) ||
+        !app_extract_snapshot_u32(json, "\"white_can_castle_queenside\"", &white_castle_q) ||
+        !app_extract_snapshot_u32(json, "\"black_can_castle_kingside\"", &black_castle_k) ||
+        !app_extract_snapshot_u32(json, "\"black_can_castle_queenside\"", &black_castle_q) ||
+        !app_extract_snapshot_i32(json, "\"en_passant_target_file\"", &en_passant_file) ||
+        !app_extract_snapshot_i32(json, "\"en_passant_target_rank\"", &en_passant_rank)) {
+        return false;
+    }
+
+    chess_game_state_init(&ctx->game_state);
+
+    board_key = strstr(json, "\"board\"");
+    if (!board_key) {
+        return false;
+    }
+    p = strchr(board_key, '[');
+    if (!p) {
+        return false;
+    }
+    ++p;
+
+    for (idx = 0; idx < CHESS_BOARD_SIZE * CHESS_BOARD_SIZE; ++idx) {
+        unsigned int piece = 0u;
+        int consumed = 0;
+
+        p = app_skip_json_ws(p);
+        if (!p || *p == '\0') {
+            return false;
+        }
+        if (sscanf(p, "%u%n", &piece, &consumed) != 1 || consumed <= 0) {
+            return false;
+        }
+        if (piece >= CHESS_PIECE_COUNT) {
+            return false;
+        }
+        ctx->game_state.board[idx / CHESS_BOARD_SIZE][idx % CHESS_BOARD_SIZE] = (uint8_t)piece;
+        p += consumed;
+        p = app_skip_json_ws(p);
+        if (*p == ',') {
+            ++p;
+        }
+    }
+
+    ctx->game_state.side_to_move = (ChessPlayerColor)side_to_move;
+    ctx->game_state.fullmove_number = (uint16_t)fullmove_number;
+    ctx->game_state.halfmove_clock = (uint16_t)halfmove_clock;
+    ctx->game_state.outcome = (ChessGameOutcome)outcome;
+    ctx->game_state.white_can_castle_kingside = (white_castle_k != 0u);
+    ctx->game_state.white_can_castle_queenside = (white_castle_q != 0u);
+    ctx->game_state.black_can_castle_kingside = (black_castle_k != 0u);
+    ctx->game_state.black_can_castle_queenside = (black_castle_q != 0u);
+    ctx->game_state.en_passant_target_file = (int8_t)en_passant_file;
+    ctx->game_state.en_passant_target_rank = (int8_t)en_passant_rank;
+    ctx->game_state.has_selection = false;
+    ctx->game_state.selected_file = -1;
+    ctx->game_state.selected_rank = -1;
+
+    ctx->move_history_count = 0;
+    history_key = strstr(json, "\"move_history\"");
+    if (!history_key) {
+        return false;
+    }
+    p = strchr(history_key, '[');
+    if (!p) {
+        return false;
+    }
+    ++p;
+
+    while (ctx->move_history_count < (uint16_t)s_history_max_entries) {
+        const char *start;
+        const char *end;
+        size_t len;
+
+        p = app_skip_json_ws(p);
+        if (!p || *p == '\0' || *p == ']') {
+            break;
+        }
+        start = strchr(p, '"');
+        if (!start) {
+            break;
+        }
+        ++start;
+        end = strchr(start, '"');
+        if (!end) {
+            break;
+        }
+
+        len = (size_t)(end - start);
+        if (len >= (size_t)s_history_entry_len) {
+            len = (size_t)s_history_entry_len - 1u;
+        }
+        memcpy(ctx->move_history[ctx->move_history_count], start, len);
+        ctx->move_history[ctx->move_history_count][len] = '\0';
+        ctx->move_history_count += 1u;
+
+        p = end + 1;
+        p = app_skip_json_ws(p);
+        if (*p == ',') {
+            ++p;
+        }
+    }
+
+    return true;
+}
+
+static bool app_build_state_snapshot_payload(const AppLoopContext *ctx, ChessStateSnapshotPayload *out_payload)
+{
+    uint16_t history_count;
+    int rank;
+    int file;
+    int idx;
+
+    if (!ctx || !out_payload || !ctx->network_session.game_started || ctx->network_session.game_id == 0u) {
+        return false;
+    }
+
+    memset(out_payload, 0, sizeof(*out_payload));
+    out_payload->game_id = ctx->network_session.game_id;
+    out_payload->side_to_move = (uint32_t)ctx->game_state.side_to_move;
+    out_payload->fullmove_number = (uint32_t)ctx->game_state.fullmove_number;
+    out_payload->halfmove_clock = (uint32_t)ctx->game_state.halfmove_clock;
+    out_payload->outcome = (uint32_t)ctx->game_state.outcome;
+    out_payload->white_can_castle_kingside = ctx->game_state.white_can_castle_kingside ? 1u : 0u;
+    out_payload->white_can_castle_queenside = ctx->game_state.white_can_castle_queenside ? 1u : 0u;
+    out_payload->black_can_castle_kingside = ctx->game_state.black_can_castle_kingside ? 1u : 0u;
+    out_payload->black_can_castle_queenside = ctx->game_state.black_can_castle_queenside ? 1u : 0u;
+    out_payload->en_passant_target_file = ctx->game_state.en_passant_target_file;
+    out_payload->en_passant_target_rank = ctx->game_state.en_passant_target_rank;
+    SDL_strlcpy(out_payload->resume_token, ctx->pending_start_payload.resume_token, sizeof(out_payload->resume_token));
+
+    for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
+        for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
+            idx = rank * CHESS_BOARD_SIZE + file;
+            out_payload->board[idx] = ctx->game_state.board[rank][file];
+        }
+    }
+
+    history_count = ctx->move_history_count;
+    if (history_count > (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES) {
+        history_count = (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES;
+    }
+    out_payload->move_history_count = history_count;
+
+    for (idx = 0; idx < (int)history_count; ++idx) {
+        SDL_strlcpy(
+            out_payload->move_history[idx],
+            ctx->move_history[idx],
+            sizeof(out_payload->move_history[idx]));
+    }
+
+    return true;
+}
+
+static bool app_apply_state_snapshot_payload(
+    AppLoopContext *ctx,
+    const ChessStateSnapshotPayload *payload,
+    bool validate_resume_token)
+{
+    uint16_t history_count;
+    int rank;
+    int file;
+    int idx;
+
+    if (!ctx || !payload || payload->game_id == 0u) {
+        return false;
+    }
+
+    if (payload->side_to_move != CHESS_COLOR_WHITE && payload->side_to_move != CHESS_COLOR_BLACK) {
+        return false;
+    }
+    if (payload->outcome > CHESS_OUTCOME_FIFTY_MOVE_RULE) {
+        return false;
+    }
+
+    if (validate_resume_token &&
+        ctx->pending_start_payload.resume_token[0] != '\0' &&
+        SDL_strncmp(
+            payload->resume_token,
+            ctx->pending_start_payload.resume_token,
+            CHESS_UUID_STRING_LEN) != 0) {
+        return false;
+    }
+
+    chess_game_state_init(&ctx->game_state);
+    for (idx = 0; idx < (int)CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS; ++idx) {
+        if (payload->board[idx] >= CHESS_PIECE_COUNT) {
+            return false;
+        }
+    }
+
+    for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
+        for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
+            idx = rank * CHESS_BOARD_SIZE + file;
+            ctx->game_state.board[rank][file] = payload->board[idx];
+        }
+    }
+
+    ctx->game_state.side_to_move = (ChessPlayerColor)payload->side_to_move;
+    ctx->game_state.fullmove_number = (uint16_t)payload->fullmove_number;
+    ctx->game_state.halfmove_clock = (uint16_t)payload->halfmove_clock;
+    ctx->game_state.outcome = (ChessGameOutcome)payload->outcome;
+    ctx->game_state.white_can_castle_kingside = payload->white_can_castle_kingside != 0u;
+    ctx->game_state.white_can_castle_queenside = payload->white_can_castle_queenside != 0u;
+    ctx->game_state.black_can_castle_kingside = payload->black_can_castle_kingside != 0u;
+    ctx->game_state.black_can_castle_queenside = payload->black_can_castle_queenside != 0u;
+    ctx->game_state.en_passant_target_file = payload->en_passant_target_file;
+    ctx->game_state.en_passant_target_rank = payload->en_passant_target_rank;
+    ctx->game_state.has_selection = false;
+    ctx->game_state.selected_file = -1;
+    ctx->game_state.selected_rank = -1;
+
+    history_count = payload->move_history_count;
+    if (history_count > (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES) {
+        history_count = (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES;
+    }
+
+    ctx->move_history_count = history_count;
+    for (idx = 0; idx < (int)history_count; ++idx) {
+        SDL_strlcpy(
+            ctx->move_history[idx],
+            payload->move_history[idx],
+            (size_t)s_history_entry_len);
+    }
+
+    return true;
+}
+
+static bool app_build_resume_state_path(char *out_path, size_t out_path_size)
+{
+    char base_dir[PATH_MAX];
+
+    if (!out_path || out_path_size == 0u) {
+        return false;
+    }
+
+    if (!app_build_app_state_dir(base_dir, sizeof(base_dir))) {
+        return false;
+    }
+
+    (void)snprintf(out_path, out_path_size, "%s/resume_state.json", base_dir);
+    return true;
+}
+
+static bool app_save_client_resume_state(AppLoopContext *ctx)
+{
+    char path[PATH_MAX];
+    char tmp_path[PATH_MAX];
+    FILE *fp;
+
+    if (!ctx ||
+        ctx->pending_start_payload.game_id == 0u ||
+        ctx->pending_start_payload.resume_token[0] == '\0' ||
+        ctx->network_session.remote_peer.profile_id[0] == '\0') {
+        return false;
+    }
+
+    if (!app_build_resume_state_path(path, sizeof(path))) {
+        return false;
+    }
+
+    (void)snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    fp = fopen(tmp_path, "wb");
+    if (!fp) {
+        return false;
+    }
+
+    (void)fprintf(fp, "{\n");
+    (void)fprintf(fp, "  \"version\": 1,\n");
+    (void)fprintf(fp, "  \"game_id\": %u,\n", ctx->pending_start_payload.game_id);
+    (void)fprintf(fp, "  \"resume_token\": \"%s\",\n", ctx->pending_start_payload.resume_token);
+    (void)fprintf(fp, "  \"remote_profile_id\": \"%s\"\n", ctx->network_session.remote_peer.profile_id);
+    (void)fprintf(fp, "}\n");
+
+    if (fclose(fp) != 0) {
+        return false;
+    }
+    if (rename(tmp_path, path) != 0) {
+        return false;
+    }
+
+    ctx->resume_state_loaded = true;
+    SDL_strlcpy(
+        ctx->resume_remote_profile_id,
+        ctx->network_session.remote_peer.profile_id,
+        sizeof(ctx->resume_remote_profile_id));
+    return true;
+}
+
+static void app_clear_client_resume_state(AppLoopContext *ctx)
+{
+    char path[PATH_MAX];
+
+    if (!ctx) {
+        return;
+    }
+
+    if (app_build_resume_state_path(path, sizeof(path))) {
+        (void)remove(path);
+    }
+
+    ctx->resume_state_loaded = false;
+    ctx->resume_remote_profile_id[0] = '\0';
+    ctx->pending_start_payload.game_id = 0u;
+    ctx->pending_start_payload.resume_token[0] = '\0';
+}
+
+static bool app_load_client_resume_state(AppLoopContext *ctx)
+{
+    char path[PATH_MAX];
+    FILE *fp;
+    char json[1024];
+    size_t bytes_read;
+    uint32_t game_id;
+    char resume_token[CHESS_UUID_STRING_LEN];
+    char remote_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+
+    if (!ctx) {
+        return false;
+    }
+
+    if (!app_build_resume_state_path(path, sizeof(path))) {
+        return false;
+    }
+
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return false;
+    }
+
+    bytes_read = fread(json, 1, sizeof(json) - 1u, fp);
+    (void)fclose(fp);
+    if (bytes_read == 0u) {
+        return false;
+    }
+    json[bytes_read] = '\0';
+
+    if (!app_extract_snapshot_u32(json, "\"game_id\"", &game_id)) {
+        return false;
+    }
+    if (!app_extract_snapshot_string(json, "\"resume_token\"", resume_token, sizeof(resume_token))) {
+        return false;
+    }
+    if (!app_extract_snapshot_string(json, "\"remote_profile_id\"", remote_profile_id, sizeof(remote_profile_id))) {
+        return false;
+    }
+
+    ctx->pending_start_payload.game_id = game_id;
+    SDL_strlcpy(
+        ctx->pending_start_payload.resume_token,
+        resume_token,
+        sizeof(ctx->pending_start_payload.resume_token));
+    SDL_strlcpy(
+        ctx->resume_remote_profile_id,
+        remote_profile_id,
+        sizeof(ctx->resume_remote_profile_id));
+    ctx->resume_state_loaded = true;
+    return true;
+}
+
+static bool app_save_match_snapshot(AppLoopContext *ctx)
+{
+    char dir[PATH_MAX];
+    char path[PATH_MAX];
+    char tmp_path[PATH_MAX];
+    const char *white_profile_id;
+    const char *black_profile_id;
+    FILE *fp;
+    int rank;
+    int file;
+
+    if (!ctx || !ctx->network_session.game_started || ctx->network_session.game_id == 0u) {
+        return false;
+    }
+
+    if (!app_build_snapshot_dir(dir, sizeof(dir))) {
+        return false;
+    }
+
+    (void)snprintf(path, sizeof(path), "%s/%u.json", dir, ctx->network_session.game_id);
+    (void)snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+
+    white_profile_id = (ctx->network_session.local_color == CHESS_COLOR_WHITE)
+        ? ctx->local_peer.profile_id
+        : ctx->network_session.remote_peer.profile_id;
+    black_profile_id = (ctx->network_session.local_color == CHESS_COLOR_BLACK)
+        ? ctx->local_peer.profile_id
+        : ctx->network_session.remote_peer.profile_id;
+
+    fp = fopen(tmp_path, "wb");
+    if (!fp) {
+        return false;
+    }
+
+    (void)fprintf(fp, "{\n");
+    (void)fprintf(fp, "  \"version\": 1,\n");
+    (void)fprintf(fp, "  \"game_id\": %u,\n", ctx->network_session.game_id);
+    (void)fprintf(fp, "  \"white_profile_id\": \"%s\",\n", white_profile_id ? white_profile_id : "");
+    (void)fprintf(fp, "  \"black_profile_id\": \"%s\",\n", black_profile_id ? black_profile_id : "");
+    (void)fprintf(fp, "  \"resume_token\": \"%s\",\n", ctx->pending_start_payload.resume_token);
+    (void)fprintf(fp, "  \"side_to_move\": %u,\n", (unsigned)ctx->game_state.side_to_move);
+    (void)fprintf(fp, "  \"fullmove_number\": %u,\n", (unsigned)ctx->game_state.fullmove_number);
+    (void)fprintf(fp, "  \"halfmove_clock\": %u,\n", (unsigned)ctx->game_state.halfmove_clock);
+    (void)fprintf(fp, "  \"white_can_castle_kingside\": %u,\n", ctx->game_state.white_can_castle_kingside ? 1u : 0u);
+    (void)fprintf(fp, "  \"white_can_castle_queenside\": %u,\n", ctx->game_state.white_can_castle_queenside ? 1u : 0u);
+    (void)fprintf(fp, "  \"black_can_castle_kingside\": %u,\n", ctx->game_state.black_can_castle_kingside ? 1u : 0u);
+    (void)fprintf(fp, "  \"black_can_castle_queenside\": %u,\n", ctx->game_state.black_can_castle_queenside ? 1u : 0u);
+    (void)fprintf(fp, "  \"en_passant_target_file\": %d,\n", (int)ctx->game_state.en_passant_target_file);
+    (void)fprintf(fp, "  \"en_passant_target_rank\": %d,\n", (int)ctx->game_state.en_passant_target_rank);
+    (void)fprintf(fp, "  \"outcome\": %u,\n", (unsigned)ctx->game_state.outcome);
+    (void)fprintf(fp, "  \"board\": [");
+    for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
+        for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
+            (void)fprintf(fp, "%u", (unsigned)ctx->game_state.board[rank][file]);
+            if (!(rank == CHESS_BOARD_SIZE - 1 && file == CHESS_BOARD_SIZE - 1)) {
+                (void)fprintf(fp, ",");
+            }
+        }
+    }
+    (void)fprintf(fp, "],\n");
+    (void)fprintf(fp, "  \"move_history\": [");
+    for (file = 0; file < (int)ctx->move_history_count; ++file) {
+        (void)fprintf(fp, "\"%s\"", ctx->move_history[file]);
+        if (file + 1 < (int)ctx->move_history_count) {
+            (void)fprintf(fp, ",");
+        }
+    }
+    (void)fprintf(fp, "]\n");
+    (void)fprintf(fp, "}\n");
+
+    if (fclose(fp) != 0) {
+        return false;
+    }
+    if (rename(tmp_path, path) != 0) {
+        return false;
+    }
+    return true;
+}
 
 static bool promotion_choice_rect(
     AppLoopContext *ctx,
@@ -1169,6 +1930,9 @@ static void app_init_runtime_state(AppLoopContext *ctx)
     ctx->start_failures = 0u;
     ctx->move_sequence = 3u;
     ctx->next_connect_attempt_at = 0;
+    ctx->resume_state_loaded = false;
+    ctx->pending_resume_state_sync = false;
+    ctx->resume_remote_profile_id[0] = '\0';
     ctx->drag_active = false;
     ctx->drag_piece = CHESS_PIECE_EMPTY;
     ctx->drag_from_file = -1;
@@ -1542,12 +2306,18 @@ static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
 {
     char remote_uuid[CHESS_UUID_STRING_LEN];
     bool was_in_game;
+    uint32_t last_game_id = 0u;
+    char last_resume_token[CHESS_UUID_STRING_LEN] = {0};
 
     if (!ctx) {
         return;
     }
 
     was_in_game = ctx->network_session.game_started;
+    if (was_in_game) {
+        last_game_id = ctx->network_session.game_id;
+        SDL_strlcpy(last_resume_token, ctx->pending_start_payload.resume_token, sizeof(last_resume_token));
+    }
     SDL_strlcpy(remote_uuid, ctx->network_session.remote_peer.uuid, sizeof(remote_uuid));
 
     if (reason && reason[0] != '\0') {
@@ -1561,7 +2331,14 @@ static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
 
     ctx->start_completed = false;
     ctx->start_failures = 0u;
-    ctx->pending_start_payload.game_id = 0u;
+    memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
+    if (was_in_game && last_game_id != 0u && last_resume_token[0] != '\0') {
+        ctx->pending_start_payload.game_id = last_game_id;
+        SDL_strlcpy(
+            ctx->pending_start_payload.resume_token,
+            last_resume_token,
+            sizeof(ctx->pending_start_payload.resume_token));
+    }
     ctx->network_session.peer_available = false;
     ctx->network_session.transport_ready = false;
     ctx->network_session.game_started = false;
@@ -1585,7 +2362,7 @@ static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     if (was_in_game) {
         app_set_status_message(
             ctx,
-            "Opponent disconnected. Back to lobby; rediscovery enabled.",
+            "Opponent disconnected. Attempting resumable reconnect.",
             5000u
         );
     } else {
@@ -1615,6 +2392,14 @@ static bool app_init_networking(AppLoopContext *ctx)
     SDL_Log("NET: listener ready on port %u", (unsigned int)ctx->listener.port);
 
     app_init_runtime_state(ctx);
+
+    if (app_load_client_resume_state(ctx)) {
+        SDL_Log(
+            "NET: loaded persisted resume context (game_id=%u, remote_profile=%.8s...)",
+            ctx->pending_start_payload.game_id,
+            ctx->resume_remote_profile_id);
+        app_set_status_message(ctx, "Reprise detectee: recherche de l'adversaire...", 3000u);
+    }
 
     if (!chess_discovery_start(&ctx->discovery, &ctx->local_peer, ctx->listener.port)) {
         SDL_Log("NET: discovery start failed");
@@ -1810,6 +2595,10 @@ static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_ran
         app_append_move_history(ctx, notation);
     }
 
+    if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+        (void)app_save_match_snapshot(ctx);
+    }
+
     ctx->promotion_pending = false;
     ctx->promotion_to_file = -1;
     ctx->promotion_to_rank = -1;
@@ -1997,20 +2786,54 @@ static void app_handle_events(AppLoopContext *ctx)
 /* App frame helpers */
 static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
 {
+    bool has_resume_target;
+
     if (!ctx) {
         return;
     }
 
-    if (!ctx->network_session.peer_available) {
-        if (chess_discovery_poll(&ctx->discovery, &ctx->discovered_peer)) {
-            chess_lobby_add_or_update_peer(&ctx->lobby, &ctx->discovered_peer.peer, ctx->discovered_peer.tcp_port);
-            chess_network_session_set_remote(&ctx->network_session, &ctx->discovered_peer.peer);
-            SDL_Log(
-                "LOBBY: discovered peer %.8s... (port=%u)",
-                ctx->discovered_peer.peer.uuid,
-                (unsigned int)ctx->discovered_peer.tcp_port
-            );
+    has_resume_target =
+        ctx->resume_state_loaded &&
+        ctx->pending_start_payload.game_id != 0u &&
+        ctx->pending_start_payload.resume_token[0] != '\0' &&
+        ctx->resume_remote_profile_id[0] != '\0';
+
+    if (chess_discovery_poll(&ctx->discovery, &ctx->discovered_peer)) {
+        bool should_select_peer = false;
+
+        chess_lobby_add_or_update_peer(&ctx->lobby, &ctx->discovered_peer.peer, ctx->discovered_peer.tcp_port);
+
+        if (has_resume_target) {
+            should_select_peer = SDL_strncmp(
+                ctx->discovered_peer.peer.profile_id,
+                ctx->resume_remote_profile_id,
+                CHESS_PROFILE_ID_STRING_LEN) == 0;
+        } else {
+            should_select_peer = !ctx->network_session.peer_available;
         }
+
+        if (should_select_peer) {
+            int peer_idx = -1;
+            (void)chess_lobby_find_peer(&ctx->lobby, &ctx->discovered_peer.peer, &peer_idx);
+            if (peer_idx >= 0) {
+                ctx->lobby.selected_peer_idx = peer_idx;
+            }
+
+            chess_network_session_set_remote(&ctx->network_session, &ctx->discovered_peer.peer);
+            if (has_resume_target) {
+                SDL_Log(
+                    "LOBBY: matched persisted resume peer %.8s... (profile %.8s...)",
+                    ctx->discovered_peer.peer.uuid,
+                    ctx->discovered_peer.peer.profile_id);
+                app_set_status_message(ctx, "Adversaire retrouve, tentative de reprise...", 3000u);
+            }
+        }
+
+        SDL_Log(
+            "LOBBY: discovered peer %.8s... (port=%u)",
+            ctx->discovered_peer.peer.uuid,
+            (unsigned int)ctx->discovered_peer.tcp_port
+        );
     }
 }
 
@@ -2443,6 +3266,8 @@ static void net_reset_transport_progress(AppLoopContext *ctx)
     ctx->hello_completed = false;
     ctx->challenge_exchange_completed = false;
     ctx->start_sent = false;
+    ctx->resume_request_sent = false;
+    ctx->pending_resume_state_sync = false;
 }
 
 static bool net_receive_next_packet(AppLoopContext *ctx, ChessPacketHeader *header, uint8_t *payload, size_t payload_capacity)
@@ -2554,8 +3379,23 @@ static void net_handle_start_packet(AppLoopContext *ctx, const ChessStartPayload
             (ChessPlayerColor)start_payload->assigned_color
         );
         ctx->start_completed = true;
-        chess_game_state_init(&ctx->game_state);
-        ctx->move_history_count = 0;
+        ctx->pending_start_payload.game_id = start_payload->game_id;
+        ctx->pending_start_payload.assigned_color = start_payload->assigned_color;
+        ctx->pending_start_payload.initial_turn = start_payload->initial_turn;
+        (void)snprintf(
+            ctx->pending_start_payload.resume_token,
+            sizeof(ctx->pending_start_payload.resume_token),
+            "%s",
+            start_payload->resume_token);
+
+        if (!app_load_match_snapshot(ctx, start_payload->game_id, start_payload->resume_token)) {
+            chess_game_state_init(&ctx->game_state);
+            ctx->move_history_count = 0;
+        } else {
+            SDL_Log("GAME: restored snapshot for game_id=%u", start_payload->game_id);
+        }
+
+        (void)app_save_client_resume_state(ctx);
         SDL_Log(
             "GAME: started (game_id=%u, local_color=%s, first_turn=%s)",
             ctx->network_session.game_id,
@@ -2563,6 +3403,112 @@ static void net_handle_start_packet(AppLoopContext *ctx, const ChessStartPayload
             start_payload->initial_turn == CHESS_COLOR_WHITE ? "WHITE" : "BLACK"
         );
     }
+}
+
+static void net_handle_resume_request_packet(AppLoopContext *ctx, const ChessResumeRequestPayload *request)
+{
+    ChessResumeResponsePayload response;
+    char white_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    char black_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    char resume_token[CHESS_UUID_STRING_LEN];
+    bool accepted = false;
+    bool requester_is_white = false;
+
+    if (!ctx || !request || ctx->network_session.role != CHESS_ROLE_SERVER) {
+        return;
+    }
+
+    memset(&response, 0, sizeof(response));
+    response.game_id = request->game_id;
+    response.status = CHESS_RESUME_REJECTED;
+
+    if (app_load_snapshot_metadata(
+            request->game_id,
+            white_profile_id,
+            sizeof(white_profile_id),
+            black_profile_id,
+            sizeof(black_profile_id),
+            resume_token,
+            sizeof(resume_token))) {
+        const bool token_matches = SDL_strncmp(resume_token, request->resume_token, CHESS_UUID_STRING_LEN) == 0;
+        requester_is_white = SDL_strncmp(white_profile_id, request->profile_id, CHESS_PROFILE_ID_STRING_LEN) == 0;
+        if (token_matches &&
+            (requester_is_white ||
+             SDL_strncmp(black_profile_id, request->profile_id, CHESS_PROFILE_ID_STRING_LEN) == 0)) {
+            accepted = true;
+        }
+    }
+
+    if (accepted) {
+        response.status = CHESS_RESUME_ACCEPTED;
+        memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
+        ctx->pending_start_payload.game_id = request->game_id;
+        ctx->pending_start_payload.initial_turn = CHESS_COLOR_WHITE;
+        ctx->pending_start_payload.assigned_color = requester_is_white ? CHESS_COLOR_WHITE : CHESS_COLOR_BLACK;
+        SDL_strlcpy(
+            ctx->pending_start_payload.resume_token,
+            request->resume_token,
+            sizeof(ctx->pending_start_payload.resume_token));
+        SDL_strlcpy(
+            ctx->pending_start_payload.white_uuid,
+            requester_is_white ? ctx->network_session.remote_peer.uuid : ctx->network_session.local_peer.uuid,
+            sizeof(ctx->pending_start_payload.white_uuid));
+        SDL_strlcpy(
+            ctx->pending_start_payload.black_uuid,
+            requester_is_white ? ctx->network_session.local_peer.uuid : ctx->network_session.remote_peer.uuid,
+            sizeof(ctx->pending_start_payload.black_uuid));
+        ctx->challenge_exchange_completed = true;
+        ctx->start_completed = false;
+        ctx->start_sent = false;
+        ctx->pending_resume_state_sync = true;
+        SDL_Log("NET: resume request accepted for game %u", request->game_id);
+    } else {
+        ctx->pending_resume_state_sync = false;
+        SDL_Log("NET: resume request rejected for game %u", request->game_id);
+    }
+
+    (void)chess_tcp_send_resume_response(&ctx->connection, &response);
+}
+
+static void net_handle_resume_response_packet(AppLoopContext *ctx, const ChessResumeResponsePayload *response)
+{
+    if (!ctx || !response || ctx->network_session.role != CHESS_ROLE_CLIENT) {
+        return;
+    }
+
+    if (!ctx->resume_request_sent) {
+        return;
+    }
+
+    if (response->status == CHESS_RESUME_ACCEPTED) {
+        app_set_status_message(ctx, "Reprise de partie acceptee, synchronisation...", 2500u);
+        SDL_Log("NET: resume accepted for game %u", response->game_id);
+    } else {
+        app_clear_client_resume_state(ctx);
+        app_set_status_message(ctx, "Reprise refusee, nouvelle partie requise.", 4000u);
+        SDL_Log("NET: resume rejected for game %u", response->game_id);
+    }
+}
+
+static void net_handle_state_snapshot_packet(AppLoopContext *ctx, const ChessStateSnapshotPayload *snapshot)
+{
+    if (!ctx || !snapshot || ctx->network_session.role != CHESS_ROLE_CLIENT) {
+        return;
+    }
+
+    if (!ctx->network_session.game_started ||
+        ctx->network_session.game_id == 0u ||
+        snapshot->game_id != ctx->network_session.game_id) {
+        return;
+    }
+
+    if (!app_apply_state_snapshot_payload(ctx, snapshot, true)) {
+        SDL_Log("NET: received invalid state snapshot for game %u", snapshot->game_id);
+        return;
+    }
+
+    SDL_Log("GAME: applied synced snapshot for game_id=%u", snapshot->game_id);
+    app_set_status_message(ctx, "Etat de partie resynchronise.", 2200u);
 }
 
 static void net_handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ack)
@@ -2587,8 +3533,23 @@ static void net_handle_ack_packet(AppLoopContext *ctx, const ChessAckPayload *ac
         chess_network_session_start_game(&ctx->network_session, ctx->pending_start_payload.game_id,
             opposite_color((ChessPlayerColor)ctx->pending_start_payload.assigned_color));
         ctx->start_completed = true;
-        chess_game_state_init(&ctx->game_state);
-        ctx->move_history_count = 0;
+        if (ctx->pending_start_payload.resume_token[0] == '\0') {
+            (void)chess_generate_peer_uuid(
+                ctx->pending_start_payload.resume_token,
+                sizeof(ctx->pending_start_payload.resume_token));
+        }
+
+        if (!app_load_match_snapshot(
+                ctx,
+                ctx->pending_start_payload.game_id,
+                ctx->pending_start_payload.resume_token)) {
+            chess_game_state_init(&ctx->game_state);
+            ctx->move_history_count = 0;
+        } else {
+            SDL_Log("GAME: restored snapshot for game_id=%u", ctx->pending_start_payload.game_id);
+        }
+
+        (void)app_save_match_snapshot(ctx);
         SDL_Log(
             "GAME: started (game_id=%u, local_color=%s, first_turn=%s)",
             ctx->network_session.game_id,
@@ -2651,6 +3612,10 @@ static void net_handle_move_packet(AppLoopContext *ctx, const ChessMovePayload *
             app_append_move_history(ctx, notation);
         }
 
+        if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+            (void)app_save_match_snapshot(ctx);
+        }
+
         SDL_Log(
             "GAME: applied remote move (%u,%u) -> (%u,%u)",
             (unsigned)move->from_file,
@@ -2681,6 +3646,15 @@ static void net_dispatch_incoming_packet(AppLoopContext *ctx, const ChessPacketH
         net_handle_ack_packet(ctx, (const ChessAckPayload *)payload);
     } else if (header->message_type == CHESS_MSG_MOVE && header->payload_size == sizeof(ChessMovePayload)) {
         net_handle_move_packet(ctx, (const ChessMovePayload *)payload);
+    } else if (header->message_type == CHESS_MSG_RESUME_REQUEST &&
+               header->payload_size == sizeof(ChessResumeRequestPayload)) {
+        net_handle_resume_request_packet(ctx, (const ChessResumeRequestPayload *)payload);
+    } else if (header->message_type == CHESS_MSG_RESUME_RESPONSE &&
+               header->payload_size == sizeof(ChessResumeResponsePayload)) {
+        net_handle_resume_response_packet(ctx, (const ChessResumeResponsePayload *)payload);
+    } else if (header->message_type == CHESS_MSG_STATE_SNAPSHOT &&
+               header->payload_size == sizeof(ChessStateSnapshotPayload)) {
+        net_handle_state_snapshot_packet(ctx, (const ChessStateSnapshotPayload *)payload);
     }
 }
 
@@ -2696,7 +3670,7 @@ static void net_drain_incoming_packets(AppLoopContext *ctx)
     for (packet_idx = 0; packet_idx < max_packets_per_frame; ++packet_idx) {
         ChessSocketEvents drain_events;
         ChessPacketHeader header;
-        uint8_t payload[4096];
+        uint8_t payload[sizeof(ChessStateSnapshotPayload)];
 
         poll_socket_events(&ctx->listener, &ctx->connection, &drain_events);
         if (!drain_events.connection_readable) {
@@ -2708,6 +3682,28 @@ static void net_drain_incoming_packets(AppLoopContext *ctx)
         }
 
         net_dispatch_incoming_packet(ctx, &header, payload);
+    }
+}
+
+static void net_send_state_snapshot_if_needed(AppLoopContext *ctx)
+{
+    ChessStateSnapshotPayload snapshot;
+
+    if (!ctx ||
+        ctx->network_session.role != CHESS_ROLE_SERVER ||
+        !ctx->pending_resume_state_sync ||
+        !ctx->start_completed ||
+        ctx->connection.fd < 0) {
+        return;
+    }
+
+    if (!app_build_state_snapshot_payload(ctx, &snapshot)) {
+        return;
+    }
+
+    if (chess_tcp_send_state_snapshot(&ctx->connection, &snapshot)) {
+        ctx->pending_resume_state_sync = false;
+        SDL_Log("NET: sent state snapshot for resumed game %u", snapshot.game_id);
     }
 }
 
@@ -2849,24 +3845,31 @@ static void net_send_start_if_needed(AppLoopContext *ctx)
         return;
     }
 
-    memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
-    ctx->pending_start_payload.game_id = make_game_id(&ctx->network_session.local_peer, &ctx->network_session.remote_peer);
-    ctx->pending_start_payload.initial_turn = CHESS_COLOR_WHITE;
-
-    {
-        const bool server_is_white = (arc4random() % 2u) == 0u;
-        if (server_is_white) {
-            ctx->pending_start_payload.assigned_color = CHESS_COLOR_BLACK;
-            SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
-            SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
-        } else {
-            ctx->pending_start_payload.assigned_color = CHESS_COLOR_WHITE;
-            SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
-            SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+    if (ctx->pending_start_payload.game_id == 0u) {
+        memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
+        ctx->pending_start_payload.game_id = make_game_id(&ctx->network_session.local_peer, &ctx->network_session.remote_peer);
+        ctx->pending_start_payload.initial_turn = CHESS_COLOR_WHITE;
+        if (ctx->pending_start_payload.resume_token[0] == '\0') {
+            (void)chess_generate_peer_uuid(
+                ctx->pending_start_payload.resume_token,
+                sizeof(ctx->pending_start_payload.resume_token));
         }
-        SDL_Log("NET: color assignment — server=%s, client=%s",
-            server_is_white ? "WHITE" : "BLACK",
-            server_is_white ? "BLACK" : "WHITE");
+
+        {
+            const bool server_is_white = (arc4random() % 2u) == 0u;
+            if (server_is_white) {
+                ctx->pending_start_payload.assigned_color = CHESS_COLOR_BLACK;
+                SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
+                SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+            } else {
+                ctx->pending_start_payload.assigned_color = CHESS_COLOR_WHITE;
+                SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
+                SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+            }
+            SDL_Log("NET: color assignment - server=%s, client=%s",
+                server_is_white ? "WHITE" : "BLACK",
+                server_is_white ? "BLACK" : "WHITE");
+        }
     }
 
     if (chess_tcp_send_start(&ctx->connection, &ctx->pending_start_payload)) {
@@ -2876,6 +3879,31 @@ static void net_send_start_if_needed(AppLoopContext *ctx)
         if (ctx->start_failures == 1u || (ctx->start_failures % 5u) == 0u) {
             SDL_Log("NET: START send failed (%u failures), will retry", ctx->start_failures);
         }
+    }
+}
+
+static void net_send_resume_request_if_needed(AppLoopContext *ctx)
+{
+    ChessResumeRequestPayload request;
+
+    if (!ctx ||
+        ctx->network_session.role != CHESS_ROLE_CLIENT ||
+        !ctx->hello_completed ||
+        ctx->connection.fd < 0 ||
+        ctx->resume_request_sent ||
+        ctx->pending_start_payload.game_id == 0u ||
+        ctx->pending_start_payload.resume_token[0] == '\0') {
+        return;
+    }
+
+    memset(&request, 0, sizeof(request));
+    request.game_id = ctx->pending_start_payload.game_id;
+    SDL_strlcpy(request.profile_id, ctx->local_peer.profile_id, sizeof(request.profile_id));
+    SDL_strlcpy(request.resume_token, ctx->pending_start_payload.resume_token, sizeof(request.resume_token));
+
+    if (chess_tcp_send_resume_request(&ctx->connection, &request)) {
+        ctx->resume_request_sent = true;
+        SDL_Log("NET: sent resume request for game %u", request.game_id);
     }
 }
 
@@ -2890,10 +3918,12 @@ static void app_tick_network(AppLoopContext *ctx)
     poll_socket_events(&ctx->listener, &ctx->connection, &connection_phase_events);
     net_advance_transport_connection(ctx, &connection_phase_events);
     net_advance_hello_handshake(ctx);
+    net_send_resume_request_if_needed(ctx);
     net_send_pending_offer_if_needed(ctx);
 
     net_drain_incoming_packets(ctx);
     net_send_start_if_needed(ctx);
+    net_send_state_snapshot_if_needed(ctx);
 }
 
 int app_run(void)
