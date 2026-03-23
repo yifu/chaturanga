@@ -496,6 +496,8 @@ static bool use_black_perspective(ChessPlayerColor local_color)
     return local_color == CHESS_COLOR_BLACK;
 }
 
+typedef struct AppLoopContext AppLoopContext;
+
 static int board_to_screen_index(int idx, bool black_perspective)
 {
     return black_perspective ? (CHESS_BOARD_SIZE - 1 - idx) : idx;
@@ -504,6 +506,41 @@ static int board_to_screen_index(int idx, bool black_perspective)
 static int screen_to_board_index(int idx, bool black_perspective)
 {
     return black_perspective ? (CHESS_BOARD_SIZE - 1 - idx) : idx;
+}
+
+static ChessPiece promotion_choice_piece(ChessPlayerColor color, uint8_t promotion)
+{
+    if (color == CHESS_COLOR_WHITE) {
+        switch (promotion) {
+        case CHESS_PROMOTION_QUEEN:
+            return CHESS_PIECE_WHITE_QUEEN;
+        case CHESS_PROMOTION_ROOK:
+            return CHESS_PIECE_WHITE_ROOK;
+        case CHESS_PROMOTION_BISHOP:
+            return CHESS_PIECE_WHITE_BISHOP;
+        case CHESS_PROMOTION_KNIGHT:
+            return CHESS_PIECE_WHITE_KNIGHT;
+        default:
+            return CHESS_PIECE_EMPTY;
+        }
+    }
+
+    if (color == CHESS_COLOR_BLACK) {
+        switch (promotion) {
+        case CHESS_PROMOTION_QUEEN:
+            return CHESS_PIECE_BLACK_QUEEN;
+        case CHESS_PROMOTION_ROOK:
+            return CHESS_PIECE_BLACK_ROOK;
+        case CHESS_PROMOTION_BISHOP:
+            return CHESS_PIECE_BLACK_BISHOP;
+        case CHESS_PROMOTION_KNIGHT:
+            return CHESS_PIECE_BLACK_KNIGHT;
+        default:
+            return CHESS_PIECE_EMPTY;
+        }
+    }
+
+    return CHESS_PIECE_EMPTY;
 }
 
 static bool board_square_is_light(int file, int rank)
@@ -892,7 +929,7 @@ static void render_lobby(
     }
 }
 
-typedef struct AppLoopContext {
+struct AppLoopContext {
     int window_size;
     int connect_retry_ms;
     SDL_Window *window;
@@ -939,7 +976,92 @@ typedef struct AppLoopContext {
     char status_message[192];
     uint64_t status_message_until_ms;
     bool running;
-} AppLoopContext;
+};
+
+static bool promotion_choice_rect(
+    AppLoopContext *ctx,
+    int width,
+    int height,
+    uint8_t promotion,
+    SDL_FRect *out_rect)
+{
+    bool black_perspective;
+    float cell_w;
+    float cell_h;
+    int screen_file;
+    int screen_rank;
+    SDL_FRect square_rect;
+
+    if (!ctx || !out_rect || !ctx->promotion_pending) {
+        return false;
+    }
+
+    black_perspective = use_black_perspective(ctx->network_session.local_color);
+    cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+    cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    screen_file = board_to_screen_index(ctx->promotion_to_file, black_perspective);
+    screen_rank = board_to_screen_index(ctx->promotion_to_rank, black_perspective);
+
+    square_rect.x = screen_file * cell_w + 3.0f;
+    square_rect.y = screen_rank * cell_h + 3.0f;
+    square_rect.w = cell_w - 6.0f;
+    square_rect.h = cell_h - 6.0f;
+
+    out_rect->w = square_rect.w * 0.5f;
+    out_rect->h = square_rect.h * 0.5f;
+
+    switch (promotion) {
+    case CHESS_PROMOTION_QUEEN:
+        out_rect->x = square_rect.x;
+        out_rect->y = square_rect.y;
+        return true;
+    case CHESS_PROMOTION_ROOK:
+        out_rect->x = square_rect.x + out_rect->w;
+        out_rect->y = square_rect.y;
+        return true;
+    case CHESS_PROMOTION_BISHOP:
+        out_rect->x = square_rect.x;
+        out_rect->y = square_rect.y + out_rect->h;
+        return true;
+    case CHESS_PROMOTION_KNIGHT:
+        out_rect->x = square_rect.x + out_rect->w;
+        out_rect->y = square_rect.y + out_rect->h;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static uint8_t promotion_choice_from_mouse(AppLoopContext *ctx, int mouse_x, int mouse_y)
+{
+    const uint8_t choices[] = {
+        CHESS_PROMOTION_QUEEN,
+        CHESS_PROMOTION_ROOK,
+        CHESS_PROMOTION_BISHOP,
+        CHESS_PROMOTION_KNIGHT
+    };
+    int width;
+    int height;
+    size_t i;
+
+    if (!ctx || !ctx->window || !ctx->promotion_pending) {
+        return CHESS_PROMOTION_NONE;
+    }
+
+    SDL_GetWindowSize(ctx->window, &width, &height);
+    for (i = 0; i < SDL_arraysize(choices); ++i) {
+        SDL_FRect rect;
+        if (promotion_choice_rect(ctx, width, height, choices[i], &rect) &&
+            mouse_x >= (int)rect.x &&
+            mouse_x < (int)(rect.x + rect.w) &&
+            mouse_y >= (int)rect.y &&
+            mouse_y < (int)(rect.y + rect.h)) {
+            return choices[i];
+        }
+    }
+
+    return CHESS_PROMOTION_NONE;
+}
 
 static void net_reset_transport_progress(AppLoopContext *ctx);
 static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason);
@@ -1336,6 +1458,10 @@ static void app_handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mo
     }
 
     if (ctx->promotion_pending) {
+        uint8_t promotion = promotion_choice_from_mouse(ctx, mouse_x, mouse_y);
+        if (promotion != CHESS_PROMOTION_NONE) {
+            (void)app_try_send_local_move(ctx, ctx->promotion_to_file, ctx->promotion_to_rank, promotion);
+        }
         return;
     }
 
@@ -1523,6 +1649,57 @@ static void app_render_drag_preview(AppLoopContext *ctx, int width, int height)
                 SDL_SetRenderDrawColor(ctx->renderer, 25, 25, 25, 255);
             }
             SDL_RenderFillRect(ctx->renderer, &piece_rect);
+        }
+    }
+}
+
+static void app_render_promotion_overlay(AppLoopContext *ctx, int width, int height)
+{
+    const uint8_t choices[] = {
+        CHESS_PROMOTION_QUEEN,
+        CHESS_PROMOTION_ROOK,
+        CHESS_PROMOTION_BISHOP,
+        CHESS_PROMOTION_KNIGHT
+    };
+    size_t i;
+
+    if (!ctx || !ctx->renderer || !ctx->promotion_pending) {
+        return;
+    }
+
+    for (i = 0; i < SDL_arraysize(choices); ++i) {
+        SDL_FRect rect;
+        ChessPiece piece;
+
+        if (!promotion_choice_rect(ctx, width, height, choices[i], &rect)) {
+            continue;
+        }
+
+        SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ctx->renderer, 28, 28, 28, 225);
+        SDL_RenderFillRect(ctx->renderer, &rect);
+        SDL_SetRenderDrawColor(ctx->renderer, 220, 185, 80, 255);
+        SDL_RenderRect(ctx->renderer, &rect);
+
+        piece = promotion_choice_piece(ctx->network_session.local_color, choices[i]);
+        if (piece != CHESS_PIECE_EMPTY && s_piece_textures[(int)piece]) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+
+            SDL_GetTextureSize(s_piece_textures[(int)piece], &tex_w, &tex_h);
+            dst.w = rect.w * 0.78f;
+            dst.h = rect.h * 0.78f;
+            dst.x = rect.x + (rect.w - dst.w) * 0.5f;
+            dst.y = rect.y + (rect.h - dst.h) * 0.5f;
+            if (tex_w > 0.0f && tex_h > 0.0f) {
+                const float scale = SDL_min(dst.w / tex_w, dst.h / tex_h);
+                dst.w = tex_w * scale;
+                dst.h = tex_h * scale;
+                dst.x = rect.x + (rect.w - dst.w) * 0.5f;
+                dst.y = rect.y + (rect.h - dst.h) * 0.5f;
+            }
+            SDL_RenderTexture(ctx->renderer, s_piece_textures[(int)piece], NULL, &dst);
         }
     }
 }
@@ -1807,6 +1984,7 @@ static void app_render_frame(AppLoopContext *ctx)
             hide_piece,
             hidden_file,
             hidden_rank);
+        app_render_promotion_overlay(ctx, width, height);
         app_render_remote_move_animation(ctx, width, height);
         app_render_drag_preview(ctx, width, height);
         render_board_coordinates(ctx->renderer, width, height, ctx->network_session.local_color);
