@@ -817,6 +817,8 @@ bool chess_game_local_move_requires_promotion(
         return false;
     }
 
+    /* Use any valid promotion choice as a legality probe here. The actual
+     * promoted piece is selected later by the UI/network flow. */
     return is_legal_move(
         state,
         local_color,
