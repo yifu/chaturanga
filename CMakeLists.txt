@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(sdl3_test_chess_app C)
 
+include(CTest)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
@@ -44,3 +46,15 @@ if(APPLE AND NOT AVAHI_CLIENT_FOUND)
 endif()
 
 target_link_libraries(chess_app PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads)
+
+add_executable(chess_app_tests
+    tests/test_suite.c
+    src/game_state.c
+    src/network/session.c
+    src/network/peer.c
+)
+
+target_include_directories(chess_app_tests PRIVATE include)
+target_link_libraries(chess_app_tests PRIVATE Threads::Threads)
+
+add_test(NAME chess_app_tests COMMAND chess_app_tests)

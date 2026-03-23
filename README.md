@@ -99,6 +99,23 @@ cmake --build build -j
 ./build/chess_app
 ```
 
+## Tests automatises
+
+Commande unique depuis la racine du depot:
+
+```sh
+cmake -S . -B build && cmake --build build -j && ctest --test-dir build --output-on-failure
+```
+
+Ce que couvre la suite actuelle:
+- regles avancees du moteur: roque, en passant, promotion, echec/mat, regle des 50 coups
+- transitions reseau de base: election de role et progression de session jusqu'au mode in-game
+- synchronisation locale/distante via les memes primitives de validation de coups
+
+Quality gate minimal (recommande):
+- tout nouveau changement de regles ou flux reseau doit garder `ctest` vert
+- aucun PR ne doit etre merge si `ctest` echoue
+
 ## LAN Discovery (current implementation)
 
 The networking layer now has:
