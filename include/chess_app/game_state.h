@@ -54,11 +54,18 @@ void chess_game_state_init(ChessGameState *state);
 void chess_game_clear_selection(ChessGameState *state);
 ChessPiece chess_game_get_piece(const ChessGameState *state, int file, int rank);
 bool chess_game_select_local_piece(ChessGameState *state, ChessPlayerColor local_color, int file, int rank);
+bool chess_game_local_move_requires_promotion(
+    const ChessGameState *state,
+    ChessPlayerColor local_color,
+    int to_file,
+    int to_rank
+);
 bool chess_game_try_local_move(
     ChessGameState *state,
     ChessPlayerColor local_color,
     int to_file,
     int to_rank,
+    uint8_t promotion,
     ChessMovePayload *out_move
 );
 bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote_color, const ChessMovePayload *move);

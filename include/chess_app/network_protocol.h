@@ -28,6 +28,14 @@ typedef enum ChessPlayerColor {
     CHESS_COLOR_BLACK = 2
 } ChessPlayerColor;
 
+typedef enum ChessPromotionType {
+    CHESS_PROMOTION_NONE = 0,
+    CHESS_PROMOTION_QUEEN = 1,
+    CHESS_PROMOTION_ROOK = 2,
+    CHESS_PROMOTION_BISHOP = 3,
+    CHESS_PROMOTION_KNIGHT = 4
+} ChessPromotionType;
+
 typedef struct ChessMovePayload {
     uint8_t from_file;
     uint8_t from_rank;

@@ -925,6 +925,9 @@ typedef struct AppLoopContext {
     int drag_from_rank;
     int drag_mouse_x;
     int drag_mouse_y;
+    bool promotion_pending;
+    int promotion_to_file;
+    int promotion_to_rank;
     bool remote_move_anim_active;
     ChessPiece remote_move_anim_piece;
     int remote_move_from_file;
@@ -1024,6 +1027,9 @@ static void app_init_runtime_state(AppLoopContext *ctx)
     ctx->drag_from_rank = -1;
     ctx->drag_mouse_x = 0;
     ctx->drag_mouse_y = 0;
+    ctx->promotion_pending = false;
+    ctx->promotion_to_file = -1;
+    ctx->promotion_to_rank = -1;
     ctx->remote_move_anim_active = false;
     ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
     ctx->remote_move_from_file = -1;
@@ -1087,6 +1093,9 @@ static void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     ctx->network_session.state = CHESS_NET_IDLE_DISCOVERY;
     ctx->drag_active = false;
     ctx->drag_piece = CHESS_PIECE_EMPTY;
+    ctx->promotion_pending = false;
+    ctx->promotion_to_file = -1;
+    ctx->promotion_to_rank = -1;
     ctx->remote_move_anim_active = false;
     ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
     chess_game_clear_selection(&ctx->game_state);
@@ -1236,7 +1245,23 @@ static bool app_screen_to_board_square(
     return true;
 }
 
-static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank)
+static uint8_t app_key_to_promotion_choice(SDL_Keycode key)
+{
+    switch (key) {
+    case SDLK_Q:
+        return CHESS_PROMOTION_QUEEN;
+    case SDLK_R:
+        return CHESS_PROMOTION_ROOK;
+    case SDLK_B:
+        return CHESS_PROMOTION_BISHOP;
+    case SDLK_N:
+        return CHESS_PROMOTION_KNIGHT;
+    default:
+        return CHESS_PROMOTION_NONE;
+    }
+}
+
+static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, uint8_t promotion)
 {
     ChessMovePayload move;
 
@@ -1248,9 +1273,32 @@ static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_ran
         return false;
     }
 
-    if (!chess_game_try_local_move(&ctx->game_state, ctx->network_session.local_color, to_file, to_rank, &move)) {
+    if (promotion == CHESS_PROMOTION_NONE &&
+        chess_game_local_move_requires_promotion(
+            &ctx->game_state,
+            ctx->network_session.local_color,
+            to_file,
+            to_rank)) {
+        ctx->promotion_pending = true;
+        ctx->promotion_to_file = to_file;
+        ctx->promotion_to_rank = to_rank;
+        app_set_status_message(ctx, "Promotion: press Q (queen), R (rook), B (bishop), N (knight)", 30000u);
         return false;
     }
+
+    if (!chess_game_try_local_move(
+            &ctx->game_state,
+            ctx->network_session.local_color,
+            to_file,
+            to_rank,
+            promotion,
+            &move)) {
+        return false;
+    }
+
+    ctx->promotion_pending = false;
+    ctx->promotion_to_file = -1;
+    ctx->promotion_to_rank = -1;
 
     if (!chess_tcp_send_packet(
             &ctx->connection,
@@ -1287,6 +1335,10 @@ static void app_handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mo
         return;
     }
 
+    if (ctx->promotion_pending) {
+        return;
+    }
+
     if (!app_screen_to_board_square(ctx, mouse_x, mouse_y, &file, &rank)) {
         return;
     }
@@ -1307,7 +1359,7 @@ static void app_handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mo
             return;
         }
 
-        (void)app_try_send_local_move(ctx, file, rank);
+        (void)app_try_send_local_move(ctx, file, rank, CHESS_PROMOTION_NONE);
     }
 }
 
@@ -1333,8 +1385,16 @@ static void app_handle_board_mouse_up(AppLoopContext *ctx, int mouse_x, int mous
     ctx->drag_mouse_x = mouse_x;
     ctx->drag_mouse_y = mouse_y;
 
+    if (ctx->promotion_pending) {
+        ctx->drag_active = false;
+        ctx->drag_piece = CHESS_PIECE_EMPTY;
+        ctx->drag_from_file = -1;
+        ctx->drag_from_rank = -1;
+        return;
+    }
+
     if (app_screen_to_board_square(ctx, mouse_x, mouse_y, &to_file, &to_rank)) {
-        (void)app_try_send_local_move(ctx, to_file, to_rank);
+        (void)app_try_send_local_move(ctx, to_file, to_rank, CHESS_PROMOTION_NONE);
     }
 
     ctx->drag_active = false;
@@ -1371,6 +1431,29 @@ static void app_handle_events(AppLoopContext *ctx)
 
         if (ctx->connection.fd < 0) {
             continue;
+        }
+
+        if (event.type == SDL_EVENT_KEY_DOWN && ctx->promotion_pending) {
+            if (event.key.key == SDLK_ESCAPE) {
+                ctx->promotion_pending = false;
+                ctx->promotion_to_file = -1;
+                ctx->promotion_to_rank = -1;
+                chess_game_clear_selection(&ctx->game_state);
+                app_set_status_message(ctx, "Promotion cancelled", 1200u);
+                continue;
+            }
+
+            {
+                uint8_t promotion = app_key_to_promotion_choice(event.key.key);
+                if (promotion != CHESS_PROMOTION_NONE) {
+                    (void)app_try_send_local_move(
+                        ctx,
+                        ctx->promotion_to_file,
+                        ctx->promotion_to_rank,
+                        promotion);
+                    continue;
+                }
+            }
         }
 
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {

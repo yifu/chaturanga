@@ -89,6 +89,55 @@ static bool is_en_passant_capture_move(
     return adjacent_piece == CHESS_PIECE_WHITE_PAWN;
 }
 
+static bool is_valid_promotion_choice(uint8_t promotion)
+{
+    return promotion == CHESS_PROMOTION_QUEEN ||
+           promotion == CHESS_PROMOTION_ROOK ||
+           promotion == CHESS_PROMOTION_BISHOP ||
+           promotion == CHESS_PROMOTION_KNIGHT;
+}
+
+static bool is_pawn_promotion_move(ChessPiece piece, int to_rank)
+{
+    return (piece == CHESS_PIECE_WHITE_PAWN && to_rank == 0) ||
+           (piece == CHESS_PIECE_BLACK_PAWN && to_rank == 7);
+}
+
+static ChessPiece promoted_piece_for_choice(ChessPlayerColor color, uint8_t promotion)
+{
+    if (color == CHESS_COLOR_WHITE) {
+        switch (promotion) {
+        case CHESS_PROMOTION_QUEEN:
+            return CHESS_PIECE_WHITE_QUEEN;
+        case CHESS_PROMOTION_ROOK:
+            return CHESS_PIECE_WHITE_ROOK;
+        case CHESS_PROMOTION_BISHOP:
+            return CHESS_PIECE_WHITE_BISHOP;
+        case CHESS_PROMOTION_KNIGHT:
+            return CHESS_PIECE_WHITE_KNIGHT;
+        default:
+            return CHESS_PIECE_EMPTY;
+        }
+    }
+
+    if (color == CHESS_COLOR_BLACK) {
+        switch (promotion) {
+        case CHESS_PROMOTION_QUEEN:
+            return CHESS_PIECE_BLACK_QUEEN;
+        case CHESS_PROMOTION_ROOK:
+            return CHESS_PIECE_BLACK_ROOK;
+        case CHESS_PROMOTION_BISHOP:
+            return CHESS_PIECE_BLACK_BISHOP;
+        case CHESS_PROMOTION_KNIGHT:
+            return CHESS_PIECE_BLACK_KNIGHT;
+        default:
+            return CHESS_PIECE_EMPTY;
+        }
+    }
+
+    return CHESS_PIECE_EMPTY;
+}
+
 static bool path_clear_straight(const ChessGameState *state, int from_file, int from_rank, int to_file, int to_rank)
 {
     int step_file;
@@ -427,7 +476,8 @@ static bool is_legal_move(
     int from_file,
     int from_rank,
     int to_file,
-    int to_rank)
+    int to_rank,
+    uint8_t promotion)
 {
     ChessGameState copy;
     ChessPiece piece;
@@ -442,6 +492,14 @@ static bool is_legal_move(
     }
 
     if (!is_pseudo_legal_move(state, piece, from_file, from_rank, to_file, to_rank)) {
+        return false;
+    }
+
+    if (is_pawn_promotion_move(piece, to_rank)) {
+        if (!is_valid_promotion_choice(promotion)) {
+            return false;
+        }
+    } else if (promotion != CHESS_PROMOTION_NONE) {
         return false;
     }
 
@@ -463,10 +521,12 @@ static bool is_legal_move(
         }
     }
 
-    if (piece == CHESS_PIECE_WHITE_PAWN && to_rank == 0) {
-        copy.board[to_rank][to_file] = CHESS_PIECE_WHITE_QUEEN;
-    } else if (piece == CHESS_PIECE_BLACK_PAWN && to_rank == 7) {
-        copy.board[to_rank][to_file] = CHESS_PIECE_BLACK_QUEEN;
+    if (is_pawn_promotion_move(piece, to_rank)) {
+        ChessPiece promoted = promoted_piece_for_choice(moving_color, promotion);
+        if (promoted == CHESS_PIECE_EMPTY) {
+            return false;
+        }
+        copy.board[to_rank][to_file] = (uint8_t)promoted;
     }
 
     return !is_king_in_check(&copy, moving_color);
@@ -488,7 +548,21 @@ static bool has_any_legal_move(const ChessGameState *state, ChessPlayerColor col
             }
             for (to_rank = 0; to_rank < CHESS_BOARD_SIZE; ++to_rank) {
                 for (to_file = 0; to_file < CHESS_BOARD_SIZE; ++to_file) {
-                    if (is_legal_move(state, color, from_file, from_rank, to_file, to_rank)) {
+                    if (is_pawn_promotion_move(piece, to_rank)) {
+                        if (is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_QUEEN) ||
+                            is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_ROOK) ||
+                            is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_BISHOP) ||
+                            is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_KNIGHT)) {
+                            return true;
+                        }
+                    } else if (is_legal_move(
+                                   state,
+                                   color,
+                                   from_file,
+                                   from_rank,
+                                   to_file,
+                                   to_rank,
+                                   CHESS_PROMOTION_NONE)) {
                         return true;
                     }
                 }
@@ -498,7 +572,13 @@ static bool has_any_legal_move(const ChessGameState *state, ChessPlayerColor col
     return false;
 }
 
-static bool apply_move(ChessGameState *state, int from_file, int from_rank, int to_file, int to_rank)
+static bool apply_move(
+    ChessGameState *state,
+    int from_file,
+    int from_rank,
+    int to_file,
+    int to_rank,
+    uint8_t promotion)
 {
     uint8_t piece;
     ChessPiece captured;
@@ -581,10 +661,12 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
         }
     }
 
-    if (piece == CHESS_PIECE_WHITE_PAWN && to_rank == 0) {
-        state->board[to_rank][to_file] = CHESS_PIECE_WHITE_QUEEN;
-    } else if (piece == CHESS_PIECE_BLACK_PAWN && to_rank == 7) {
-        state->board[to_rank][to_file] = CHESS_PIECE_BLACK_QUEEN;
+    if (is_pawn_promotion_move((ChessPiece)piece, to_rank)) {
+        ChessPiece promoted = promoted_piece_for_choice(piece_color((ChessPiece)piece), promotion);
+        if (promoted == CHESS_PIECE_EMPTY) {
+            return false;
+        }
+        state->board[to_rank][to_file] = (uint8_t)promoted;
     }
 
     state->en_passant_target_file = -1;
@@ -710,11 +792,47 @@ bool chess_game_select_local_piece(ChessGameState *state, ChessPlayerColor local
     return true;
 }
 
+bool chess_game_local_move_requires_promotion(
+    const ChessGameState *state,
+    ChessPlayerColor local_color,
+    int to_file,
+    int to_rank)
+{
+    ChessPiece piece;
+
+    if (!state || !in_bounds(to_file, to_rank) || !state->has_selection) {
+        return false;
+    }
+
+    if (state->side_to_move != local_color) {
+        return false;
+    }
+
+    piece = (ChessPiece)state->board[state->selected_rank][state->selected_file];
+    if (piece_color(piece) != local_color) {
+        return false;
+    }
+
+    if (!is_pawn_promotion_move(piece, to_rank)) {
+        return false;
+    }
+
+    return is_legal_move(
+        state,
+        local_color,
+        state->selected_file,
+        state->selected_rank,
+        to_file,
+        to_rank,
+        CHESS_PROMOTION_QUEEN);
+}
+
 bool chess_game_try_local_move(
     ChessGameState *state,
     ChessPlayerColor local_color,
     int to_file,
     int to_rank,
+    uint8_t promotion,
     ChessMovePayload *out_move)
 {
     if (!state || !out_move || !in_bounds(to_file, to_rank) || !state->has_selection) {
@@ -738,7 +856,7 @@ bool chess_game_try_local_move(
     out_move->from_rank = (uint8_t)state->selected_rank;
     out_move->to_file = (uint8_t)to_file;
     out_move->to_rank = (uint8_t)to_rank;
-    out_move->promotion = 0u;
+    out_move->promotion = promotion;
 
     if (!is_legal_move(
             state,
@@ -746,11 +864,12 @@ bool chess_game_try_local_move(
             state->selected_file,
             state->selected_rank,
             to_file,
-            to_rank)) {
+            to_rank,
+            promotion)) {
         return false;
     }
 
-    return apply_move(state, state->selected_file, state->selected_rank, to_file, to_rank);
+    return apply_move(state, state->selected_file, state->selected_rank, to_file, to_rank, promotion);
 }
 
 bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote_color, const ChessMovePayload *move)
@@ -778,7 +897,8 @@ bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote
             (int)move->from_file,
             (int)move->from_rank,
             (int)move->to_file,
-            (int)move->to_rank)) {
+            (int)move->to_rank,
+            move->promotion)) {
         return false;
     }
 
@@ -787,6 +907,7 @@ bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote
         (int)move->from_file,
         (int)move->from_rank,
         (int)move->to_file,
-        (int)move->to_rank
+        (int)move->to_rank,
+        move->promotion
     );
 }
