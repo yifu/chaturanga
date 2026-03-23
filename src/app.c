@@ -1234,16 +1234,38 @@ static void app_append_move_history(AppLoopContext *ctx, const char *notation)
 static void app_render_move_history_panel(AppLoopContext *ctx, int window_width, int window_height, int board_width)
 {
     SDL_FRect panel_rect;
-    SDL_FRect separator;
+    SDL_FRect border_rect;
+    SDL_FRect header_rect;
     SDL_Texture *title_tex;
+    SDL_Texture *turn_tex;
+    SDL_Texture *white_header_tex;
+    SDL_Texture *black_header_tex;
     float title_w = 0.0f;
     float title_h = 0.0f;
-    int row_height = 22;
-    int start_y = 36;
+    float turn_w = 0.0f;
+    float turn_h = 0.0f;
+    float white_header_w = 0.0f;
+    float white_header_h = 0.0f;
+    float black_header_w = 0.0f;
+    float black_header_h = 0.0f;
+    int row_height = 24;
+    int start_y = 72;
     int max_rows;
     int total_turns;
     int first_turn;
     int turn;
+    int panel_left;
+    int panel_right;
+    int x_turn;
+    int x_white;
+    int x_black;
+    int col_sep_x;
+    int current_turn;
+    const SDL_Color turn_color = {150, 150, 160, 255};
+    const SDL_Color white_black_header_color = {175, 175, 182, 255};
+    const SDL_Color normal_move_color = {210, 210, 216, 255};
+    const SDL_Color placeholder_color = {112, 112, 120, 255};
+    const SDL_Color last_move_color = {236, 201, 104, 255};
 
     if (!ctx || !ctx->renderer || !s_coord_font || !ctx->network_session.game_started) {
         return;
@@ -1253,27 +1275,93 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
     panel_rect.y = 0.0f;
     panel_rect.w = (float)(window_width - board_width);
     panel_rect.h = (float)window_height;
-    SDL_SetRenderDrawColor(ctx->renderer, 24, 24, 24, 255);
+    if (panel_rect.w <= 1.0f) {
+        return;
+    }
+
+    panel_left = board_width;
+    panel_right = window_width;
+    x_turn = panel_left + 10;
+    x_white = panel_left + 46;
+    x_black = panel_left + (int)(panel_rect.w * 0.56f);
+    col_sep_x = panel_left + (int)(panel_rect.w * 0.52f);
+    current_turn = ((int)ctx->move_history_count / 2) + 1;
+
+    SDL_SetRenderDrawColor(ctx->renderer, 20, 20, 24, 255);
     SDL_RenderFillRect(ctx->renderer, &panel_rect);
 
-    separator.x = (float)board_width;
-    separator.y = 0.0f;
-    separator.w = 1.0f;
-    separator.h = (float)window_height;
-    SDL_SetRenderDrawColor(ctx->renderer, 66, 66, 66, 255);
-    SDL_RenderFillRect(ctx->renderer, &separator);
+    border_rect.x = (float)board_width;
+    border_rect.y = 0.0f;
+    border_rect.w = 1.0f;
+    border_rect.h = (float)window_height;
+    SDL_SetRenderDrawColor(ctx->renderer, 84, 84, 94, 255);
+    SDL_RenderFillRect(ctx->renderer, &border_rect);
 
-    title_tex = make_text_texture(ctx->renderer, s_coord_font, "Moves", (SDL_Color){220, 220, 220, 255});
+    header_rect.x = (float)(panel_left + 1);
+    header_rect.y = 0.0f;
+    header_rect.w = (float)(window_width - panel_left - 1);
+    header_rect.h = 64.0f;
+    SDL_SetRenderDrawColor(ctx->renderer, 28, 28, 34, 255);
+    SDL_RenderFillRect(ctx->renderer, &header_rect);
+
+    title_tex = make_text_texture(ctx->renderer, s_coord_font, "Moves", (SDL_Color){232, 232, 238, 255});
+    turn_tex = NULL;
+    white_header_tex = make_text_texture(ctx->renderer, s_coord_font, "White", white_black_header_color);
+    black_header_tex = make_text_texture(ctx->renderer, s_coord_font, "Black", white_black_header_color);
+
+    {
+        char turn_label[32];
+        SDL_snprintf(turn_label, sizeof(turn_label), "Turn %d", current_turn);
+        turn_tex = make_text_texture(ctx->renderer, s_coord_font, turn_label, (SDL_Color){198, 198, 206, 255});
+    }
+
     if (title_tex) {
         SDL_FRect title_dst;
         SDL_GetTextureSize(title_tex, &title_w, &title_h);
-        title_dst.x = (float)board_width + 12.0f;
+        title_dst.x = (float)panel_left + 10.0f;
         title_dst.y = 10.0f;
         title_dst.w = title_w;
         title_dst.h = title_h;
         SDL_RenderTexture(ctx->renderer, title_tex, NULL, &title_dst);
         SDL_DestroyTexture(title_tex);
     }
+
+    if (turn_tex) {
+        SDL_FRect turn_dst;
+        SDL_GetTextureSize(turn_tex, &turn_w, &turn_h);
+        turn_dst.x = (float)panel_right - turn_w - 10.0f;
+        turn_dst.y = 12.0f;
+        turn_dst.w = turn_w;
+        turn_dst.h = turn_h;
+        SDL_RenderTexture(ctx->renderer, turn_tex, NULL, &turn_dst);
+        SDL_DestroyTexture(turn_tex);
+    }
+
+    if (white_header_tex) {
+        SDL_FRect dst;
+        SDL_GetTextureSize(white_header_tex, &white_header_w, &white_header_h);
+        dst.x = (float)x_white;
+        dst.y = 40.0f;
+        dst.w = white_header_w;
+        dst.h = white_header_h;
+        SDL_RenderTexture(ctx->renderer, white_header_tex, NULL, &dst);
+        SDL_DestroyTexture(white_header_tex);
+    }
+
+    if (black_header_tex) {
+        SDL_FRect dst;
+        SDL_GetTextureSize(black_header_tex, &black_header_w, &black_header_h);
+        dst.x = (float)x_black;
+        dst.y = 40.0f;
+        dst.w = black_header_w;
+        dst.h = black_header_h;
+        SDL_RenderTexture(ctx->renderer, black_header_tex, NULL, &dst);
+        SDL_DestroyTexture(black_header_tex);
+    }
+
+    SDL_SetRenderDrawColor(ctx->renderer, 74, 74, 84, 255);
+    SDL_RenderLine(ctx->renderer, (float)(panel_left + 1), 64.0f, (float)panel_right, 64.0f);
+    SDL_RenderLine(ctx->renderer, (float)col_sep_x, 38.0f, (float)col_sep_x, (float)window_height);
 
     max_rows = (window_height - start_y - 8) / row_height;
     if (max_rows <= 0) {
@@ -1282,6 +1370,23 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
 
     total_turns = ((int)ctx->move_history_count + 1) / 2;
     if (total_turns <= 0) {
+        SDL_Texture *empty_tex = make_text_texture(
+            ctx->renderer,
+            s_coord_font,
+            "No moves yet",
+            (SDL_Color){120, 120, 128, 255});
+        if (empty_tex) {
+            float tw = 0.0f;
+            float th = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(empty_tex, &tw, &th);
+            dst.x = (float)panel_left + 12.0f;
+            dst.y = 84.0f;
+            dst.w = tw;
+            dst.h = th;
+            SDL_RenderTexture(ctx->renderer, empty_tex, NULL, &dst);
+            SDL_DestroyTexture(empty_tex);
+        }
         return;
     }
 
@@ -1291,28 +1396,83 @@ static void app_render_move_history_panel(AppLoopContext *ctx, int window_width,
     }
 
     for (turn = first_turn; turn <= total_turns; ++turn) {
-        char line[96];
         int row = turn - first_turn;
         int white_idx = (turn - 1) * 2;
         int black_idx = white_idx + 1;
-        const char *white_move = (white_idx < (int)ctx->move_history_count) ? ctx->move_history[white_idx] : "";
-        const char *black_move = (black_idx < (int)ctx->move_history_count) ? ctx->move_history[black_idx] : "";
-        SDL_Texture *line_tex;
+        bool has_white = white_idx < (int)ctx->move_history_count;
+        bool has_black = black_idx < (int)ctx->move_history_count;
+        bool last_white = has_white && white_idx == ((int)ctx->move_history_count - 1);
+        bool last_black = has_black && black_idx == ((int)ctx->move_history_count - 1);
+        const char *white_move = has_white ? ctx->move_history[white_idx] : "";
+        const char *black_move = has_black ? ctx->move_history[black_idx] : "...";
+        SDL_Texture *turn_tex_row;
+        SDL_Texture *white_tex;
+        SDL_Texture *black_tex;
+        SDL_FRect row_rect;
+        char turn_label[12];
 
-        SDL_snprintf(line, sizeof(line), "%d. %-8s %s", turn, white_move, black_move);
-        line_tex = make_text_texture(ctx->renderer, s_coord_font, line, (SDL_Color){200, 200, 200, 255});
-        if (line_tex) {
-            float lw = 0.0f;
-            float lh = 0.0f;
+        row_rect.x = (float)(panel_left + 1);
+        row_rect.y = (float)(start_y + row * row_height - 2);
+        row_rect.w = (float)(window_width - panel_left - 2);
+        row_rect.h = (float)(row_height - 1);
+
+        if (last_white || last_black) {
+            SDL_SetRenderDrawColor(ctx->renderer, 58, 52, 34, 180);
+            SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+            SDL_RenderFillRect(ctx->renderer, &row_rect);
+            SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_NONE);
+        }
+
+        SDL_snprintf(turn_label, sizeof(turn_label), "%d.", turn);
+        turn_tex_row = make_text_texture(ctx->renderer, s_coord_font, turn_label, turn_color);
+        white_tex = make_text_texture(
+            ctx->renderer,
+            s_coord_font,
+            white_move,
+            last_white ? last_move_color : normal_move_color);
+        black_tex = make_text_texture(
+            ctx->renderer,
+            s_coord_font,
+            black_move,
+            has_black ? (last_black ? last_move_color : normal_move_color) : placeholder_color);
+
+        if (turn_tex_row) {
+            float tw = 0.0f;
+            float th = 0.0f;
             SDL_FRect dst;
-
-            SDL_GetTextureSize(line_tex, &lw, &lh);
-            dst.x = (float)board_width + 10.0f;
+            SDL_GetTextureSize(turn_tex_row, &tw, &th);
+            dst.x = (float)x_turn;
             dst.y = (float)(start_y + row * row_height);
-            dst.w = lw;
-            dst.h = lh;
-            SDL_RenderTexture(ctx->renderer, line_tex, NULL, &dst);
-            SDL_DestroyTexture(line_tex);
+            dst.w = tw;
+            dst.h = th;
+            SDL_RenderTexture(ctx->renderer, turn_tex_row, NULL, &dst);
+            SDL_DestroyTexture(turn_tex_row);
+        }
+
+        if (white_tex) {
+            float tw = 0.0f;
+            float th = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(white_tex, &tw, &th);
+            dst.x = (float)x_white;
+            dst.y = (float)(start_y + row * row_height);
+            dst.w = tw;
+            dst.h = th;
+            SDL_RenderTexture(ctx->renderer, white_tex, NULL, &dst);
+            SDL_DestroyTexture(white_tex);
+        }
+
+        if (black_tex) {
+            float tw = 0.0f;
+            float th = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(black_tex, &tw, &th);
+            dst.x = (float)x_black;
+            dst.y = (float)(start_y + row * row_height);
+            dst.w = tw;
+            dst.h = th;
+            SDL_RenderTexture(ctx->renderer, black_tex, NULL, &dst);
+            SDL_DestroyTexture(black_tex);
         }
     }
 }
