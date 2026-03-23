@@ -14,12 +14,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
           brew update
-          brew install cmake sdl3 sdl3_ttf pkg-config
+          for pkg in cmake sdl3 sdl3_ttf pkg-config; do
+            brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
+          done
 
       - name: Configure
         run: cmake -S . -B build
