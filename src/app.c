@@ -1421,6 +1421,8 @@ static bool app_try_send_local_move(AppLoopContext *ctx, int to_file, int to_ran
     ctx->promotion_pending = false;
     ctx->promotion_to_file = -1;
     ctx->promotion_to_rank = -1;
+    ctx->status_message[0] = '\0';
+    ctx->status_message_until_ms = 0;
 
     if (!chess_tcp_send_packet(
             &ctx->connection,
