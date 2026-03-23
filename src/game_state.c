@@ -12,6 +12,14 @@ static bool in_bounds(int file, int rank)
     return file >= 0 && file < CHESS_BOARD_SIZE && rank >= 0 && rank < CHESS_BOARD_SIZE;
 }
 
+static bool can_castle(
+    const ChessGameState *state,
+    ChessPlayerColor moving_color,
+    int from_file,
+    int from_rank,
+    int to_file,
+    int to_rank);
+
 static ChessPlayerColor piece_color(ChessPiece piece)
 {
     if (piece >= CHESS_PIECE_WHITE_PAWN && piece <= CHESS_PIECE_WHITE_KING) {
@@ -32,6 +40,17 @@ static ChessPlayerColor opposite_color(ChessPlayerColor color)
         return CHESS_COLOR_WHITE;
     }
     return CHESS_COLOR_UNASSIGNED;
+}
+
+static bool is_castling_king_move(ChessPiece piece, int from_file, int from_rank, int to_file, int to_rank)
+{
+    if (piece == CHESS_PIECE_WHITE_KING) {
+        return from_file == 4 && from_rank == 7 && (to_file == 2 || to_file == 6) && to_rank == 7;
+    }
+    if (piece == CHESS_PIECE_BLACK_KING) {
+        return from_file == 4 && from_rank == 0 && (to_file == 2 || to_file == 6) && to_rank == 0;
+    }
+    return false;
 }
 
 static bool path_clear_straight(const ChessGameState *state, int from_file, int from_rank, int to_file, int to_rank)
@@ -163,7 +182,10 @@ static bool is_pseudo_legal_move(
                path_clear_diagonal(state, from_file, from_rank, to_file, to_rank);
     case CHESS_PIECE_WHITE_KING:
     case CHESS_PIECE_BLACK_KING:
-        return abs_i(df) <= 1 && abs_i(dr) <= 1;
+        if (abs_i(df) <= 1 && abs_i(dr) <= 1) {
+            return true;
+        }
+        return can_castle(state, piece_color(piece), from_file, from_rank, to_file, to_rank);
     case CHESS_PIECE_EMPTY:
     case CHESS_PIECE_COUNT:
     default:
@@ -277,6 +299,89 @@ static bool is_king_in_check(const ChessGameState *state, ChessPlayerColor color
     return is_square_attacked(state, king_file, king_rank, opposite_color(color));
 }
 
+static bool can_castle(
+    const ChessGameState *state,
+    ChessPlayerColor moving_color,
+    int from_file,
+    int from_rank,
+    int to_file,
+    int to_rank)
+{
+    ChessPlayerColor enemy_color = opposite_color(moving_color);
+
+    if (!state || enemy_color == CHESS_COLOR_UNASSIGNED) {
+        return false;
+    }
+
+    if (moving_color == CHESS_COLOR_WHITE) {
+        if (from_file != 4 || from_rank != 7 || to_rank != 7) {
+            return false;
+        }
+
+        if (to_file == 6) {
+            if (!state->white_can_castle_kingside ||
+                (ChessPiece)state->board[7][7] != CHESS_PIECE_WHITE_ROOK ||
+                (ChessPiece)state->board[7][5] != CHESS_PIECE_EMPTY ||
+                (ChessPiece)state->board[7][6] != CHESS_PIECE_EMPTY) {
+                return false;
+            }
+            return !is_square_attacked(state, 4, 7, enemy_color) &&
+                   !is_square_attacked(state, 5, 7, enemy_color) &&
+                   !is_square_attacked(state, 6, 7, enemy_color);
+        }
+
+        if (to_file == 2) {
+            if (!state->white_can_castle_queenside ||
+                (ChessPiece)state->board[7][0] != CHESS_PIECE_WHITE_ROOK ||
+                (ChessPiece)state->board[7][1] != CHESS_PIECE_EMPTY ||
+                (ChessPiece)state->board[7][2] != CHESS_PIECE_EMPTY ||
+                (ChessPiece)state->board[7][3] != CHESS_PIECE_EMPTY) {
+                return false;
+            }
+            return !is_square_attacked(state, 4, 7, enemy_color) &&
+                   !is_square_attacked(state, 3, 7, enemy_color) &&
+                   !is_square_attacked(state, 2, 7, enemy_color);
+        }
+
+        return false;
+    }
+
+    if (moving_color == CHESS_COLOR_BLACK) {
+        if (from_file != 4 || from_rank != 0 || to_rank != 0) {
+            return false;
+        }
+
+        if (to_file == 6) {
+            if (!state->black_can_castle_kingside ||
+                (ChessPiece)state->board[0][7] != CHESS_PIECE_BLACK_ROOK ||
+                (ChessPiece)state->board[0][5] != CHESS_PIECE_EMPTY ||
+                (ChessPiece)state->board[0][6] != CHESS_PIECE_EMPTY) {
+                return false;
+            }
+            return !is_square_attacked(state, 4, 0, enemy_color) &&
+                   !is_square_attacked(state, 5, 0, enemy_color) &&
+                   !is_square_attacked(state, 6, 0, enemy_color);
+        }
+
+        if (to_file == 2) {
+            if (!state->black_can_castle_queenside ||
+                (ChessPiece)state->board[0][0] != CHESS_PIECE_BLACK_ROOK ||
+                (ChessPiece)state->board[0][1] != CHESS_PIECE_EMPTY ||
+                (ChessPiece)state->board[0][2] != CHESS_PIECE_EMPTY ||
+                (ChessPiece)state->board[0][3] != CHESS_PIECE_EMPTY) {
+                return false;
+            }
+            return !is_square_attacked(state, 4, 0, enemy_color) &&
+                   !is_square_attacked(state, 3, 0, enemy_color) &&
+                   !is_square_attacked(state, 2, 0, enemy_color);
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
 static bool is_legal_move(
     const ChessGameState *state,
     ChessPlayerColor moving_color,
@@ -304,6 +409,16 @@ static bool is_legal_move(
     copy = *state;
     copy.board[to_rank][to_file] = copy.board[from_rank][from_file];
     copy.board[from_rank][from_file] = CHESS_PIECE_EMPTY;
+
+    if (is_castling_king_move(piece, from_file, from_rank, to_file, to_rank)) {
+        if (to_file == 6) {
+            copy.board[to_rank][5] = copy.board[to_rank][7];
+            copy.board[to_rank][7] = CHESS_PIECE_EMPTY;
+        } else {
+            copy.board[to_rank][3] = copy.board[to_rank][0];
+            copy.board[to_rank][0] = CHESS_PIECE_EMPTY;
+        }
+    }
 
     if (piece == CHESS_PIECE_WHITE_PAWN && to_rank == 0) {
         copy.board[to_rank][to_file] = CHESS_PIECE_WHITE_QUEEN;
@@ -345,6 +460,7 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
     uint8_t piece;
     ChessPiece captured;
     bool is_pawn_move;
+    bool is_castling;
 
     if (!state || !in_bounds(from_file, from_rank) || !in_bounds(to_file, to_rank)) {
         return false;
@@ -357,6 +473,41 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
 
     captured = (ChessPiece)state->board[to_rank][to_file];
     is_pawn_move = piece == CHESS_PIECE_WHITE_PAWN || piece == CHESS_PIECE_BLACK_PAWN;
+    is_castling = is_castling_king_move((ChessPiece)piece, from_file, from_rank, to_file, to_rank);
+
+    if (piece == CHESS_PIECE_WHITE_KING) {
+        state->white_can_castle_kingside = false;
+        state->white_can_castle_queenside = false;
+    } else if (piece == CHESS_PIECE_BLACK_KING) {
+        state->black_can_castle_kingside = false;
+        state->black_can_castle_queenside = false;
+    } else if (piece == CHESS_PIECE_WHITE_ROOK) {
+        if (from_file == 0 && from_rank == 7) {
+            state->white_can_castle_queenside = false;
+        } else if (from_file == 7 && from_rank == 7) {
+            state->white_can_castle_kingside = false;
+        }
+    } else if (piece == CHESS_PIECE_BLACK_ROOK) {
+        if (from_file == 0 && from_rank == 0) {
+            state->black_can_castle_queenside = false;
+        } else if (from_file == 7 && from_rank == 0) {
+            state->black_can_castle_kingside = false;
+        }
+    }
+
+    if (captured == CHESS_PIECE_WHITE_ROOK) {
+        if (to_file == 0 && to_rank == 7) {
+            state->white_can_castle_queenside = false;
+        } else if (to_file == 7 && to_rank == 7) {
+            state->white_can_castle_kingside = false;
+        }
+    } else if (captured == CHESS_PIECE_BLACK_ROOK) {
+        if (to_file == 0 && to_rank == 0) {
+            state->black_can_castle_queenside = false;
+        } else if (to_file == 7 && to_rank == 0) {
+            state->black_can_castle_kingside = false;
+        }
+    }
 
     if (is_pawn_move || captured != CHESS_PIECE_EMPTY) {
         state->halfmove_clock = 0;
@@ -370,6 +521,16 @@ static bool apply_move(ChessGameState *state, int from_file, int from_rank, int 
 
     state->board[to_rank][to_file] = piece;
     state->board[from_rank][from_file] = CHESS_PIECE_EMPTY;
+
+    if (is_castling) {
+        if (to_file == 6) {
+            state->board[to_rank][5] = state->board[to_rank][7];
+            state->board[to_rank][7] = CHESS_PIECE_EMPTY;
+        } else {
+            state->board[to_rank][3] = state->board[to_rank][0];
+            state->board[to_rank][0] = CHESS_PIECE_EMPTY;
+        }
+    }
 
     if (piece == CHESS_PIECE_WHITE_PAWN && to_rank == 0) {
         state->board[to_rank][to_file] = CHESS_PIECE_WHITE_QUEEN;
@@ -412,6 +573,10 @@ void chess_game_state_init(ChessGameState *state)
     state->side_to_move = CHESS_COLOR_WHITE;
     state->halfmove_clock = 0;
     state->fullmove_number = 1;
+    state->white_can_castle_kingside = true;
+    state->white_can_castle_queenside = true;
+    state->black_can_castle_kingside = true;
+    state->black_can_castle_queenside = true;
     state->selected_file = -1;
     state->selected_rank = -1;
 

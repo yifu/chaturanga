@@ -38,6 +38,10 @@ typedef struct ChessGameState {
     ChessPlayerColor side_to_move;
     uint16_t halfmove_clock;
     uint16_t fullmove_number;
+    bool white_can_castle_kingside;
+    bool white_can_castle_queenside;
+    bool black_can_castle_kingside;
+    bool black_can_castle_queenside;
     bool has_selection;
     int selected_file;
     int selected_rank;
