@@ -211,6 +211,7 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
 {
     char remote_profile_id[CHESS_PROFILE_ID_STRING_LEN];
     bool was_in_game;
+    bool game_over;
     uint32_t last_game_id = 0u;
     char last_resume_token[CHESS_UUID_STRING_LEN] = {0};
 
@@ -219,6 +220,7 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     }
 
     was_in_game = ctx->network_session.game_started;
+    game_over   = (ctx->game_state.outcome != CHESS_OUTCOME_NONE);
     if (was_in_game) {
         last_game_id = ctx->network_session.game_id;
         SDL_strlcpy(last_resume_token, ctx->pending_start_payload.resume_token, sizeof(last_resume_token));
@@ -233,6 +235,18 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
 
     chess_tcp_connection_close(&ctx->connection);
     chess_net_reset_transport_progress(ctx);
+
+    /*
+     * If the game is over, keep the game state + overlay visible so the
+     * player can review the result and click "Return to Lobby" themselves.
+     * Only clean up networking state.
+     */
+    if (was_in_game && game_over) {
+        ctx->network_session.transport_connected = false;
+        ctx->network_session.peer_available = false;
+        chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_DISCONNECTED);
+        return;
+    }
 
     ctx->network_session.start_completed = false;
     ctx->network_session.start_failures = 0u;
