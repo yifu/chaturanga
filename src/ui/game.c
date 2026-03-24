@@ -660,12 +660,29 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
         const float gap = 14.0f;
         const float btn_h = 30.0f;
         const float btn_gap = 18.0f;
-        const float max_text_w = (hw > sw ? hw : sw);
-        const float box_w = max_text_w + pad * 2.0f;
-        const float box_h = hh + sh + gap + btn_gap + btn_h + pad * 2.0f;
+        const float btn_pad = 24.0f;
+        float max_text_w = (hw > sw ? hw : sw);
+        float btn_text_w = 0.0f;
+        float btn_text_h = 0.0f;
+        float box_w;
+        float box_h;
         SDL_FRect box;
         SDL_FRect dst;
         SDL_FRect btn_rect;
+        SDL_Texture *btn_tex;
+
+        btn_tex = make_text_texture(
+            ctx->renderer, s_coord_font, "Return to Lobby",
+            (SDL_Color){232, 232, 238, 255});
+        if (btn_tex) { SDL_GetTextureSize(btn_tex, &btn_text_w, &btn_text_h); }
+
+        /* Box must be wide enough for all text lines AND the button */
+        {
+            float btn_needs = btn_text_w + btn_pad * 2.0f;
+            if (btn_needs > max_text_w) { max_text_w = btn_needs; }
+        }
+        box_w = max_text_w + pad * 2.0f;
+        box_h = hh + sh + gap + btn_gap + btn_h + pad * 2.0f;
 
         box.x = ((float)width  - box_w) * 0.5f;
         box.y = ((float)height - box_h) * 0.5f;
@@ -697,7 +714,6 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
         /* "Return to Lobby" button */
         {
             const float btn_w = box_w - pad * 2.0f;
-            SDL_Texture *btn_tex;
 
             btn_rect.x = box.x + pad;
             btn_rect.y = box.y + pad + hh + gap + sh + btn_gap;
@@ -709,20 +725,12 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
             SDL_SetRenderDrawColor(ctx->renderer, 150, 150, 160, 255);
             SDL_RenderRect(ctx->renderer, &btn_rect);
 
-            btn_tex = make_text_texture(
-                ctx->renderer,
-                s_coord_font,
-                "Return to Lobby",
-                (SDL_Color){232, 232, 238, 255});
             if (btn_tex) {
-                float bw = 0.0f;
-                float bh = 0.0f;
                 SDL_FRect bdst;
-                SDL_GetTextureSize(btn_tex, &bw, &bh);
-                bdst.x = btn_rect.x + (btn_rect.w - bw) * 0.5f;
-                bdst.y = btn_rect.y + (btn_rect.h - bh) * 0.5f;
-                bdst.w = bw;
-                bdst.h = bh;
+                bdst.x = btn_rect.x + (btn_rect.w - btn_text_w) * 0.5f;
+                bdst.y = btn_rect.y + (btn_rect.h - btn_text_h) * 0.5f;
+                bdst.w = btn_text_w;
+                bdst.h = btn_text_h;
                 SDL_RenderTexture(ctx->renderer, btn_tex, NULL, &bdst);
                 SDL_DestroyTexture(btn_tex);
             }
