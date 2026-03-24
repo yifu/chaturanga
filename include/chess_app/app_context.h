@@ -82,5 +82,6 @@ typedef AppContext AppLoopContext;
 void app_set_status_message(AppContext *ctx, const char *message, uint32_t duration_ms);
 void app_append_move_history(AppContext *ctx, const char *notation);
 void app_handle_peer_disconnect(AppContext *ctx, const char *reason);
+void app_return_to_lobby(AppContext *ctx);
 
 #endif

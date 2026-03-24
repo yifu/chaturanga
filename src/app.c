@@ -278,6 +278,47 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     }
 }
 
+void app_return_to_lobby(AppLoopContext *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    SDL_Log("GAME: returning to lobby");
+
+    chess_tcp_connection_close(&ctx->connection);
+    chess_net_reset_transport_progress(ctx);
+    chess_persist_clear_client_resume_state(ctx);
+
+    ctx->network_session.game_started = false;
+    ctx->network_session.peer_available = false;
+    ctx->network_session.role = CHESS_ROLE_UNKNOWN;
+    ctx->network_session.start_completed = false;
+    ctx->network_session.start_failures = 0u;
+    ctx->network_session.draw_offer_pending = false;
+    ctx->network_session.draw_offer_received = false;
+    memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
+    chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
+
+    memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
+    memset(&ctx->discovered_peer, 0, sizeof(ctx->discovered_peer));
+    ctx->discovery.remote_emitted = false;
+
+    ctx->drag_active = false;
+    ctx->drag_piece = CHESS_PIECE_EMPTY;
+    ctx->promotion_pending = false;
+    ctx->promotion_to_file = -1;
+    ctx->promotion_to_rank = -1;
+    ctx->remote_move_anim_active = false;
+    ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
+
+    chess_game_state_init(&ctx->game_state);
+    ctx->move_history_count = 0;
+    chess_lobby_init(&ctx->lobby);
+
+    app_set_status_message(ctx, "Returned to lobby.", 2000u);
+}
+
 static bool app_init_networking(AppLoopContext *ctx)
 {
     if (!ctx) {

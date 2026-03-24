@@ -426,6 +426,7 @@ static void net_handle_state_snapshot_packet(AppContext *ctx, const ChessStateSn
         return;
     }
 
+    (void)chess_persist_save_match_snapshot(ctx);
     SDL_Log("GAME: applied synced snapshot for game_id=%u", snapshot->game_id);
     app_set_status_message(ctx, "Etat de partie resynchronise.", 2200u);
 }
@@ -557,9 +558,7 @@ static void net_handle_resign_packet(AppContext *ctx)
         ? CHESS_OUTCOME_WHITE_RESIGNED
         : CHESS_OUTCOME_BLACK_RESIGNED;
 
-    if (ctx->network_session.role == CHESS_ROLE_SERVER) {
-        (void)chess_persist_save_match_snapshot(ctx);
-    }
+    (void)chess_persist_save_match_snapshot(ctx);
     SDL_Log("GAME: opponent resigned");
     app_set_status_message(ctx, "Opponent resigned.", 5000u);
 }
@@ -587,9 +586,7 @@ static void net_handle_draw_accept_packet(AppContext *ctx)
     ctx->game_state.outcome = CHESS_OUTCOME_DRAW_AGREED;
     ctx->network_session.draw_offer_pending = false;
 
-    if (ctx->network_session.role == CHESS_ROLE_SERVER) {
-        (void)chess_persist_save_match_snapshot(ctx);
-    }
+    (void)chess_persist_save_match_snapshot(ctx);
     SDL_Log("GAME: draw accepted");
     app_set_status_message(ctx, "Draw by agreement.", 5000u);
 }

@@ -13,6 +13,10 @@
 static const int s_history_max_entries = (int)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES;
 static const int s_history_entry_len   = (int)CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN;
 
+/* Cached rect for the "Return to Lobby" button inside the game-over overlay. */
+static SDL_FRect s_lobby_button_rect = {0};
+static bool      s_lobby_button_visible = false;
+
 /* Forward declarations */
 static void render_panel_buttons(AppContext *ctx, int panel_left, int panel_width, int window_height);
 
@@ -581,6 +585,7 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
     float sh;
 
     if (!ctx || !ctx->renderer || ctx->game_state.outcome == CHESS_OUTCOME_NONE) {
+        s_lobby_button_visible = false;
         return;
     }
 
@@ -653,10 +658,14 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
     {
         const float pad = 28.0f;
         const float gap = 14.0f;
-        const float box_w = (hw > sw ? hw : sw) + pad * 2.0f;
-        const float box_h = hh + sh + gap + pad * 2.0f;
+        const float btn_h = 30.0f;
+        const float btn_gap = 18.0f;
+        const float max_text_w = (hw > sw ? hw : sw);
+        const float box_w = max_text_w + pad * 2.0f;
+        const float box_h = hh + sh + gap + btn_gap + btn_h + pad * 2.0f;
         SDL_FRect box;
         SDL_FRect dst;
+        SDL_FRect btn_rect;
 
         box.x = ((float)width  - box_w) * 0.5f;
         box.y = ((float)height - box_h) * 0.5f;
@@ -683,6 +692,43 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
             dst.h = sh;
             SDL_RenderTexture(ctx->renderer, subline_tex, NULL, &dst);
             SDL_DestroyTexture(subline_tex);
+        }
+
+        /* "Return to Lobby" button */
+        {
+            const float btn_w = box_w - pad * 2.0f;
+            SDL_Texture *btn_tex;
+
+            btn_rect.x = box.x + pad;
+            btn_rect.y = box.y + pad + hh + gap + sh + btn_gap;
+            btn_rect.w = btn_w;
+            btn_rect.h = btn_h;
+
+            SDL_SetRenderDrawColor(ctx->renderer, 60, 60, 70, 255);
+            SDL_RenderFillRect(ctx->renderer, &btn_rect);
+            SDL_SetRenderDrawColor(ctx->renderer, 150, 150, 160, 255);
+            SDL_RenderRect(ctx->renderer, &btn_rect);
+
+            btn_tex = make_text_texture(
+                ctx->renderer,
+                s_coord_font,
+                "Return to Lobby",
+                (SDL_Color){232, 232, 238, 255});
+            if (btn_tex) {
+                float bw = 0.0f;
+                float bh = 0.0f;
+                SDL_FRect bdst;
+                SDL_GetTextureSize(btn_tex, &bw, &bh);
+                bdst.x = btn_rect.x + (btn_rect.w - bw) * 0.5f;
+                bdst.y = btn_rect.y + (btn_rect.h - bh) * 0.5f;
+                bdst.w = bw;
+                bdst.h = bh;
+                SDL_RenderTexture(ctx->renderer, btn_tex, NULL, &bdst);
+                SDL_DestroyTexture(btn_tex);
+            }
+
+            s_lobby_button_rect = btn_rect;
+            s_lobby_button_visible = true;
         }
     }
 }
@@ -1052,6 +1098,16 @@ ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, in
 
     if (!ctx || !ctx->window || !ctx->network_session.game_started) {
         return CHESS_GAME_BUTTON_NONE;
+    }
+
+    mx = (float)mouse_x;
+    my = (float)mouse_y;
+
+    /* Check "Return to Lobby" button in the game-over overlay first */
+    if (s_lobby_button_visible &&
+        mx >= s_lobby_button_rect.x && mx < s_lobby_button_rect.x + s_lobby_button_rect.w &&
+        my >= s_lobby_button_rect.y && my < s_lobby_button_rect.y + s_lobby_button_rect.h) {
+        return CHESS_GAME_BUTTON_RETURN_LOBBY;
     }
 
     SDL_GetWindowSize(ctx->window, &window_width, &window_height);

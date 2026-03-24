@@ -227,7 +227,17 @@ static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, u
 
 static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
 {
-    if (!ctx || ctx->connection.fd < 0) {
+    if (!ctx) {
+        return;
+    }
+
+    /* Return to lobby works even without a connection */
+    if (btn == CHESS_GAME_BUTTON_RETURN_LOBBY) {
+        app_return_to_lobby(ctx);
+        return;
+    }
+
+    if (ctx->connection.fd < 0) {
         return;
     }
 
@@ -238,9 +248,7 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
             : CHESS_OUTCOME_BLACK_RESIGNED;
         chess_tcp_send_packet(&ctx->connection, CHESS_MSG_RESIGN,
                               ctx->move_sequence, NULL, 0u);
-        if (ctx->network_session.role == CHESS_ROLE_SERVER) {
-            (void)chess_persist_save_match_snapshot(ctx);
-        }
+        (void)chess_persist_save_match_snapshot(ctx);
         SDL_Log("GAME: local player resigned");
         app_set_status_message(ctx, "You resigned.", 5000u);
         break;
@@ -257,9 +265,7 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
         ctx->network_session.draw_offer_received = false;
         chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_ACCEPT,
                               ctx->move_sequence, NULL, 0u);
-        if (ctx->network_session.role == CHESS_ROLE_SERVER) {
-            (void)chess_persist_save_match_snapshot(ctx);
-        }
+        (void)chess_persist_save_match_snapshot(ctx);
         SDL_Log("GAME: draw accepted locally");
         app_set_status_message(ctx, "Draw by agreement.", 5000u);
         break;
