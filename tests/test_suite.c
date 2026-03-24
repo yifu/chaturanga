@@ -35,6 +35,18 @@ static int s_passed = 0;
     } \
 } while (0)
 
+#define EXPECT_EQ_STR(actual, expected) do { \
+    const char *_a = (actual); \
+    const char *_e = (expected); \
+    if (strcmp(_a, _e) != 0) { \
+        fprintf(stderr, "FAIL %s:%d: %s == \"%s\" (got \"%s\")\n", \
+                __FILE__, __LINE__, #actual, _e, _a); \
+        s_failed += 1; \
+    } else { \
+        s_passed += 1; \
+    } \
+} while (0)
+
 static bool move_local(
     ChessGameState *state,
     ChessPlayerColor color,
@@ -199,7 +211,7 @@ static void test_network_session_flow(void)
 
     /* Simulate transport + hello */
     session.transport_connected = true;
-    session.hello_done = true;
+    session.hello_completed = true;
     session.challenge_done = true;
 
     /* Simulate game start */
@@ -292,6 +304,25 @@ static void test_tcp_packet_flow_basic(void)
     chess_tcp_connection_close(&receiver);
 }
 
+static void test_castling_notation_with_check(void)
+{
+    ChessGameState state;
+    char notation[24];
+
+    /* White: Ke1, Ra1.  Black: Kd3 (on the d-file so the rook
+     * landing on d1 after O-O-O gives check). */
+    clear_board(&state);
+    state.board[7][4] = CHESS_PIECE_WHITE_KING;
+    state.board[7][0] = CHESS_PIECE_WHITE_ROOK;
+    state.board[5][3] = CHESS_PIECE_BLACK_KING;
+    state.white_can_castle_kingside = true;
+    state.white_can_castle_queenside = true;
+
+    EXPECT_TRUE(chess_move_format_algebraic_notation(
+        &state, 4, 7, 2, 7, CHESS_PROMOTION_NONE, notation, sizeof(notation)));
+    EXPECT_EQ_STR(notation, "O-O-O+");
+}
+
 static void test_lobby_remove_peer_by_profile_id(void)
 {
     ChessLobbyState lobby;
@@ -328,6 +359,7 @@ int main(void)
     test_network_session_flow();
     test_persistent_profile_id();
     test_tcp_packet_flow_basic();
+    test_castling_notation_with_check();
     test_lobby_remove_peer_by_profile_id();
 
     fprintf(stdout, "Tests passed: %d\n", s_passed);

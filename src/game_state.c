@@ -861,6 +861,7 @@ bool chess_move_format_algebraic_notation(
 
     if (is_castling) {
         (void)snprintf(san, sizeof(san), "%s", (to_file == 6) ? "O-O" : "O-O-O");
+        len = strlen(san);
     } else if (moving_piece == CHESS_PIECE_WHITE_PAWN || moving_piece == CHESS_PIECE_BLACK_PAWN) {
         if (is_capture) {
             san[len++] = (char)('a' + from_file);

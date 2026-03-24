@@ -72,7 +72,7 @@ void chess_network_session_set_remote(ChessNetworkSession *session, const ChessP
     }
 
     session->transport_connected = false;
-    session->hello_done = false;
+    session->hello_completed = false;
     session->challenge_done = false;
     session->resume_done = false;
     session->game_started = false;

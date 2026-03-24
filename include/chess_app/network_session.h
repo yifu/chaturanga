@@ -42,7 +42,6 @@ typedef struct ChessNetworkSession {
     /* Flags consumed by the phase machine */
     bool peer_available;
     bool transport_connected;       /* TCP fd is valid                          */
-    bool hello_done;                /* HELLO exchange completed                 */
     bool challenge_done;            /* OFFER/ACCEPT exchange completed          */
     bool resume_done;               /* resume negotiation finished (or skipped) */
     bool game_started;
@@ -52,7 +51,6 @@ typedef struct ChessNetworkSession {
     bool hello_sent;
     bool hello_received;
     bool hello_completed;
-    bool challenge_exchange_completed;
     bool start_sent;
     uint64_t start_sent_at_ms;
     bool start_completed;

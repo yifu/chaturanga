@@ -97,12 +97,12 @@ static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
             SDL_strlcpy(accept.acceptor_profile_id, ctx->network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
 
             if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
-                ctx->network_session.challenge_exchange_completed = true;
+                ctx->network_session.challenge_done = true;
                 ctx->network_session.role = CHESS_ROLE_SERVER;
                 chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);
                 chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[clicked_peer].peer);
+                chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_GAME_STARTING);
                 SDL_Log("LOBBY: accepted challenge from peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
-                SDL_Log("NET: challenge exchange completed (local accept), waiting START/ACK");
             } else {
                 SDL_Log("NET: cannot accept challenge yet, transport not ready");
             }
