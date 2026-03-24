@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -25,18 +25,10 @@ static bool recv_all_with_timeout(int fd, void *buf, size_t len, int timeout_ms)
     size_t received = 0;
 
     while (received < len) {
-        fd_set rfds;
-        struct timeval tv;
-        int sel = 0;
+        struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
         ssize_t n = 0;
 
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-
-        tv.tv_sec = timeout_ms / 1000;
-        tv.tv_usec = (timeout_ms % 1000) * 1000;
-        sel = select(fd + 1, &rfds, NULL, NULL, &tv);
-        if (sel <= 0) {
+        if (poll(&pfd, 1, timeout_ms) <= 0) {
             return false;
         }
 
@@ -133,22 +125,18 @@ void chess_tcp_listener_close(ChessTcpListener *listener)
 
 bool chess_tcp_accept_once(ChessTcpListener *listener, int timeout_ms, ChessTcpConnection *out_conn)
 {
-    fd_set rfds;
-    struct timeval tv;
-    int sel = 0;
+    struct pollfd pfd;
     int client_fd = -1;
 
     if (!listener || listener->fd < 0 || !out_conn) {
         return false;
     }
 
-    FD_ZERO(&rfds);
-    FD_SET(listener->fd, &rfds);
-    tv.tv_sec = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    pfd.fd = listener->fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
 
-    sel = select(listener->fd + 1, &rfds, NULL, NULL, &tv);
-    if (sel <= 0) {
+    if (poll(&pfd, 1, timeout_ms) <= 0) {
         return false;
     }
 
@@ -171,9 +159,7 @@ bool chess_tcp_connect_once(uint32_t remote_ipv4_host_order, uint16_t remote_por
     int fd = -1;
     int flags = 0;
     struct sockaddr_in addr;
-    fd_set wfds;
-    struct timeval tv;
-    int sel = 0;
+    struct pollfd pfd;
     int err = 0;
     socklen_t err_len = sizeof(err);
 
@@ -212,13 +198,11 @@ bool chess_tcp_connect_once(uint32_t remote_ipv4_host_order, uint16_t remote_por
         return false;
     }
 
-    FD_ZERO(&wfds);
-    FD_SET(fd, &wfds);
-    tv.tv_sec = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
 
-    sel = select(fd + 1, NULL, &wfds, NULL, &tv);
-    if (sel <= 0) {
+    if (poll(&pfd, 1, timeout_ms) <= 0) {
         close(fd);
         return false;
     }

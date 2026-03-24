@@ -15,8 +15,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <poll.h>
 #include <string.h>
-#include <sys/select.h>
 
 /* ── Utilities ──────────────────────────────────────────────────────── */
 
@@ -70,50 +70,49 @@ static void poll_socket_events(
     const ChessTcpConnection *connection,
     ChessSocketEvents *events)
 {
-    fd_set rfds;
-    fd_set wfds;
-    struct timeval tv = {0, 0};
-    int maxfd = -1;
-    int sel;
+    struct pollfd fds[2];
+    int nfds = 0;
+    int listener_idx = -1;
+    int connection_idx = -1;
+    int ret;
 
     if (!events) {
         return;
     }
 
     memset(events, 0, sizeof(*events));
-    FD_ZERO(&rfds);
-    FD_ZERO(&wfds);
 
     if (listener && listener->fd >= 0) {
-        FD_SET(listener->fd, &rfds);
-        if (listener->fd > maxfd) {
-            maxfd = listener->fd;
-        }
+        listener_idx = nfds;
+        fds[nfds].fd = listener->fd;
+        fds[nfds].events = POLLIN;
+        fds[nfds].revents = 0;
+        nfds++;
     }
 
     if (connection && connection->fd >= 0) {
-        FD_SET(connection->fd, &rfds);
-        FD_SET(connection->fd, &wfds);
-        if (connection->fd > maxfd) {
-            maxfd = connection->fd;
-        }
+        connection_idx = nfds;
+        fds[nfds].fd = connection->fd;
+        fds[nfds].events = POLLIN | POLLOUT;
+        fds[nfds].revents = 0;
+        nfds++;
     }
 
-    if (maxfd < 0) {
+    if (nfds == 0) {
         return;
     }
 
-    sel = select(maxfd + 1, &rfds, &wfds, NULL, &tv);
-    if (sel <= 0) {
+    ret = poll(fds, (nfds_t)nfds, 0);
+    if (ret <= 0) {
         return;
     }
 
-    if (listener && listener->fd >= 0 && FD_ISSET(listener->fd, &rfds)) {
+    if (listener_idx >= 0 && (fds[listener_idx].revents & POLLIN)) {
         events->listener_readable = true;
     }
-    if (connection && connection->fd >= 0) {
-        events->connection_readable = FD_ISSET(connection->fd, &rfds);
-        events->connection_writable = FD_ISSET(connection->fd, &wfds);
+    if (connection_idx >= 0) {
+        events->connection_readable = (fds[connection_idx].revents & POLLIN) != 0;
+        events->connection_writable = (fds[connection_idx].revents & POLLOUT) != 0;
     }
 }
 

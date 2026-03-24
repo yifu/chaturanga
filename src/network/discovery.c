@@ -17,7 +17,7 @@
 #include <dns_sd.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <unistd.h>
 
 #define CHESS_DNSSD_SERVICE_TYPE "_chess._tcp"
@@ -97,18 +97,18 @@ static void fill_peer_identity_from_txt(
 static bool dnssd_pump(DNSServiceRef ref)
 {
     int fd;
-    fd_set rfds;
-    struct timeval tv = {0, 5000};
+    struct pollfd pfd;
 
     fd = DNSServiceRefSockFD(ref);
     if (fd < 0) {
         return false;
     }
 
-    FD_ZERO(&rfds);
-    FD_SET(fd, &rfds);
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
 
-    if (select(fd + 1, &rfds, NULL, NULL, &tv) > 0) {
+    if (poll(&pfd, 1, 5) > 0) {
         const bool ok = DNSServiceProcessResult(ref) == kDNSServiceErr_NoError;
         return ok;
     }
@@ -772,11 +772,8 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
             if (self_err == kDNSServiceErr_NoError) {
                 int self_fd = DNSServiceRefSockFD(self_ref);
                 if (self_fd >= 0) {
-                    struct timeval tv = {0, 500000}; /* 500 ms */
-                    fd_set rfds;
-                    FD_ZERO(&rfds);
-                    FD_SET(self_fd, &rfds);
-                    if (select(self_fd + 1, &rfds, NULL, NULL, &tv) > 0) {
+                    struct pollfd pfd = { .fd = self_fd, .events = POLLIN, .revents = 0 };
+                    if (poll(&pfd, 1, 500) > 0) {
                         DNSServiceProcessResult(self_ref);
                     }
                 }
