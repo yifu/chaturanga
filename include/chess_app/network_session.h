@@ -51,8 +51,6 @@ typedef struct ChessNetworkSession {
     bool connect_attempted;
     bool hello_sent;
     bool hello_received;
-    bool hello_ack_sent;
-    bool hello_ack_received;
     bool hello_completed;
     bool challenge_exchange_completed;
     bool start_sent;

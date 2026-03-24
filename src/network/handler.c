@@ -127,8 +127,6 @@ void chess_net_reset_transport_progress(AppContext *ctx)
     ctx->network_session.connect_attempted = false;
     ctx->network_session.hello_sent = false;
     ctx->network_session.hello_received = false;
-    ctx->network_session.hello_ack_sent = false;
-    ctx->network_session.hello_ack_received = false;
     ctx->network_session.hello_completed = false;
     ctx->network_session.challenge_exchange_completed = false;
     ctx->network_session.start_sent = false;
@@ -433,13 +431,6 @@ static void net_handle_ack_packet(AppContext *ctx, const ChessAckPayload *ack)
         return;
     }
 
-    if (ack->acked_message_type == CHESS_MSG_HELLO &&
-        ack->acked_sequence == 1u &&
-        ack->status_code == 0u) {
-        ctx->network_session.hello_ack_received = true;
-        return;
-    }
-
     if (ctx->network_session.start_sent &&
         !ctx->network_session.start_completed &&
         ack->acked_message_type == CHESS_MSG_START &&
@@ -727,15 +718,10 @@ static void net_advance_hello_handshake(AppContext *ctx)
         SDL_strlcpy(local_hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(local_hello.profile_id));
         local_hello.role = (uint32_t)effective_role;
 
+        /* CLIENT sends HELLO first; SERVER replies after receiving. */
         if (effective_role == CHESS_ROLE_CLIENT && !ctx->network_session.hello_sent) {
             if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
                 ctx->network_session.hello_sent = true;
-            }
-        }
-
-        if (effective_role == CHESS_ROLE_CLIENT && ctx->network_session.hello_received && !ctx->network_session.hello_ack_sent) {
-            if (chess_tcp_send_ack(&ctx->connection, CHESS_MSG_HELLO, 1u, 0u)) {
-                ctx->network_session.hello_ack_sent = true;
             }
         }
 
@@ -745,18 +731,11 @@ static void net_advance_hello_handshake(AppContext *ctx)
             }
         }
 
-        if (effective_role == CHESS_ROLE_CLIENT &&
-            ctx->network_session.hello_sent &&
-            ctx->network_session.hello_received &&
-            ctx->network_session.hello_ack_sent) {
+        /* Both sides complete once they have sent AND received. */
+        if (ctx->network_session.hello_sent && ctx->network_session.hello_received) {
             ctx->network_session.hello_completed = true;
-            SDL_Log("NET: HELLO handshake completed (client)");
-        } else if (effective_role == CHESS_ROLE_SERVER &&
-                   ctx->network_session.hello_received &&
-                   ctx->network_session.hello_sent &&
-                   ctx->network_session.hello_ack_received) {
-            ctx->network_session.hello_completed = true;
-            SDL_Log("NET: HELLO handshake completed (server)");
+            SDL_Log("NET: HELLO handshake completed (%s)",
+                    effective_role == CHESS_ROLE_SERVER ? "server" : "client");
         }
     }
 }
