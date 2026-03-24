@@ -146,7 +146,7 @@ static bool net_receive_next_packet(AppContext *ctx, ChessPacketHeader *header, 
         return false;
     }
 
-    if (!chess_tcp_recv_packet_header(&ctx->connection, 1, header)) {
+    if (!chess_tcp_recv_packet_header(&ctx->connection, 50, header)) {
         SDL_Log("NET: failed to read packet header, closing connection");
         app_handle_peer_disconnect(ctx, "failed to read packet header");
         return false;
@@ -158,8 +158,9 @@ static bool net_receive_next_packet(AppContext *ctx, ChessPacketHeader *header, 
         return false;
     }
 
-    if (header->payload_size > 0u && !chess_tcp_recv_payload(&ctx->connection, 1, payload, header->payload_size)) {
-        SDL_Log("NET: failed to read packet payload, closing connection");
+    if (header->payload_size > 0u && !chess_tcp_recv_payload(&ctx->connection, 50, payload, header->payload_size)) {
+        SDL_Log("NET: failed to read packet payload (type=%u size=%u), closing connection",
+                (unsigned)header->message_type, (unsigned)header->payload_size);
         app_handle_peer_disconnect(ctx, "failed to read packet payload");
         return false;
     }

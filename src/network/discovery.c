@@ -333,7 +333,9 @@ typedef struct {
     AvahiEntryGroup     *group;
     AvahiServiceBrowser *browser;
     bool                 pending_peer_ready;
+    bool                 resolving;          /* resolver in flight */
     ChessDiscoveredPeer  pending_peer;
+    char                 resolving_uuid[CHESS_UUID_STRING_LEN];
 } ChessAvahiContext;
 
 static uint32_t avahi_resolve_local_ip(void)
@@ -506,13 +508,19 @@ static void avahi_browse_callback(
             break;
         }
 
+        /* Skip if already resolved/resolving this peer or a result is pending */
         if (avahi->pending_peer_ready) {
-            SDL_Log("Avahi: peer already found, skipping '%s'", name);
+            break;
+        }
+        if (avahi->resolving &&
+            SDL_strncmp(avahi->resolving_uuid, name, CHESS_UUID_STRING_LEN) == 0) {
             break;
         }
 
         SDL_Log("Avahi: found peer service '%s', resolving...", name);
         memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
+        SDL_strlcpy(avahi->resolving_uuid, name, sizeof(avahi->resolving_uuid));
+        avahi->resolving = true;
 
         if (!avahi_service_resolver_new(
                 avahi->client, interface, protocol,
@@ -521,6 +529,7 @@ static void avahi_browse_callback(
                 avahi_resolver_callback, ctx)) {
             SDL_Log("Avahi: failed to create resolver: %s",
                     avahi_strerror(avahi_client_errno(avahi->client)));
+            avahi->resolving = false;
         }
         break;
 
