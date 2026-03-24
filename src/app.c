@@ -304,19 +304,15 @@ void app_return_to_lobby(AppLoopContext *ctx)
     chess_net_reset_transport_progress(ctx);
     chess_persist_clear_client_resume_state(ctx);
 
-    ctx->network_session.game_started = false;
-    ctx->network_session.peer_available = false;
-    ctx->network_session.role = CHESS_ROLE_UNKNOWN;
-    ctx->network_session.start_completed = false;
-    ctx->network_session.start_failures = 0u;
-    ctx->network_session.draw_offer_pending = false;
-    ctx->network_session.draw_offer_received = false;
-    memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
-    chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
-
     memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
     memset(&ctx->discovered_peer, 0, sizeof(ctx->discovered_peer));
-    ctx->discovery.remote_emitted = false;
+
+    /* Restart mDNS: de-register stale service + re-advertise on same port */
+    chess_discovery_stop(&ctx->discovery);
+    chess_discovery_start(&ctx->discovery, &ctx->local_peer, ctx->listener.port);
+
+    /* Full session reset (phase, flags, role, draw state, etc.) */
+    chess_network_session_init(&ctx->network_session, &ctx->local_peer);
 
     ctx->drag_active = false;
     ctx->drag_piece = CHESS_PIECE_EMPTY;
