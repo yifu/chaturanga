@@ -260,17 +260,33 @@ const char *lobby_state_suffix(ChessChallengeState state)
 void init_piece_textures(SDL_Renderer *renderer)
 {
     static const char * const chess_font_paths[] = {
+        /* macOS */
         "/Library/Fonts/Arial Unicode.ttf",
         "/System/Library/Fonts/Apple Symbols.ttf",
+        /* Linux */
+        "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
+        "/usr/local/share/fonts/FreeSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
         NULL
     };
     static const char * const coord_font_paths[] = {
+        /* macOS */
         "/System/Library/Fonts/Supplemental/Arial.ttf",
         "/Library/Fonts/Arial Unicode.ttf",
         "/System/Library/Fonts/Apple Symbols.ttf",
+        /* Linux */
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/local/share/fonts/FreeSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
         NULL
     };
     static const char * const lobby_icon_font_paths[] = {
+        /* macOS */
         "/System/Library/Fonts/Supplemental/STIXTwoMath.otf",
         "/System/Library/Fonts/Apple Color Emoji.ttc",
         "/System/Library/Fonts/Apple Symbols.ttf",
@@ -279,6 +295,13 @@ void init_piece_textures(SDL_Renderer *renderer)
         "/Library/Fonts/Arial Unicode.ttf",
         "/Library/Fonts/NotoSansSymbols2-Regular.ttf",
         "/System/Library/Fonts/Supplemental/NotoSansSymbols2-Regular.ttf",
+        /* Linux */
+        "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/local/share/fonts/FreeSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/opentype/urw-base35/StandardSymbolsPS.otf",
         NULL
     };
     static const Uint32 piece_codepoints[CHESS_PIECE_COUNT] = {
