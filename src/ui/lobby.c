@@ -91,9 +91,9 @@ void chess_lobby_render(
                 name_tex = make_text_texture(renderer, font, peer_state->peer.username, text_color);
                 host_tex = make_text_texture(renderer, font, host_label, host_color);
             } else {
-                char uuid_label[16];
-                SDL_snprintf(uuid_label, sizeof(uuid_label), "%.8s...", peer_state->peer.uuid);
-                name_tex = make_text_texture(renderer, font, uuid_label, text_color);
+                char id_label[16];
+                SDL_snprintf(id_label, sizeof(id_label), "%.8s...", peer_state->peer.profile_id);
+                name_tex = make_text_texture(renderer, font, id_label, text_color);
             }
 
             status_tex = make_text_texture(renderer, font, challenge_icon, text_color);

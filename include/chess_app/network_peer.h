@@ -11,8 +11,6 @@
 #define CHESS_PEER_HOSTNAME_MAX_LEN 64
 
 typedef struct ChessPeerInfo {
-    uint32_t ipv4_host_order;
-    char uuid[CHESS_UUID_STRING_LEN];
     char profile_id[CHESS_PROFILE_ID_STRING_LEN];
     char username[CHESS_PEER_USERNAME_MAX_LEN];
     char hostname[CHESS_PEER_HOSTNAME_MAX_LEN];
@@ -28,6 +26,5 @@ bool chess_parse_ipv4(const char *ip_str, uint32_t *out_ipv4_host_order);
 bool chess_generate_peer_uuid(char *out_uuid, size_t out_uuid_size);
 void chess_peer_set_identity_tokens(ChessPeerInfo *peer, const char *username, const char *hostname);
 bool chess_peer_init_local_identity(ChessPeerInfo *peer);
-ChessRole chess_elect_role(const ChessPeerInfo *local_peer, const ChessPeerInfo *remote_peer);
 
 #endif

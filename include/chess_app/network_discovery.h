@@ -10,12 +10,14 @@ typedef struct ChessDiscoveryContext {
     bool started;
     bool remote_emitted;
     uint16_t game_port;
+    uint32_t local_ipv4;            /* LAN IP (host order), for loopback substitution */
     ChessPeerInfo local_peer;
     void *platform; /* platform-specific discovery backend data (heap-allocated) */
 } ChessDiscoveryContext;
 
 typedef struct ChessDiscoveredPeer {
     ChessPeerInfo peer;
+    uint32_t tcp_ipv4;              /* remote IP (host order) for TCP connect   */
     uint16_t tcp_port;
 } ChessDiscoveredPeer;
 

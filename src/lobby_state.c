@@ -17,6 +17,7 @@ void chess_lobby_init(ChessLobbyState *lobby)
 void chess_lobby_add_or_update_peer(
     ChessLobbyState *lobby,
     const ChessPeerInfo *peer,
+    uint32_t tcp_ipv4,
     uint16_t tcp_port)
 {
     int idx = -1;
@@ -28,7 +29,7 @@ void chess_lobby_add_or_update_peer(
 
     /* Find existing peer by UUID */
     for (i = 0; i < lobby->discovered_peer_count; ++i) {
-        if (SDL_strcmp(lobby->discovered_peers[i].peer.uuid, peer->uuid) == 0) {
+        if (SDL_strcmp(lobby->discovered_peers[i].peer.profile_id, peer->profile_id) == 0) {
             idx = i;
             break;
         }
@@ -47,13 +48,14 @@ void chess_lobby_add_or_update_peer(
 
     /* Update peer info */
     lobby->discovered_peers[idx].peer = *peer;
+    lobby->discovered_peers[idx].tcp_ipv4 = tcp_ipv4;
     lobby->discovered_peers[idx].tcp_port = tcp_port;
     lobby->discovered_peers[idx].discovered_at_ms = SDL_GetTicks();
 
     /* Preserve existing challenge state if updating */
     if (idx >= 0) {
         if (lobby->discovered_peers[idx].challenge_state == CHESS_CHALLENGE_NONE &&
-            SDL_strcmp(lobby->discovered_peers[idx].peer.uuid, peer->uuid) == 0) {
+            SDL_strcmp(lobby->discovered_peers[idx].peer.profile_id, peer->profile_id) == 0) {
             /* Already set, don't override */
         }
     }
@@ -71,7 +73,7 @@ bool chess_lobby_find_peer(
     }
 
     for (i = 0; i < lobby->discovered_peer_count; ++i) {
-        if (SDL_strcmp(lobby->discovered_peers[i].peer.uuid, peer->uuid) == 0) {
+        if (SDL_strcmp(lobby->discovered_peers[i].peer.profile_id, peer->profile_id) == 0) {
             *out_idx = i;
             return true;
         }
@@ -127,18 +129,18 @@ bool chess_lobby_has_offer_been_sent(
     return lobby->discovered_peers[peer_idx].offer_sent;
 }
 
-bool chess_lobby_remove_peer_by_uuid(ChessLobbyState *lobby, const char *uuid)
+bool chess_lobby_remove_peer_by_profile_id(ChessLobbyState *lobby, const char *profile_id)
 {
     int idx;
     int i;
 
-    if (!lobby || !uuid || uuid[0] == '\0') {
+    if (!lobby || !profile_id || profile_id[0] == '\0') {
         return false;
     }
 
     idx = -1;
     for (i = 0; i < lobby->discovered_peer_count; ++i) {
-        if (SDL_strcmp(lobby->discovered_peers[i].peer.uuid, uuid) == 0) {
+        if (SDL_strcmp(lobby->discovered_peers[i].peer.profile_id, profile_id) == 0) {
             idx = i;
             break;
         }

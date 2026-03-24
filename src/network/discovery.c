@@ -30,7 +30,7 @@ typedef struct {
     bool          resolve_done;       /* set by resolve_callback, consumed in poll */
     bool          pending_peer_ready;
     ChessDiscoveredPeer pending_peer;
-    char          resolving_uuid[CHESS_UUID_STRING_LEN];
+    char          resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN];
 } ChessDnssdContext;
 
 static void txt_copy_to_buffer(
@@ -141,7 +141,7 @@ static void self_addr_callback(
         const struct sockaddr_in *sin = (const struct sockaddr_in *)address;
         uint32_t ip = ntohl(sin->sin_addr.s_addr);
         if ((ip >> 24) != 127) { /* ignore loopback, keep LAN IP */
-            ctx->local_peer.ipv4_host_order = ip;
+            ctx->local_ipv4 = ip;
         }
     }
 
@@ -172,18 +172,17 @@ static void addr_callback(
     const struct sockaddr_in *sin = (const struct sockaddr_in *)address;
     uint32_t resolved_ip = ntohl(sin->sin_addr.s_addr);
 
-    /* If DNS-SD resolved to loopback the remote service is on the same machine.
-     * Substitute with our own LAN IP so both sides compare equal and the UUID
-     * tiebreaker decides the role (instead of both becoming CLIENT). */
+    /* If DNS-SD resolved to loopback the remote service is on the same machine,
+     * substitute with our own LAN IP so both peers see the same address. */
     if ((resolved_ip >> 24) == 127) {
-        resolved_ip = ctx->local_peer.ipv4_host_order;
+        resolved_ip = ctx->local_ipv4;
     }
-    dnssd->pending_peer.peer.ipv4_host_order = resolved_ip;
-    SDL_strlcpy(dnssd->pending_peer.peer.uuid, dnssd->resolving_uuid,
-                sizeof(dnssd->pending_peer.peer.uuid));
+    dnssd->pending_peer.tcp_ipv4 = resolved_ip;
+    SDL_strlcpy(dnssd->pending_peer.peer.profile_id, dnssd->resolving_profile_id,
+                sizeof(dnssd->pending_peer.peer.profile_id));
     dnssd->pending_peer_ready = true;
-    SDL_Log("DNS-SD: peer ready — uuid=%s port=%u",
-            dnssd->resolving_uuid, (unsigned)dnssd->pending_peer.tcp_port);
+    SDL_Log("DNS-SD: peer ready — profile_id=%s port=%u",
+            dnssd->resolving_profile_id, (unsigned)dnssd->pending_peer.tcp_port);
 }
 
 static void resolve_callback(
@@ -255,7 +254,7 @@ static void browse_callback(
 
     /* Skip our own advertisement — use exact match so a Bonjour-renamed
      * duplicate like "<uuid> (2)" is not mistakenly filtered. */
-    if (SDL_strcmp(service_name, ctx->local_peer.uuid) == 0) {
+    if (SDL_strcmp(service_name, ctx->local_peer.profile_id) == 0) {
         SDL_Log("DNS-SD: skipping own service");
         return;
     }
@@ -268,9 +267,9 @@ static void browse_callback(
 
     SDL_Log("DNS-SD: found peer service '%s', resolving...", service_name);
     memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
-    SDL_strlcpy(dnssd->pending_peer.peer.uuid, service_name,
-                sizeof(dnssd->pending_peer.peer.uuid));
-    SDL_strlcpy(dnssd->resolving_uuid, service_name, sizeof(dnssd->resolving_uuid));
+    SDL_strlcpy(dnssd->pending_peer.peer.profile_id, service_name,
+                sizeof(dnssd->pending_peer.peer.profile_id));
+    SDL_strlcpy(dnssd->resolving_profile_id, service_name, sizeof(dnssd->resolving_profile_id));
 
     err = DNSServiceResolve(
         &dnssd->resolve_ref,
@@ -335,7 +334,7 @@ typedef struct {
     bool                 pending_peer_ready;
     bool                 resolving;          /* resolver in flight */
     ChessDiscoveredPeer  pending_peer;
-    char                 resolving_uuid[CHESS_UUID_STRING_LEN];
+    char                 resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN];
 } ChessAvahiContext;
 
 static uint32_t avahi_resolve_local_ip(void)
@@ -462,18 +461,18 @@ static void avahi_resolver_callback(
 
             /* Loopback substitution — same logic as DNS-SD backend */
             if ((resolved_ip >> 24) == 127) {
-                resolved_ip = ctx->local_peer.ipv4_host_order;
+                resolved_ip = ctx->local_ipv4;
             }
 
-            avahi->pending_peer.peer.ipv4_host_order = resolved_ip;
-            SDL_strlcpy(avahi->pending_peer.peer.uuid, name,
-                        sizeof(avahi->pending_peer.peer.uuid));
+            avahi->pending_peer.tcp_ipv4 = resolved_ip;
+            SDL_strlcpy(avahi->pending_peer.peer.profile_id, name,
+                        sizeof(avahi->pending_peer.peer.profile_id));
             avahi->pending_peer.tcp_port = port;
 
             avahi_fill_peer_identity_from_txt(&avahi->pending_peer.peer, txt);
             avahi->pending_peer_ready = true;
 
-            SDL_Log("Avahi: peer ready — uuid=%s port=%u",
+            SDL_Log("Avahi: peer ready — profile_id=%s port=%u",
                     name, (unsigned)port);
         }
     } else {
@@ -503,7 +502,7 @@ static void avahi_browse_callback(
     switch (event) {
     case AVAHI_BROWSER_NEW:
         /* Skip our own advertisement */
-        if (SDL_strcmp(name, ctx->local_peer.uuid) == 0) {
+        if (SDL_strcmp(name, ctx->local_peer.profile_id) == 0) {
             SDL_Log("Avahi: skipping own service");
             break;
         }
@@ -513,13 +512,13 @@ static void avahi_browse_callback(
             break;
         }
         if (avahi->resolving &&
-            SDL_strncmp(avahi->resolving_uuid, name, CHESS_UUID_STRING_LEN) == 0) {
+            SDL_strncmp(avahi->resolving_profile_id, name, CHESS_PROFILE_ID_STRING_LEN) == 0) {
             break;
         }
 
         SDL_Log("Avahi: found peer service '%s', resolving...", name);
         memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
-        SDL_strlcpy(avahi->resolving_uuid, name, sizeof(avahi->resolving_uuid));
+        SDL_strlcpy(avahi->resolving_profile_id, name, sizeof(avahi->resolving_profile_id));
         avahi->resolving = true;
 
         if (!avahi_service_resolver_new(
@@ -626,15 +625,14 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
         {
             uint32_t local_ip = avahi_resolve_local_ip();
             if (local_ip != 0) {
-                ctx->local_peer.ipv4_host_order = local_ip;
-                local_peer->ipv4_host_order = local_ip;
+                ctx->local_ipv4 = local_ip;
                 SDL_Log("Avahi: local IP resolved to %u.%u.%u.%u",
                         (local_ip >> 24) & 0xffu,
                         (local_ip >> 16) & 0xffu,
                         (local_ip >>  8) & 0xffu,
                          local_ip        & 0xffu);
             } else {
-                SDL_Log("Avahi: could not resolve local IP, election will use UUID only");
+                SDL_Log("Avahi: could not resolve local IP");
             }
         }
 
@@ -684,7 +682,7 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
             AVAHI_IF_UNSPEC,
             AVAHI_PROTO_INET,
             0,
-            ctx->local_peer.uuid,
+            ctx->local_peer.profile_id,
             CHESS_AVAHI_SERVICE_TYPE,
             NULL, NULL,
             ctx->game_port,
@@ -780,15 +778,14 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
                 DNSServiceRefDeallocate(self_ref);
             }
 
-            if (ctx->local_peer.ipv4_host_order != 0) {
-                local_peer->ipv4_host_order = ctx->local_peer.ipv4_host_order;
+            if (ctx->local_ipv4 != 0) {
                 SDL_Log("DNS-SD: local IP resolved to %u.%u.%u.%u",
-                        (ctx->local_peer.ipv4_host_order >> 24) & 0xffu,
-                        (ctx->local_peer.ipv4_host_order >> 16) & 0xffu,
-                        (ctx->local_peer.ipv4_host_order >>  8) & 0xffu,
-                         ctx->local_peer.ipv4_host_order        & 0xffu);
+                        (ctx->local_ipv4 >> 24) & 0xffu,
+                        (ctx->local_ipv4 >> 16) & 0xffu,
+                        (ctx->local_ipv4 >>  8) & 0xffu,
+                         ctx->local_ipv4        & 0xffu);
             } else {
-                SDL_Log("DNS-SD: could not resolve local IP, election will use UUID only");
+                SDL_Log("DNS-SD: could not resolve local IP");
             }
         }
 
@@ -809,7 +806,7 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
         err = DNSServiceRegister(
             &dnssd->register_ref,
             0, 0,
-            ctx->local_peer.uuid,
+            ctx->local_peer.profile_id,
             CHESS_DNSSD_SERVICE_TYPE,
             NULL, NULL,
             htons(ctx->game_port),
@@ -945,16 +942,16 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
 #else
     {
         const char *ip       = getenv("CHESS_REMOTE_IP");
-        const char *uuid     = getenv("CHESS_REMOTE_UUID");
+        const char *profile  = getenv("CHESS_REMOTE_PROFILE_ID");
         const char *port_str = getenv("CHESS_REMOTE_PORT");
         char *endptr     = NULL;
         long  parsed_port = 0;
 
-        if (!ip || !uuid || !port_str) {
+        if (!ip || !profile || !port_str) {
             return false;
         }
 
-        if (!chess_parse_ipv4(ip, &out_remote_peer->peer.ipv4_host_order)) {
+        if (!chess_parse_ipv4(ip, &out_remote_peer->tcp_ipv4)) {
             SDL_Log("Ignoring CHESS_REMOTE_IP: invalid IPv4 '%s'", ip);
             return false;
         }
@@ -966,11 +963,11 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
             return false;
         }
 
-        SDL_strlcpy(out_remote_peer->peer.uuid, uuid, sizeof(out_remote_peer->peer.uuid));
+        SDL_strlcpy(out_remote_peer->peer.profile_id, profile, sizeof(out_remote_peer->peer.profile_id));
         out_remote_peer->tcp_port = (uint16_t)parsed_port;
 
-        if (SDL_strncmp(out_remote_peer->peer.uuid, ctx->local_peer.uuid, CHESS_UUID_STRING_LEN) == 0) {
-            SDL_Log("Ignoring discovered peer because UUID matches local peer");
+        if (SDL_strncmp(out_remote_peer->peer.profile_id, ctx->local_peer.profile_id, CHESS_PROFILE_ID_STRING_LEN) == 0) {
+            SDL_Log("Ignoring discovered peer because profile_id matches local peer");
             return false;
         }
 

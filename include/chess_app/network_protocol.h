@@ -63,7 +63,7 @@ typedef struct ChessPacketHeader {
 } ChessPacketHeader;
 
 typedef struct ChessHelloPayload {
-    char uuid[CHESS_UUID_STRING_LEN];
+    char profile_id[CHESS_PROFILE_ID_STRING_LEN];
     uint32_t role;
 } ChessHelloPayload;
 
@@ -77,8 +77,8 @@ typedef struct ChessStartPayload {
     uint32_t game_id;
     uint32_t assigned_color;
     uint32_t initial_turn;
-    char white_uuid[CHESS_UUID_STRING_LEN];
-    char black_uuid[CHESS_UUID_STRING_LEN];
+    char white_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    char black_profile_id[CHESS_PROFILE_ID_STRING_LEN];
     char resume_token[CHESS_UUID_STRING_LEN];
 } ChessStartPayload;
 
@@ -118,11 +118,11 @@ typedef struct ChessHeartbeatPayload {
 } ChessHeartbeatPayload;
 
 typedef struct ChessOfferPayload {
-    char challenger_uuid[CHESS_UUID_STRING_LEN];
+    char challenger_profile_id[CHESS_PROFILE_ID_STRING_LEN];
 } ChessOfferPayload;
 
 typedef struct ChessAcceptPayload {
-    char acceptor_uuid[CHESS_UUID_STRING_LEN];
+    char acceptor_profile_id[CHESS_PROFILE_ID_STRING_LEN];
 } ChessAcceptPayload;
 
 #endif

@@ -17,6 +17,7 @@ typedef enum ChessChallengeState {
 
 typedef struct ChessDiscoveredPeerState {
     ChessPeerInfo peer;
+    uint32_t tcp_ipv4;              /* remote IP (host order) for TCP connect   */
     uint16_t tcp_port;
     ChessChallengeState challenge_state;
     uint64_t discovered_at_ms;
@@ -33,6 +34,7 @@ void chess_lobby_init(ChessLobbyState *lobby);
 void chess_lobby_add_or_update_peer(
     ChessLobbyState *lobby,
     const ChessPeerInfo *peer,
+    uint32_t tcp_ipv4,
     uint16_t tcp_port
 );
 bool chess_lobby_find_peer(
@@ -54,6 +56,6 @@ bool chess_lobby_has_offer_been_sent(
     const ChessLobbyState *lobby,
     int peer_idx
 );
-bool chess_lobby_remove_peer_by_uuid(ChessLobbyState *lobby, const char *uuid);
+bool chess_lobby_remove_peer_by_profile_id(ChessLobbyState *lobby, const char *profile_id);
 
 #endif

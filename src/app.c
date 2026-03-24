@@ -36,8 +36,8 @@ static bool init_local_peer(ChessPeerInfo *local_peer)
         return false;
     }
 
-        SDL_Log("NET: local peer initialized (uuid=%s display=%s@%s)",
-            local_peer->uuid,
+        SDL_Log("NET: local peer initialized (profile_id=%s display=%s@%s)",
+            local_peer->profile_id,
             local_peer->username,
             local_peer->hostname);
     return true;
@@ -209,7 +209,7 @@ static void app_clear_challenges(AppLoopContext *ctx)
 
 void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
 {
-    char remote_uuid[CHESS_UUID_STRING_LEN];
+    char remote_profile_id[CHESS_PROFILE_ID_STRING_LEN];
     bool was_in_game;
     uint32_t last_game_id = 0u;
     char last_resume_token[CHESS_UUID_STRING_LEN] = {0};
@@ -223,7 +223,7 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
         last_game_id = ctx->network_session.game_id;
         SDL_strlcpy(last_resume_token, ctx->pending_start_payload.resume_token, sizeof(last_resume_token));
     }
-    SDL_strlcpy(remote_uuid, ctx->network_session.remote_peer.uuid, sizeof(remote_uuid));
+    SDL_strlcpy(remote_profile_id, ctx->network_session.remote_peer.profile_id, sizeof(remote_profile_id));
 
     if (reason && reason[0] != '\0') {
         SDL_Log("NET: peer disconnected (%s)", reason);
@@ -261,7 +261,7 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
     chess_game_clear_selection(&ctx->game_state);
     ctx->move_history_count = 0;
-    (void)chess_lobby_remove_peer_by_uuid(&ctx->lobby, remote_uuid);
+    (void)chess_lobby_remove_peer_by_profile_id(&ctx->lobby, remote_profile_id);
     app_clear_challenges(ctx);
 
     if (was_in_game) {
@@ -333,7 +333,7 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
     if (chess_discovery_poll(&ctx->discovery, &ctx->discovered_peer)) {
         bool should_select_peer = false;
 
-        chess_lobby_add_or_update_peer(&ctx->lobby, &ctx->discovered_peer.peer, ctx->discovered_peer.tcp_port);
+        chess_lobby_add_or_update_peer(&ctx->lobby, &ctx->discovered_peer.peer, ctx->discovered_peer.tcp_ipv4, ctx->discovered_peer.tcp_port);
 
         if (has_resume_target) {
             should_select_peer = SDL_strncmp(
@@ -344,10 +344,10 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
             /* Also re-select the same peer so mDNS-resolved attributes
              * (IP, hostname, profile) update an early HELLO-only peer. */
             should_select_peer = !ctx->network_session.peer_available ||
-                (ctx->network_session.remote_peer.uuid[0] != '\0' &&
-                 SDL_strncmp(ctx->network_session.remote_peer.uuid,
-                             ctx->discovered_peer.peer.uuid,
-                             CHESS_UUID_STRING_LEN) == 0);
+                (ctx->network_session.remote_peer.profile_id[0] != '\0' &&
+                 SDL_strncmp(ctx->network_session.remote_peer.profile_id,
+                             ctx->discovered_peer.peer.profile_id,
+                             CHESS_PROFILE_ID_STRING_LEN) == 0);
         }
 
         if (should_select_peer) {
@@ -360,8 +360,7 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
             chess_network_session_set_remote(&ctx->network_session, &ctx->discovered_peer.peer);
             if (has_resume_target) {
                 SDL_Log(
-                    "LOBBY: matched persisted resume peer %.8s... (profile %.8s...)",
-                    ctx->discovered_peer.peer.uuid,
+                    "LOBBY: matched persisted resume peer %.8s...",
                     ctx->discovered_peer.peer.profile_id);
                 app_set_status_message(ctx, "Adversaire retrouve, tentative de reprise...", 3000u);
             }
@@ -369,7 +368,7 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
 
         SDL_Log(
             "LOBBY: discovered peer %.8s... (port=%u)",
-            ctx->discovered_peer.peer.uuid,
+            ctx->discovered_peer.peer.profile_id,
             (unsigned int)ctx->discovered_peer.tcp_port
         );
     }

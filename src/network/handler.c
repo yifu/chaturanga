@@ -34,7 +34,7 @@ static ChessPlayerColor opposite_color(ChessPlayerColor color)
 static uint32_t make_game_id(const ChessPeerInfo *local_peer, const ChessPeerInfo *remote_peer)
 {
     uint32_t hash = 2166136261u;
-    const char *uuids[2] = { NULL, NULL };
+    const char *ids[2] = { NULL, NULL };
     int i = 0;
     int j = 0;
 
@@ -42,14 +42,14 @@ static uint32_t make_game_id(const ChessPeerInfo *local_peer, const ChessPeerInf
         return 0u;
     }
 
-    uuids[0] = (SDL_strncmp(local_peer->uuid, remote_peer->uuid, CHESS_UUID_STRING_LEN) <= 0)
-        ? local_peer->uuid
-        : remote_peer->uuid;
-    uuids[1] = (uuids[0] == local_peer->uuid) ? remote_peer->uuid : local_peer->uuid;
+    ids[0] = (SDL_strncmp(local_peer->profile_id, remote_peer->profile_id, CHESS_PROFILE_ID_STRING_LEN) <= 0)
+        ? local_peer->profile_id
+        : remote_peer->profile_id;
+    ids[1] = (ids[0] == local_peer->profile_id) ? remote_peer->profile_id : local_peer->profile_id;
 
     for (i = 0; i < 2; ++i) {
-        for (j = 0; uuids[i][j] != '\0'; ++j) {
-            hash ^= (uint8_t)uuids[i][j];
+        for (j = 0; ids[i][j] != '\0'; ++j) {
+            hash ^= (uint8_t)ids[i][j];
             hash *= 16777619u;
         }
     }
@@ -180,14 +180,14 @@ static void net_handle_hello_packet(AppContext *ctx, const ChessHelloPayload *he
     /* When the connection was accepted before mDNS discovery,
      * register minimal identity so that the later set_remote()
      * from mDNS sees same_remote == true and does not reset. */
-    if (!ctx->network_session.peer_available && hello->uuid[0] != '\0') {
+    if (!ctx->network_session.peer_available && hello->profile_id[0] != '\0') {
         memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
-        SDL_strlcpy(ctx->network_session.remote_peer.uuid, hello->uuid,
-                     sizeof(ctx->network_session.remote_peer.uuid));
+        SDL_strlcpy(ctx->network_session.remote_peer.profile_id, hello->profile_id,
+                     sizeof(ctx->network_session.remote_peer.profile_id));
         ctx->network_session.peer_available = true;
     }
 
-    SDL_Log("NET: received HELLO from remote peer (%.8s...)", hello->uuid);
+    SDL_Log("NET: received HELLO from remote peer (%.8s...)", hello->profile_id);
 }
 
 static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *offer)
@@ -199,10 +199,10 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
         return;
     }
 
-    SDL_Log("NET: received OFFER from remote peer (%.8s...)", offer->challenger_uuid);
+    SDL_Log("NET: received OFFER from remote peer (%.8s...)", offer->challenger_profile_id);
 
     for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
-        if (SDL_strncmp(ctx->lobby.discovered_peers[i].peer.uuid, offer->challenger_uuid, CHESS_UUID_STRING_LEN) == 0) {
+        if (SDL_strncmp(ctx->lobby.discovered_peers[i].peer.profile_id, offer->challenger_profile_id, CHESS_PROFILE_ID_STRING_LEN) == 0) {
             peer_idx = i;
             break;
         }
@@ -210,15 +210,25 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
 
     if (peer_idx >= 0) {
         /* B2 fix: if we already sent an OFFER to this peer (cross-offer),
-         * auto-accept instead of overwriting with INCOMING_PENDING. */
+         * auto-accept instead of overwriting with INCOMING_PENDING.
+         * Tiebreak: smaller profile_id => SERVER. */
         if (chess_lobby_get_challenge_state(&ctx->lobby, peer_idx) == CHESS_CHALLENGE_OUTGOING_PENDING) {
             ChessAcceptPayload accept;
             memset(&accept, 0, sizeof(accept));
-            SDL_strlcpy(accept.acceptor_uuid, ctx->network_session.local_peer.uuid, sizeof(accept.acceptor_uuid));
+            SDL_strlcpy(accept.acceptor_profile_id, ctx->network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
             if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
                 ctx->challenge_exchange_completed = true;
+                if (strncmp(ctx->network_session.local_peer.profile_id,
+                            offer->challenger_profile_id,
+                            CHESS_PROFILE_ID_STRING_LEN) < 0) {
+                    ctx->network_session.role = CHESS_ROLE_SERVER;
+                } else {
+                    ctx->network_session.role = CHESS_ROLE_CLIENT;
+                }
                 chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
-                SDL_Log("NET: cross-offer detected, auto-accepted (%.8s...)", offer->challenger_uuid);
+                SDL_Log("NET: cross-offer detected, auto-accepted (%.8s...) role=%s",
+                        offer->challenger_profile_id,
+                        ctx->network_session.role == CHESS_ROLE_SERVER ? "SERVER" : "CLIENT");
             } else {
                 chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_INCOMING_PENDING);
             }
@@ -238,12 +248,12 @@ static void net_handle_accept_packet(AppContext *ctx, const ChessAcceptPayload *
         return;
     }
 
-    /* B3 fix: lookup by acceptor UUID first, fall back to selected_peer_idx. */
+    /* B3 fix: lookup by acceptor profile_id first, fall back to selected_peer_idx. */
     for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
         if (SDL_strncmp(
-                ctx->lobby.discovered_peers[i].peer.uuid,
-                accept->acceptor_uuid,
-                CHESS_UUID_STRING_LEN) == 0) {
+                ctx->lobby.discovered_peers[i].peer.profile_id,
+                accept->acceptor_profile_id,
+                CHESS_PROFILE_ID_STRING_LEN) == 0) {
             peer_idx = i;
             break;
         }
@@ -257,7 +267,7 @@ static void net_handle_accept_packet(AppContext *ctx, const ChessAcceptPayload *
         chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
     }
 
-    SDL_Log("NET: received ACCEPT from remote peer (%.8s...)", accept->acceptor_uuid);
+    SDL_Log("NET: received ACCEPT from remote peer (%.8s...)", accept->acceptor_profile_id);
     SDL_Log("NET: challenge exchange completed (remote accept), waiting START/ACK");
 }
 
@@ -317,6 +327,13 @@ static void net_handle_resume_request_packet(AppContext *ctx, const ChessResumeR
         return;
     }
 
+    /* If the START/ACK exchange already completed, ignore late resume
+     * requests — the game is in progress and resetting would break it. */
+    if (ctx->start_completed) {
+        SDL_Log("NET: ignoring late resume request (game already started)");
+        return;
+    }
+
     memset(&response, 0, sizeof(response));
     response.game_id = request->game_id;
     response.status = CHESS_RESUME_REJECTED;
@@ -349,13 +366,13 @@ static void net_handle_resume_request_packet(AppContext *ctx, const ChessResumeR
             request->resume_token,
             sizeof(ctx->pending_start_payload.resume_token));
         SDL_strlcpy(
-            ctx->pending_start_payload.white_uuid,
-            requester_is_white ? ctx->network_session.remote_peer.uuid : ctx->network_session.local_peer.uuid,
-            sizeof(ctx->pending_start_payload.white_uuid));
+            ctx->pending_start_payload.white_profile_id,
+            requester_is_white ? ctx->network_session.remote_peer.profile_id : ctx->network_session.local_peer.profile_id,
+            sizeof(ctx->pending_start_payload.white_profile_id));
         SDL_strlcpy(
-            ctx->pending_start_payload.black_uuid,
-            requester_is_white ? ctx->network_session.local_peer.uuid : ctx->network_session.remote_peer.uuid,
-            sizeof(ctx->pending_start_payload.black_uuid));
+            ctx->pending_start_payload.black_profile_id,
+            requester_is_white ? ctx->network_session.local_peer.profile_id : ctx->network_session.remote_peer.profile_id,
+            sizeof(ctx->pending_start_payload.black_profile_id));
         ctx->challenge_exchange_completed = true;
         ctx->start_completed = false;
         ctx->start_sent = false;
@@ -650,15 +667,17 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
         }
 
         if (ctx->network_session.role == CHESS_ROLE_CLIENT && should_attempt_client_connect) {
+            uint32_t remote_ip = ctx->discovered_peer.tcp_ipv4;
             uint16_t remote_port = ctx->discovered_peer.tcp_port;
             if (ctx->lobby.selected_peer_idx >= 0 &&
                 ctx->lobby.selected_peer_idx < ctx->lobby.discovered_peer_count) {
+                remote_ip = ctx->lobby.discovered_peers[ctx->lobby.selected_peer_idx].tcp_ipv4;
                 remote_port = ctx->lobby.discovered_peers[ctx->lobby.selected_peer_idx].tcp_port;
             }
 
             if (ctx->connection.fd < 0 &&
                 chess_tcp_connect_once(
-                    ctx->network_session.remote_peer.ipv4_host_order,
+                    remote_ip,
                     remote_port,
                     200,
                     &ctx->connection
@@ -704,7 +723,7 @@ static void net_advance_hello_handshake(AppContext *ctx)
     {
         ChessHelloPayload local_hello;
         memset(&local_hello, 0, sizeof(local_hello));
-        SDL_strlcpy(local_hello.uuid, ctx->network_session.local_peer.uuid, sizeof(local_hello.uuid));
+        SDL_strlcpy(local_hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(local_hello.profile_id));
         local_hello.role = (uint32_t)effective_role;
 
         if (effective_role == CHESS_ROLE_CLIENT && !ctx->hello_sent) {
@@ -762,7 +781,7 @@ static void net_send_pending_offer_if_needed(AppContext *ctx)
             !chess_lobby_has_offer_been_sent(&ctx->lobby, peer_idx)) {
             ChessOfferPayload offer;
             memset(&offer, 0, sizeof(offer));
-            SDL_strlcpy(offer.challenger_uuid, ctx->network_session.local_peer.uuid, sizeof(offer.challenger_uuid));
+            SDL_strlcpy(offer.challenger_profile_id, ctx->network_session.local_peer.profile_id, sizeof(offer.challenger_profile_id));
             if (chess_tcp_send_offer(&ctx->connection, &offer)) {
                 chess_lobby_mark_offer_sent(&ctx->lobby, peer_idx);
                 SDL_Log("NET: sent OFFER to selected peer");
@@ -801,12 +820,12 @@ static void net_send_start_if_needed(AppContext *ctx)
             const bool server_is_white = (arc4random() % 2u) == 0u;
             if (server_is_white) {
                 ctx->pending_start_payload.assigned_color = CHESS_COLOR_BLACK;
-                SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
-                SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+                SDL_strlcpy(ctx->pending_start_payload.white_profile_id, ctx->network_session.local_peer.profile_id, sizeof(ctx->pending_start_payload.white_profile_id));
+                SDL_strlcpy(ctx->pending_start_payload.black_profile_id, ctx->network_session.remote_peer.profile_id, sizeof(ctx->pending_start_payload.black_profile_id));
             } else {
                 ctx->pending_start_payload.assigned_color = CHESS_COLOR_WHITE;
-                SDL_strlcpy(ctx->pending_start_payload.white_uuid, ctx->network_session.remote_peer.uuid, sizeof(ctx->pending_start_payload.white_uuid));
-                SDL_strlcpy(ctx->pending_start_payload.black_uuid, ctx->network_session.local_peer.uuid, sizeof(ctx->pending_start_payload.black_uuid));
+                SDL_strlcpy(ctx->pending_start_payload.white_profile_id, ctx->network_session.remote_peer.profile_id, sizeof(ctx->pending_start_payload.white_profile_id));
+                SDL_strlcpy(ctx->pending_start_payload.black_profile_id, ctx->network_session.local_peer.profile_id, sizeof(ctx->pending_start_payload.black_profile_id));
             }
             SDL_Log("NET: color assignment - server=%s, client=%s",
                 server_is_white ? "WHITE" : "BLACK",
@@ -834,6 +853,7 @@ static void net_send_resume_request_if_needed(AppContext *ctx)
         !ctx->hello_completed ||
         ctx->connection.fd < 0 ||
         ctx->resume_request_sent ||
+        ctx->start_completed ||
         ctx->pending_start_payload.game_id == 0u ||
         ctx->pending_start_payload.resume_token[0] == '\0') {
         return;

@@ -186,14 +186,14 @@ static void test_network_session_flow(void)
 
     memset(&local, 0, sizeof(local));
     memset(&remote, 0, sizeof(remote));
-    local.ipv4_host_order = 10u;
-    remote.ipv4_host_order = 20u;
-    (void)snprintf(local.uuid, sizeof(local.uuid), "%s", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
-    (void)snprintf(remote.uuid, sizeof(remote.uuid), "%s", "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb");
+    (void)snprintf(local.profile_id, sizeof(local.profile_id), "%s", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
+    (void)snprintf(remote.profile_id, sizeof(remote.profile_id), "%s", "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb");
 
     chess_network_session_init(&session, &local);
     EXPECT_EQ_INT(session.state, CHESS_NET_IDLE_DISCOVERY);
 
+    /* Simulate challenger: set role before set_remote */
+    session.role = CHESS_ROLE_CLIENT;
     chess_network_session_set_remote(&session, &remote);
     EXPECT_EQ_INT(session.state, CHESS_NET_PEER_FOUND);
 
@@ -202,27 +202,11 @@ static void test_network_session_flow(void)
 
     chess_network_session_step(&session);
     EXPECT_EQ_INT(session.state, CHESS_NET_CONNECTING);
-    EXPECT_EQ_INT(session.role, CHESS_ROLE_SERVER);
+    EXPECT_EQ_INT(session.role, CHESS_ROLE_CLIENT);
 
     chess_network_session_set_transport_ready(&session, true);
     chess_network_session_step(&session);
     EXPECT_EQ_INT(session.state, CHESS_NET_IN_GAME);
-}
-
-static void test_role_election_uuid_fallback(void)
-{
-    ChessPeerInfo local;
-    ChessPeerInfo remote;
-
-    memset(&local, 0, sizeof(local));
-    memset(&remote, 0, sizeof(remote));
-    local.ipv4_host_order = 0x7f000001u;
-    remote.ipv4_host_order = 0x7f000001u;
-    (void)snprintf(local.uuid, sizeof(local.uuid), "%s", "11111111-1111-4111-a111-111111111111");
-    (void)snprintf(remote.uuid, sizeof(remote.uuid), "%s", "22222222-2222-4222-a222-222222222222");
-
-    EXPECT_EQ_INT(chess_elect_role(&local, &remote), CHESS_ROLE_SERVER);
-    EXPECT_EQ_INT(chess_elect_role(&remote, &local), CHESS_ROLE_CLIENT);
 }
 
 static void test_persistent_profile_id(void)
@@ -245,8 +229,6 @@ static void test_persistent_profile_id(void)
 
     EXPECT_TRUE(p1.profile_id[0] != '\0');
     EXPECT_EQ_INT(strcmp(p1.profile_id, p2.profile_id), 0);
-    EXPECT_TRUE(p1.uuid[0] != '\0');
-    EXPECT_TRUE(p2.uuid[0] != '\0');
 
     (void)snprintf(profile_file, sizeof(profile_file), "%s/profile.json", dir);
     (void)unlink(profile_file);
@@ -276,12 +258,12 @@ static void test_tcp_packet_flow_basic(void)
 
     memset(&hello_out, 0, sizeof(hello_out));
     memset(&hello_in, 0, sizeof(hello_in));
-    (void)snprintf(hello_out.uuid, sizeof(hello_out.uuid), "%s", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
+    (void)snprintf(hello_out.profile_id, sizeof(hello_out.profile_id), "%s", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
     hello_out.role = CHESS_ROLE_SERVER;
 
     EXPECT_TRUE(chess_tcp_send_hello(&sender, &hello_out));
     EXPECT_TRUE(chess_tcp_recv_hello(&receiver, 100, &hello_in));
-    EXPECT_EQ_INT(strcmp(hello_in.uuid, hello_out.uuid), 0);
+    EXPECT_EQ_INT(strcmp(hello_in.profile_id, hello_out.profile_id), 0);
     EXPECT_EQ_INT((int)hello_in.role, (int)hello_out.role);
 
     EXPECT_TRUE(chess_tcp_send_ack(&receiver, CHESS_MSG_HELLO, 1u, 0u));
@@ -309,7 +291,7 @@ static void test_tcp_packet_flow_basic(void)
     chess_tcp_connection_close(&receiver);
 }
 
-static void test_lobby_remove_peer_by_uuid(void)
+static void test_lobby_remove_peer_by_profile_id(void)
 {
     ChessLobbyState lobby;
     ChessPeerInfo p1;
@@ -318,20 +300,20 @@ static void test_lobby_remove_peer_by_uuid(void)
     chess_lobby_init(&lobby);
     memset(&p1, 0, sizeof(p1));
     memset(&p2, 0, sizeof(p2));
-    (void)snprintf(p1.uuid, sizeof(p1.uuid), "%s", "11111111-1111-4111-a111-111111111111");
-    (void)snprintf(p2.uuid, sizeof(p2.uuid), "%s", "22222222-2222-4222-a222-222222222222");
+    (void)snprintf(p1.profile_id, sizeof(p1.profile_id), "%s", "11111111-1111-4111-a111-111111111111");
+    (void)snprintf(p2.profile_id, sizeof(p2.profile_id), "%s", "22222222-2222-4222-a222-222222222222");
 
-    chess_lobby_add_or_update_peer(&lobby, &p1, 5001u);
-    chess_lobby_add_or_update_peer(&lobby, &p2, 5002u);
+    chess_lobby_add_or_update_peer(&lobby, &p1, 0, 5001u);
+    chess_lobby_add_or_update_peer(&lobby, &p2, 0, 5002u);
     EXPECT_EQ_INT(lobby.discovered_peer_count, 2);
 
     lobby.selected_peer_idx = 1;
-    EXPECT_TRUE(chess_lobby_remove_peer_by_uuid(&lobby, p1.uuid));
+    EXPECT_TRUE(chess_lobby_remove_peer_by_profile_id(&lobby, p1.profile_id));
     EXPECT_EQ_INT(lobby.discovered_peer_count, 1);
-    EXPECT_EQ_INT(strcmp(lobby.discovered_peers[0].peer.uuid, p2.uuid), 0);
+    EXPECT_EQ_INT(strcmp(lobby.discovered_peers[0].peer.profile_id, p2.profile_id), 0);
     EXPECT_EQ_INT(lobby.selected_peer_idx, 0);
 
-    EXPECT_TRUE(!chess_lobby_remove_peer_by_uuid(&lobby, "not-found"));
+    EXPECT_TRUE(!chess_lobby_remove_peer_by_profile_id(&lobby, "not-found"));
 }
 
 int main(void)
@@ -343,10 +325,9 @@ int main(void)
     test_checkmate_outcome();
     test_fifty_move_rule();
     test_network_session_flow();
-    test_role_election_uuid_fallback();
     test_persistent_profile_id();
     test_tcp_packet_flow_basic();
-    test_lobby_remove_peer_by_uuid();
+    test_lobby_remove_peer_by_profile_id();
 
     fprintf(stdout, "Tests passed: %d\n", s_passed);
     if (s_failed > 0) {

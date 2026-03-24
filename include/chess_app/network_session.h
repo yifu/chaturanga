@@ -23,7 +23,6 @@ typedef enum ChessNetworkState {
 
 typedef enum ChessConnectionPhase {
     CHESS_PHASE_IDLE = 0,           /* listening + browsing, lobby visible      */
-    CHESS_PHASE_ELECTING,           /* role election (1 tick, automatic)        */
     CHESS_PHASE_TCP_CONNECTING,     /* TCP connect (client) or accept (server)  */
     CHESS_PHASE_HELLO_HANDSHAKE,    /* HELLO exchange                           */
     CHESS_PHASE_AUTHENTICATED,      /* transport ready, challenge lobby open    */

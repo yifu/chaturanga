@@ -10,7 +10,6 @@ const char *chess_connection_phase_to_string(ChessConnectionPhase phase)
 {
     switch (phase) {
     case CHESS_PHASE_IDLE:               return "IDLE";
-    case CHESS_PHASE_ELECTING:           return "ELECTING";
     case CHESS_PHASE_TCP_CONNECTING:     return "TCP_CONNECTING";
     case CHESS_PHASE_HELLO_HANDSHAKE:    return "HELLO_HANDSHAKE";
     case CHESS_PHASE_AUTHENTICATED:      return "AUTHENTICATED";
@@ -63,7 +62,7 @@ void chess_network_session_set_remote(ChessNetworkSession *session, const ChessP
 
     same_remote =
         session->peer_available &&
-        (strncmp(session->remote_peer.uuid, remote_peer->uuid, CHESS_UUID_STRING_LEN) == 0);
+        (strncmp(session->remote_peer.profile_id, remote_peer->profile_id, CHESS_PROFILE_ID_STRING_LEN) == 0);
 
     session->remote_peer = *remote_peer;
     session->peer_available = true;
@@ -80,7 +79,7 @@ void chess_network_session_set_remote(ChessNetworkSession *session, const ChessP
     session->resume_done = false;
     session->game_started = false;
     session->state = CHESS_NET_PEER_FOUND;
-    chess_network_session_set_phase(session, CHESS_PHASE_ELECTING);
+    chess_network_session_set_phase(session, CHESS_PHASE_TCP_CONNECTING);
 }
 
 void chess_network_session_set_transport_ready(ChessNetworkSession *session, bool transport_ready)
@@ -116,7 +115,6 @@ void chess_network_session_step(ChessNetworkSession *session)
         session->state = CHESS_NET_ELECTION;
         break;
     case CHESS_NET_ELECTION:
-        session->role = chess_elect_role(&session->local_peer, &session->remote_peer);
         session->state = CHESS_NET_CONNECTING;
         break;
     case CHESS_NET_CONNECTING:
@@ -148,11 +146,6 @@ void chess_network_session_step_phase(ChessNetworkSession *session)
     switch (session->phase) {
     case CHESS_PHASE_IDLE:
         /* Wait for peer discovery (set_remote triggers ELECTING). */
-        break;
-
-    case CHESS_PHASE_ELECTING:
-        session->role = chess_elect_role(&session->local_peer, &session->remote_peer);
-        chess_network_session_set_phase(session, CHESS_PHASE_TCP_CONNECTING);
         break;
 
     case CHESS_PHASE_TCP_CONNECTING:
