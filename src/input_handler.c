@@ -397,6 +397,13 @@ void chess_input_handle_events(AppLoopContext *ctx)
         }
 
         if (ctx->connection.fd < 0) {
+            /* Still allow clicking the "Return to Lobby" overlay button */
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+                ChessGameButton btn = chess_ui_game_button_from_mouse(ctx, event.button.x, event.button.y);
+                if (btn == CHESS_GAME_BUTTON_RETURN_LOBBY) {
+                    handle_game_button(ctx, btn);
+                }
+            }
             continue;
         }
 
