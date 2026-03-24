@@ -7,19 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* ── Legacy state enum (kept during migration, will be removed) ────────── */
-
-typedef enum ChessNetworkState {
-    CHESS_NET_IDLE_DISCOVERY = 0,
-    CHESS_NET_PEER_FOUND,
-    CHESS_NET_ELECTION,
-    CHESS_NET_CONNECTING,
-    CHESS_NET_IN_GAME,
-    CHESS_NET_RECONNECTING,
-    CHESS_NET_TERMINATED
-} ChessNetworkState;
-
-/* ── New explicit connection phase (replaces state + 11 ad-hoc booleans) ─ */
+/* ── Connection phase (replaces legacy ChessNetworkState + ad-hoc booleans) ── */
 
 typedef enum ChessConnectionPhase {
     CHESS_PHASE_IDLE = 0,           /* listening + browsing, lobby visible      */
@@ -38,10 +26,7 @@ const char *chess_connection_phase_to_string(ChessConnectionPhase phase);
 /* ── Session structure ─────────────────────────────────────────────────── */
 
 typedef struct ChessNetworkSession {
-    /* Legacy (kept during migration) */
-    ChessNetworkState state;
-
-    /* New phase-based FSM */
+    /* Phase-based FSM */
     ChessConnectionPhase phase;
     uint64_t phase_entered_at_ms;   /* SDL_GetTicks() when phase was entered   */
 
@@ -62,22 +47,27 @@ typedef struct ChessNetworkSession {
     bool resume_done;               /* resume negotiation finished (or skipped) */
     bool game_started;
 
-    /* Legacy flag (kept during migration) */
-    bool transport_ready;
+    /* Handshake progress (moved from AppContext) */
+    bool connect_attempted;
+    bool hello_sent;
+    bool hello_received;
+    bool hello_ack_sent;
+    bool hello_ack_received;
+    bool hello_completed;
+    bool challenge_exchange_completed;
+    bool start_sent;
+    uint64_t start_sent_at_ms;
+    bool start_completed;
+    bool resume_request_sent;
+    bool pending_resume_state_sync;
+    unsigned int start_failures;
 } ChessNetworkSession;
 
 /* ── Session API ───────────────────────────────────────────────────────── */
 
 void chess_network_session_init(ChessNetworkSession *session, const ChessPeerInfo *local_peer);
 void chess_network_session_set_remote(ChessNetworkSession *session, const ChessPeerInfo *remote_peer);
-void chess_network_session_set_transport_ready(ChessNetworkSession *session, bool transport_ready);
 void chess_network_session_start_game(ChessNetworkSession *session, uint32_t game_id, ChessPlayerColor local_color);
-
-/* Legacy step — drives old ChessNetworkState transitions */
-void chess_network_session_step(ChessNetworkSession *session);
-
-/* New phase step — drives ChessConnectionPhase transitions */
-void chess_network_session_step_phase(ChessNetworkSession *session);
 
 /* Phase transition helper (logs + updates phase_entered_at_ms) */
 void chess_network_session_set_phase(ChessNetworkSession *session, ChessConnectionPhase new_phase);

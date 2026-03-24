@@ -44,7 +44,6 @@ void chess_network_session_init(ChessNetworkSession *session, const ChessPeerInf
     }
 
     memset(session, 0, sizeof(*session));
-    session->state = CHESS_NET_IDLE_DISCOVERY;
     session->phase = CHESS_PHASE_IDLE;
     session->phase_entered_at_ms = SDL_GetTicks();
     session->role = CHESS_ROLE_UNKNOWN;
@@ -72,23 +71,12 @@ void chess_network_session_set_remote(ChessNetworkSession *session, const ChessP
         return;
     }
 
-    session->transport_ready = false;
     session->transport_connected = false;
     session->hello_done = false;
     session->challenge_done = false;
     session->resume_done = false;
     session->game_started = false;
-    session->state = CHESS_NET_PEER_FOUND;
     chess_network_session_set_phase(session, CHESS_PHASE_TCP_CONNECTING);
-}
-
-void chess_network_session_set_transport_ready(ChessNetworkSession *session, bool transport_ready)
-{
-    if (!session) {
-        return;
-    }
-
-    session->transport_ready = transport_ready;
 }
 
 void chess_network_session_start_game(ChessNetworkSession *session, uint32_t game_id, ChessPlayerColor local_color)
@@ -102,95 +90,4 @@ void chess_network_session_start_game(ChessNetworkSession *session, uint32_t gam
     session->game_started = true;
 }
 
-void chess_network_session_step(ChessNetworkSession *session)
-{
-    if (!session) {
-        return;
-    }
 
-    switch (session->state) {
-    case CHESS_NET_IDLE_DISCOVERY:
-        break;
-    case CHESS_NET_PEER_FOUND:
-        session->state = CHESS_NET_ELECTION;
-        break;
-    case CHESS_NET_ELECTION:
-        session->state = CHESS_NET_CONNECTING;
-        break;
-    case CHESS_NET_CONNECTING:
-        if (session->transport_ready) {
-            session->state = CHESS_NET_IN_GAME;
-        }
-        break;
-    case CHESS_NET_IN_GAME:
-        break;
-    case CHESS_NET_RECONNECTING:
-        session->state = CHESS_NET_CONNECTING;
-        break;
-    case CHESS_NET_TERMINATED:
-        break;
-    default:
-        session->state = CHESS_NET_TERMINATED;
-        break;
-    }
-}
-
-/* ── New phase-based step ──────────────────────────────────────────────── */
-
-void chess_network_session_step_phase(ChessNetworkSession *session)
-{
-    if (!session) {
-        return;
-    }
-
-    switch (session->phase) {
-    case CHESS_PHASE_IDLE:
-        /* Wait for peer discovery (set_remote triggers ELECTING). */
-        break;
-
-    case CHESS_PHASE_TCP_CONNECTING:
-        if (session->transport_connected) {
-            chess_network_session_set_phase(session, CHESS_PHASE_HELLO_HANDSHAKE);
-        }
-        break;
-
-    case CHESS_PHASE_HELLO_HANDSHAKE:
-        if (session->hello_done) {
-            chess_network_session_set_phase(session, CHESS_PHASE_AUTHENTICATED);
-        }
-        break;
-
-    case CHESS_PHASE_AUTHENTICATED:
-        /* Lobby challenge flow happens here (OFFER/ACCEPT).
-         * Transition to RESUME_NEGOTIATING or GAME_STARTING is driven
-         * by the app layer once challenge_done is set. */
-        break;
-
-    case CHESS_PHASE_RESUME_NEGOTIATING:
-        if (session->resume_done) {
-            chess_network_session_set_phase(session, CHESS_PHASE_GAME_STARTING);
-        }
-        break;
-
-    case CHESS_PHASE_GAME_STARTING:
-        if (session->game_started) {
-            chess_network_session_set_phase(session, CHESS_PHASE_IN_GAME);
-        }
-        break;
-
-    case CHESS_PHASE_IN_GAME:
-        /* Gameplay active — no automatic transition. */
-        break;
-
-    case CHESS_PHASE_DISCONNECTED:
-        /* App layer decides whether to re-elect or terminate. */
-        break;
-
-    case CHESS_PHASE_TERMINATED:
-        break;
-
-    default:
-        chess_network_session_set_phase(session, CHESS_PHASE_TERMINATED);
-        break;
-    }
-}

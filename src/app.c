@@ -124,13 +124,13 @@ static void app_init_runtime_state(AppLoopContext *ctx)
 
     ctx->connection.fd = -1;
     memset(&ctx->discovered_peer, 0, sizeof(ctx->discovered_peer));
-    ctx->start_completed = false;
+    ctx->network_session.start_completed = false;
     memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
-    ctx->start_failures = 0u;
+    ctx->network_session.start_failures = 0u;
     ctx->move_sequence = 3u;
     ctx->next_connect_attempt_at = 0;
     ctx->resume_state_loaded = false;
-    ctx->pending_resume_state_sync = false;
+    ctx->network_session.pending_resume_state_sync = false;
     ctx->resume_remote_profile_id[0] = '\0';
     ctx->drag_active = false;
     ctx->drag_piece = CHESS_PIECE_EMPTY;
@@ -234,8 +234,8 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     chess_tcp_connection_close(&ctx->connection);
     chess_net_reset_transport_progress(ctx);
 
-    ctx->start_completed = false;
-    ctx->start_failures = 0u;
+    ctx->network_session.start_completed = false;
+    ctx->network_session.start_failures = 0u;
     memset(&ctx->pending_start_payload, 0, sizeof(ctx->pending_start_payload));
     if (was_in_game && last_game_id != 0u && last_resume_token[0] != '\0') {
         ctx->pending_start_payload.game_id = last_game_id;
@@ -245,11 +245,10 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
             sizeof(ctx->pending_start_payload.resume_token));
     }
     ctx->network_session.peer_available = false;
-    ctx->network_session.transport_ready = false;
     ctx->network_session.game_started = false;
     ctx->network_session.role = CHESS_ROLE_UNKNOWN;
     memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
-    ctx->network_session.state = CHESS_NET_IDLE_DISCOVERY;
+    chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
     memset(&ctx->discovered_peer, 0, sizeof(ctx->discovered_peer));
     ctx->discovery.remote_emitted = false;
     ctx->drag_active = false;
@@ -359,6 +358,7 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
 
             chess_network_session_set_remote(&ctx->network_session, &ctx->discovered_peer.peer);
             if (has_resume_target) {
+                ctx->network_session.role = CHESS_ROLE_CLIENT;
                 SDL_Log(
                     "LOBBY: matched persisted resume peer %.8s...",
                     ctx->discovered_peer.peer.profile_id);
@@ -394,7 +394,6 @@ int app_run(void)
         app_poll_discovery_and_update_lobby(&ctx);
         chess_net_tick(&ctx);
 
-        chess_network_session_step(&ctx.network_session);
         chess_ui_update_remote_move_animation(&ctx);
 
         chess_ui_render_frame(&ctx);

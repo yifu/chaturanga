@@ -190,23 +190,24 @@ static void test_network_session_flow(void)
     (void)snprintf(remote.profile_id, sizeof(remote.profile_id), "%s", "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb");
 
     chess_network_session_init(&session, &local);
-    EXPECT_EQ_INT(session.state, CHESS_NET_IDLE_DISCOVERY);
+    EXPECT_EQ_INT(session.phase, CHESS_PHASE_IDLE);
 
     /* Simulate challenger: set role before set_remote */
     session.role = CHESS_ROLE_CLIENT;
     chess_network_session_set_remote(&session, &remote);
-    EXPECT_EQ_INT(session.state, CHESS_NET_PEER_FOUND);
+    EXPECT_EQ_INT(session.phase, CHESS_PHASE_TCP_CONNECTING);
 
-    chess_network_session_step(&session);
-    EXPECT_EQ_INT(session.state, CHESS_NET_ELECTION);
+    /* Simulate transport + hello */
+    session.transport_connected = true;
+    session.hello_done = true;
+    session.challenge_done = true;
 
-    chess_network_session_step(&session);
-    EXPECT_EQ_INT(session.state, CHESS_NET_CONNECTING);
+    /* Simulate game start */
+    chess_network_session_start_game(&session, 42u, CHESS_COLOR_WHITE);
+    EXPECT_EQ_INT(session.game_started, true);
+    EXPECT_EQ_INT(session.game_id, 42u);
+    EXPECT_EQ_INT(session.local_color, CHESS_COLOR_WHITE);
     EXPECT_EQ_INT(session.role, CHESS_ROLE_CLIENT);
-
-    chess_network_session_set_transport_ready(&session, true);
-    chess_network_session_step(&session);
-    EXPECT_EQ_INT(session.state, CHESS_NET_IN_GAME);
 }
 
 static void test_persistent_profile_id(void)

@@ -32,25 +32,9 @@ typedef struct AppContext {
     int connect_retry_ms;
     uint64_t next_connect_attempt_at;
 
-    /* ── Transport / handshake (legacy booleans — will be removed) ── */
-    bool connect_attempted;
-    bool hello_sent;
-    bool hello_received;
-    bool hello_ack_sent;
-    bool hello_ack_received;
-    bool hello_completed;
-    bool challenge_exchange_completed;
-    bool start_sent;
-    uint64_t start_sent_at_ms;
-    bool start_completed;
-    bool resume_request_sent;
-    bool pending_resume_state_sync;
-    unsigned int start_failures;
-
     /* ── Game protocol ──────────────────────────────────────────────── */
     ChessStartPayload pending_start_payload;
     uint32_t move_sequence;
-    ChessConnectionPhase last_phase;            /* phase transition log */
 
     /* ── Resume / persistence ───────────────────────────────────────── */
     bool resume_state_loaded;

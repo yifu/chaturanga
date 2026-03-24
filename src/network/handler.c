@@ -124,17 +124,17 @@ void chess_net_reset_transport_progress(AppContext *ctx)
         return;
     }
 
-    ctx->connect_attempted = false;
-    ctx->hello_sent = false;
-    ctx->hello_received = false;
-    ctx->hello_ack_sent = false;
-    ctx->hello_ack_received = false;
-    ctx->hello_completed = false;
-    ctx->challenge_exchange_completed = false;
-    ctx->start_sent = false;
-    ctx->start_sent_at_ms = 0;
-    ctx->resume_request_sent = false;
-    ctx->pending_resume_state_sync = false;
+    ctx->network_session.connect_attempted = false;
+    ctx->network_session.hello_sent = false;
+    ctx->network_session.hello_received = false;
+    ctx->network_session.hello_ack_sent = false;
+    ctx->network_session.hello_ack_received = false;
+    ctx->network_session.hello_completed = false;
+    ctx->network_session.challenge_exchange_completed = false;
+    ctx->network_session.start_sent = false;
+    ctx->network_session.start_sent_at_ms = 0;
+    ctx->network_session.resume_request_sent = false;
+    ctx->network_session.pending_resume_state_sync = false;
 }
 
 /* ── Packet receive ─────────────────────────────────────────────────── */
@@ -175,7 +175,7 @@ static void net_handle_hello_packet(AppContext *ctx, const ChessHelloPayload *he
         return;
     }
 
-    ctx->hello_received = true;
+    ctx->network_session.hello_received = true;
 
     /* When the connection was accepted before mDNS discovery,
      * register minimal identity so that the later set_remote()
@@ -195,7 +195,7 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
     int peer_idx = -1;
     int i;
 
-    if (!ctx || !offer || ctx->challenge_exchange_completed) {
+    if (!ctx || !offer || ctx->network_session.challenge_exchange_completed) {
         return;
     }
 
@@ -217,7 +217,7 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
             memset(&accept, 0, sizeof(accept));
             SDL_strlcpy(accept.acceptor_profile_id, ctx->network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
             if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
-                ctx->challenge_exchange_completed = true;
+                ctx->network_session.challenge_exchange_completed = true;
                 if (strncmp(ctx->network_session.local_peer.profile_id,
                             offer->challenger_profile_id,
                             CHESS_PROFILE_ID_STRING_LEN) < 0) {
@@ -244,7 +244,7 @@ static void net_handle_accept_packet(AppContext *ctx, const ChessAcceptPayload *
     int peer_idx = -1;
     int i;
 
-    if (!ctx || !accept || ctx->challenge_exchange_completed) {
+    if (!ctx || !accept || ctx->network_session.challenge_exchange_completed) {
         return;
     }
 
@@ -262,7 +262,7 @@ static void net_handle_accept_packet(AppContext *ctx, const ChessAcceptPayload *
         peer_idx = ctx->lobby.selected_peer_idx;
     }
 
-    ctx->challenge_exchange_completed = true;
+    ctx->network_session.challenge_exchange_completed = true;
     if (peer_idx >= 0) {
         chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
     }
@@ -277,7 +277,7 @@ static void net_handle_start_packet(AppContext *ctx, const ChessStartPayload *st
         return;
     }
 
-    if (ctx->network_session.role != CHESS_ROLE_CLIENT || ctx->start_completed) {
+    if (ctx->network_session.role != CHESS_ROLE_CLIENT || ctx->network_session.start_completed) {
         return;
     }
 
@@ -287,7 +287,7 @@ static void net_handle_start_packet(AppContext *ctx, const ChessStartPayload *st
             start_payload->game_id,
             (ChessPlayerColor)start_payload->assigned_color
         );
-        ctx->start_completed = true;
+        ctx->network_session.start_completed = true;
         ctx->pending_start_payload.game_id = start_payload->game_id;
         ctx->pending_start_payload.assigned_color = start_payload->assigned_color;
         ctx->pending_start_payload.initial_turn = start_payload->initial_turn;
@@ -329,7 +329,7 @@ static void net_handle_resume_request_packet(AppContext *ctx, const ChessResumeR
 
     /* If the START/ACK exchange already completed, ignore late resume
      * requests — the game is in progress and resetting would break it. */
-    if (ctx->start_completed) {
+    if (ctx->network_session.start_completed) {
         SDL_Log("NET: ignoring late resume request (game already started)");
         return;
     }
@@ -373,13 +373,13 @@ static void net_handle_resume_request_packet(AppContext *ctx, const ChessResumeR
             ctx->pending_start_payload.black_profile_id,
             requester_is_white ? ctx->network_session.local_peer.profile_id : ctx->network_session.remote_peer.profile_id,
             sizeof(ctx->pending_start_payload.black_profile_id));
-        ctx->challenge_exchange_completed = true;
-        ctx->start_completed = false;
-        ctx->start_sent = false;
-        ctx->pending_resume_state_sync = true;
+        ctx->network_session.challenge_exchange_completed = true;
+        ctx->network_session.start_completed = false;
+        ctx->network_session.start_sent = false;
+        ctx->network_session.pending_resume_state_sync = true;
         SDL_Log("NET: resume request accepted for game %u", request->game_id);
     } else {
-        ctx->pending_resume_state_sync = false;
+        ctx->network_session.pending_resume_state_sync = false;
         SDL_Log("NET: resume request rejected for game %u", request->game_id);
     }
 
@@ -392,7 +392,7 @@ static void net_handle_resume_response_packet(AppContext *ctx, const ChessResume
         return;
     }
 
-    if (!ctx->resume_request_sent) {
+    if (!ctx->network_session.resume_request_sent) {
         return;
     }
 
@@ -436,19 +436,19 @@ static void net_handle_ack_packet(AppContext *ctx, const ChessAckPayload *ack)
     if (ack->acked_message_type == CHESS_MSG_HELLO &&
         ack->acked_sequence == 1u &&
         ack->status_code == 0u) {
-        ctx->hello_ack_received = true;
+        ctx->network_session.hello_ack_received = true;
         return;
     }
 
-    if (ctx->start_sent &&
-        !ctx->start_completed &&
+    if (ctx->network_session.start_sent &&
+        !ctx->network_session.start_completed &&
         ack->acked_message_type == CHESS_MSG_START &&
         ack->acked_sequence == 2u &&
         ack->status_code == 0u) {
         SDL_Log("NET: START ACK received, switching to game view");
         chess_network_session_start_game(&ctx->network_session, ctx->pending_start_payload.game_id,
             opposite_color((ChessPlayerColor)ctx->pending_start_payload.assigned_color));
-        ctx->start_completed = true;
+        ctx->network_session.start_completed = true;
         if (ctx->pending_start_payload.resume_token[0] == '\0') {
             (void)chess_generate_peer_uuid(
                 ctx->pending_start_payload.resume_token,
@@ -611,8 +611,8 @@ static void net_send_state_snapshot_if_needed(AppContext *ctx)
 
     if (!ctx ||
         ctx->network_session.role != CHESS_ROLE_SERVER ||
-        !ctx->pending_resume_state_sync ||
-        !ctx->start_completed ||
+        !ctx->network_session.pending_resume_state_sync ||
+        !ctx->network_session.start_completed ||
         ctx->connection.fd < 0) {
         return;
     }
@@ -622,7 +622,7 @@ static void net_send_state_snapshot_if_needed(AppContext *ctx)
     }
 
     if (chess_tcp_send_state_snapshot(&ctx->connection, &snapshot)) {
-        ctx->pending_resume_state_sync = false;
+        ctx->network_session.pending_resume_state_sync = false;
         SDL_Log("NET: sent state snapshot for resumed game %u", snapshot.game_id);
     }
 }
@@ -633,7 +633,7 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
         return;
     }
 
-    if (ctx->hello_completed) {
+    if (ctx->network_session.hello_completed) {
         return;
     }
 
@@ -649,8 +649,9 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
         }
     }
 
-    /* Client outbound connect: requires election to have completed. */
-    if (ctx->network_session.state != CHESS_NET_CONNECTING) {
+    /* Client outbound connect: requires role assignment (challenge accepted). */
+    if (ctx->network_session.role != CHESS_ROLE_CLIENT &&
+        ctx->network_session.role != CHESS_ROLE_SERVER) {
         return;
     }
 
@@ -659,8 +660,8 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
         bool should_attempt_client_connect = false;
 
         if (ctx->network_session.role == CHESS_ROLE_CLIENT) {
-            if (!ctx->connect_attempted || now >= ctx->next_connect_attempt_at) {
-                ctx->connect_attempted = true;
+            if (!ctx->network_session.connect_attempted || now >= ctx->next_connect_attempt_at) {
+                ctx->network_session.connect_attempted = true;
                 ctx->next_connect_attempt_at = now + (uint64_t)ctx->connect_retry_ms;
                 should_attempt_client_connect = true;
             }
@@ -696,14 +697,14 @@ static void net_advance_hello_handshake(AppContext *ctx)
         return;
     }
 
-    if (ctx->hello_completed) {
+    if (ctx->network_session.hello_completed) {
         return;
     }
 
     /* Infer server role when we accepted an inbound connection
      * before the mDNS election completed (role still UNKNOWN). */
     effective_role = ctx->network_session.role;
-    if (effective_role == CHESS_ROLE_UNKNOWN && !ctx->connect_attempted) {
+    if (effective_role == CHESS_ROLE_UNKNOWN && !ctx->network_session.connect_attempted) {
         effective_role = CHESS_ROLE_SERVER;
     }
 
@@ -726,43 +727,35 @@ static void net_advance_hello_handshake(AppContext *ctx)
         SDL_strlcpy(local_hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(local_hello.profile_id));
         local_hello.role = (uint32_t)effective_role;
 
-        if (effective_role == CHESS_ROLE_CLIENT && !ctx->hello_sent) {
+        if (effective_role == CHESS_ROLE_CLIENT && !ctx->network_session.hello_sent) {
             if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
-                ctx->hello_sent = true;
+                ctx->network_session.hello_sent = true;
             }
         }
 
-        if (effective_role == CHESS_ROLE_CLIENT && ctx->hello_received && !ctx->hello_ack_sent) {
+        if (effective_role == CHESS_ROLE_CLIENT && ctx->network_session.hello_received && !ctx->network_session.hello_ack_sent) {
             if (chess_tcp_send_ack(&ctx->connection, CHESS_MSG_HELLO, 1u, 0u)) {
-                ctx->hello_ack_sent = true;
+                ctx->network_session.hello_ack_sent = true;
             }
         }
 
-        if (effective_role == CHESS_ROLE_SERVER && ctx->hello_received && !ctx->hello_sent) {
+        if (effective_role == CHESS_ROLE_SERVER && ctx->network_session.hello_received && !ctx->network_session.hello_sent) {
             if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
-                ctx->hello_sent = true;
+                ctx->network_session.hello_sent = true;
             }
         }
 
         if (effective_role == CHESS_ROLE_CLIENT &&
-            ctx->hello_sent &&
-            ctx->hello_received &&
-            ctx->hello_ack_sent) {
-            ctx->hello_completed = true;
-            chess_network_session_set_transport_ready(&ctx->network_session, true);
-            if (ctx->network_session.state < CHESS_NET_IN_GAME) {
-                ctx->network_session.state = CHESS_NET_IN_GAME;
-            }
+            ctx->network_session.hello_sent &&
+            ctx->network_session.hello_received &&
+            ctx->network_session.hello_ack_sent) {
+            ctx->network_session.hello_completed = true;
             SDL_Log("NET: HELLO handshake completed (client)");
         } else if (effective_role == CHESS_ROLE_SERVER &&
-                   ctx->hello_received &&
-                   ctx->hello_sent &&
-                   ctx->hello_ack_received) {
-            ctx->hello_completed = true;
-            chess_network_session_set_transport_ready(&ctx->network_session, true);
-            if (ctx->network_session.state < CHESS_NET_IN_GAME) {
-                ctx->network_session.state = CHESS_NET_IN_GAME;
-            }
+                   ctx->network_session.hello_received &&
+                   ctx->network_session.hello_sent &&
+                   ctx->network_session.hello_ack_received) {
+            ctx->network_session.hello_completed = true;
             SDL_Log("NET: HELLO handshake completed (server)");
         }
     }
@@ -770,7 +763,7 @@ static void net_advance_hello_handshake(AppContext *ctx)
 
 static void net_send_pending_offer_if_needed(AppContext *ctx)
 {
-    if (!ctx || !ctx->hello_completed || ctx->challenge_exchange_completed || ctx->connection.fd < 0) {
+    if (!ctx || !ctx->network_session.hello_completed || ctx->network_session.challenge_exchange_completed || ctx->connection.fd < 0) {
         return;
     }
 
@@ -796,13 +789,12 @@ static void net_send_start_if_needed(AppContext *ctx)
         return;
     }
 
-    if (ctx->network_session.state != CHESS_NET_IN_GAME ||
-        !ctx->hello_completed ||
-        !ctx->challenge_exchange_completed ||
-        ctx->start_completed ||
+    if (!ctx->network_session.hello_completed ||
+        !ctx->network_session.challenge_exchange_completed ||
+        ctx->network_session.start_completed ||
         ctx->network_session.role != CHESS_ROLE_SERVER ||
         ctx->connection.fd < 0 ||
-        ctx->start_sent) {
+        ctx->network_session.start_sent) {
         return;
     }
 
@@ -834,12 +826,12 @@ static void net_send_start_if_needed(AppContext *ctx)
     }
 
     if (chess_tcp_send_start(&ctx->connection, &ctx->pending_start_payload)) {
-        ctx->start_sent = true;
-        ctx->start_sent_at_ms = SDL_GetTicks();
+        ctx->network_session.start_sent = true;
+        ctx->network_session.start_sent_at_ms = SDL_GetTicks();
     } else {
-        ctx->start_failures += 1u;
-        if (ctx->start_failures == 1u || (ctx->start_failures % 5u) == 0u) {
-            SDL_Log("NET: START send failed (%u failures), will retry", ctx->start_failures);
+        ctx->network_session.start_failures += 1u;
+        if (ctx->network_session.start_failures == 1u || (ctx->network_session.start_failures % 5u) == 0u) {
+            SDL_Log("NET: START send failed (%u failures), will retry", ctx->network_session.start_failures);
         }
     }
 }
@@ -850,10 +842,10 @@ static void net_send_resume_request_if_needed(AppContext *ctx)
 
     if (!ctx ||
         ctx->network_session.role != CHESS_ROLE_CLIENT ||
-        !ctx->hello_completed ||
+        !ctx->network_session.hello_completed ||
         ctx->connection.fd < 0 ||
-        ctx->resume_request_sent ||
-        ctx->start_completed ||
+        ctx->network_session.resume_request_sent ||
+        ctx->network_session.start_completed ||
         ctx->pending_start_payload.game_id == 0u ||
         ctx->pending_start_payload.resume_token[0] == '\0') {
         return;
@@ -865,7 +857,7 @@ static void net_send_resume_request_if_needed(AppContext *ctx)
     SDL_strlcpy(request.resume_token, ctx->pending_start_payload.resume_token, sizeof(request.resume_token));
 
     if (chess_tcp_send_resume_request(&ctx->connection, &request)) {
-        ctx->resume_request_sent = true;
+        ctx->network_session.resume_request_sent = true;
         SDL_Log("NET: sent resume request for game %u", request.game_id);
     }
 }
@@ -881,10 +873,10 @@ void chess_net_tick(AppContext *ctx)
     }
 
     /* B1 fix: retry START after 3 seconds if ACK never arrived. */
-    if (ctx->start_sent && !ctx->start_completed &&
-        (SDL_GetTicks() - ctx->start_sent_at_ms) > 3000u) {
+    if (ctx->network_session.start_sent && !ctx->network_session.start_completed &&
+        (SDL_GetTicks() - ctx->network_session.start_sent_at_ms) > 3000u) {
         SDL_Log("NET: START ACK timeout, will retry");
-        ctx->start_sent = false;
+        ctx->network_session.start_sent = false;
     }
 
     poll_socket_events(&ctx->listener, &ctx->connection, &connection_phase_events);
