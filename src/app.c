@@ -274,7 +274,9 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
     chess_game_clear_selection(&ctx->game_state);
     ctx->move_history_count = 0;
-    (void)chess_lobby_remove_peer_by_profile_id(&ctx->lobby, remote_profile_id);
+    if (was_in_game) {
+        (void)chess_lobby_remove_peer_by_profile_id(&ctx->lobby, remote_profile_id);
+    }
     app_clear_challenges(ctx);
 
     if (was_in_game) {
@@ -390,14 +392,16 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
                 ctx->discovered_peer.peer.profile_id,
                 ctx->resume_remote_profile_id,
                 CHESS_PROFILE_ID_STRING_LEN) == 0;
-        } else {
-            /* Also re-select the same peer so mDNS-resolved attributes
-             * (IP, hostname, profile) update an early HELLO-only peer. */
-            should_select_peer = !ctx->network_session.peer_available ||
-                (ctx->network_session.remote_peer.profile_id[0] != '\0' &&
-                 SDL_strncmp(ctx->network_session.remote_peer.profile_id,
-                             ctx->discovered_peer.peer.profile_id,
-                             CHESS_PROFILE_ID_STRING_LEN) == 0);
+        } else if (ctx->network_session.peer_available &&
+                   ctx->network_session.remote_peer.profile_id[0] != '\0') {
+            /* Re-select the same peer so mDNS-resolved attributes
+             * (IP, hostname, profile) update an early HELLO-only peer.
+             * Do NOT auto-select when no peer is set yet — the user
+             * must click in the lobby to initiate a connection. */
+            should_select_peer =
+                SDL_strncmp(ctx->network_session.remote_peer.profile_id,
+                            ctx->discovered_peer.peer.profile_id,
+                            CHESS_PROFILE_ID_STRING_LEN) == 0;
         }
 
         if (should_select_peer) {
