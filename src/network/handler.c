@@ -541,6 +541,70 @@ static void net_handle_move_packet(AppContext *ctx, const ChessMovePayload *move
     }
 }
 
+/* ── Resign / Draw handlers ─────────────────────────────────────────── */
+
+static void net_handle_resign_packet(AppContext *ctx)
+{
+    ChessPlayerColor remote_color;
+
+    if (!ctx || !ctx->network_session.game_started ||
+        ctx->game_state.outcome != CHESS_OUTCOME_NONE) {
+        return;
+    }
+
+    remote_color = opposite_color(ctx->network_session.local_color);
+    ctx->game_state.outcome = (remote_color == CHESS_COLOR_WHITE)
+        ? CHESS_OUTCOME_WHITE_RESIGNED
+        : CHESS_OUTCOME_BLACK_RESIGNED;
+
+    if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+        (void)chess_persist_save_match_snapshot(ctx);
+    }
+    SDL_Log("GAME: opponent resigned");
+    app_set_status_message(ctx, "Opponent resigned.", 5000u);
+}
+
+static void net_handle_draw_offer_packet(AppContext *ctx)
+{
+    if (!ctx || !ctx->network_session.game_started ||
+        ctx->game_state.outcome != CHESS_OUTCOME_NONE) {
+        return;
+    }
+
+    ctx->network_session.draw_offer_received = true;
+    SDL_Log("GAME: opponent offers a draw");
+    app_set_status_message(ctx, "Draw offered — Accept or Decline.", 30000u);
+}
+
+static void net_handle_draw_accept_packet(AppContext *ctx)
+{
+    if (!ctx || !ctx->network_session.game_started ||
+        ctx->game_state.outcome != CHESS_OUTCOME_NONE ||
+        !ctx->network_session.draw_offer_pending) {
+        return;
+    }
+
+    ctx->game_state.outcome = CHESS_OUTCOME_DRAW_AGREED;
+    ctx->network_session.draw_offer_pending = false;
+
+    if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+        (void)chess_persist_save_match_snapshot(ctx);
+    }
+    SDL_Log("GAME: draw accepted");
+    app_set_status_message(ctx, "Draw by agreement.", 5000u);
+}
+
+static void net_handle_draw_decline_packet(AppContext *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    ctx->network_session.draw_offer_pending = false;
+    SDL_Log("GAME: draw declined by opponent");
+    app_set_status_message(ctx, "Draw declined.", 3000u);
+}
+
 /* ── Packet dispatch ────────────────────────────────────────────────── */
 
 static void net_dispatch_incoming_packet(AppContext *ctx, const ChessPacketHeader *header, const uint8_t *payload)
@@ -570,6 +634,14 @@ static void net_dispatch_incoming_packet(AppContext *ctx, const ChessPacketHeade
     } else if (header->message_type == CHESS_MSG_STATE_SNAPSHOT &&
                header->payload_size == sizeof(ChessStateSnapshotPayload)) {
         net_handle_state_snapshot_packet(ctx, (const ChessStateSnapshotPayload *)payload);
+    } else if (header->message_type == CHESS_MSG_RESIGN && header->payload_size == 0u) {
+        net_handle_resign_packet(ctx);
+    } else if (header->message_type == CHESS_MSG_DRAW_OFFER && header->payload_size == 0u) {
+        net_handle_draw_offer_packet(ctx);
+    } else if (header->message_type == CHESS_MSG_DRAW_ACCEPT && header->payload_size == 0u) {
+        net_handle_draw_accept_packet(ctx);
+    } else if (header->message_type == CHESS_MSG_DRAW_DECLINE && header->payload_size == 0u) {
+        net_handle_draw_decline_packet(ctx);
     }
 }
 

@@ -88,6 +88,8 @@ void chess_network_session_start_game(ChessNetworkSession *session, uint32_t gam
     session->game_id = game_id;
     session->local_color = local_color;
     session->game_started = true;
+    session->draw_offer_pending = false;
+    session->draw_offer_received = false;
 }
 
 

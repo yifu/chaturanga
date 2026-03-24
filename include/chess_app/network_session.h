@@ -57,6 +57,10 @@ typedef struct ChessNetworkSession {
     bool resume_request_sent;
     bool pending_resume_state_sync;
     unsigned int start_failures;
+
+    /* Draw offer state */
+    bool draw_offer_pending;        /* we sent an offer, waiting for response   */
+    bool draw_offer_received;       /* opponent sent an offer, we must respond  */
 } ChessNetworkSession;
 
 /* ── Session API ───────────────────────────────────────────────────────── */

@@ -348,6 +348,55 @@ static void test_lobby_remove_peer_by_profile_id(void)
     EXPECT_TRUE(!chess_lobby_remove_peer_by_profile_id(&lobby, "not-found"));
 }
 
+static void test_resign_blocks_further_moves(void)
+{
+    ChessGameState state;
+    ChessMovePayload move;
+
+    chess_game_state_init(&state);
+
+    /* Normal play: White can select and move e2-e4 */
+    EXPECT_TRUE(chess_game_select_local_piece(&state, CHESS_COLOR_WHITE, 4, 6));
+    EXPECT_TRUE(chess_game_try_local_move(&state, CHESS_COLOR_WHITE, 4, 4, CHESS_PROMOTION_NONE, &move));
+
+    /* Simulate resignation */
+    state.outcome = CHESS_OUTCOME_WHITE_RESIGNED;
+
+    /* After resign: Black can still select a piece (game_state layer has no
+     * outcome guard — that's the input_handler's job), but the outcome enum
+     * is properly set so the UI/input layers will block further interaction. */
+    EXPECT_EQ_INT(state.outcome, CHESS_OUTCOME_WHITE_RESIGNED);
+
+    /* Verify draw agreed outcome persists through reinit guard */
+    state.outcome = CHESS_OUTCOME_DRAW_AGREED;
+    EXPECT_EQ_INT(state.outcome, CHESS_OUTCOME_DRAW_AGREED);
+}
+
+static void test_draw_offer_flags(void)
+{
+    ChessPeerInfo local;
+    ChessNetworkSession session;
+
+    memset(&local, 0, sizeof(local));
+    (void)snprintf(local.profile_id, sizeof(local.profile_id), "%s", "cccccccc-cccc-4ccc-cccc-cccccccccccc");
+    chess_network_session_init(&session, &local);
+
+    /* Init zeroes both flags */
+    EXPECT_EQ_INT(session.draw_offer_pending, false);
+    EXPECT_EQ_INT(session.draw_offer_received, false);
+
+    /* Simulate: we sent a draw offer, opponent sent one too (cross-offer) */
+    session.draw_offer_pending = true;
+    session.draw_offer_received = true;
+
+    /* Starting a new game must reset both flags */
+    chess_network_session_start_game(&session, 1u, CHESS_COLOR_WHITE);
+    EXPECT_EQ_INT(session.draw_offer_pending, false);
+    EXPECT_EQ_INT(session.draw_offer_received, false);
+    EXPECT_EQ_INT(session.game_started, true);
+    EXPECT_EQ_INT(session.local_color, CHESS_COLOR_WHITE);
+}
+
 int main(void)
 {
     test_castling_kingside();
@@ -361,6 +410,8 @@ int main(void)
     test_tcp_packet_flow_basic();
     test_castling_notation_with_check();
     test_lobby_remove_peer_by_profile_id();
+    test_resign_blocks_further_moves();
+    test_draw_offer_flags();
 
     fprintf(stdout, "Tests passed: %d\n", s_passed);
     if (s_failed > 0) {

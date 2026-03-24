@@ -13,6 +13,9 @@
 static const int s_history_max_entries = (int)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES;
 static const int s_history_entry_len   = (int)CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN;
 
+/* Forward declarations */
+static void render_panel_buttons(AppContext *ctx, int panel_left, int panel_width, int window_height);
+
 /* ------------------------------------------------------------------ */
 /*  Pure coordinate / perspective helpers (static)                     */
 /* ------------------------------------------------------------------ */
@@ -600,6 +603,18 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
         headline = "Draw";
         subline = "50-move rule";
         break;
+    case CHESS_OUTCOME_WHITE_RESIGNED:
+        headline = "Resignation";
+        subline = (ctx->network_session.local_color == CHESS_COLOR_WHITE) ? "You resigned" : "Opponent resigned";
+        break;
+    case CHESS_OUTCOME_BLACK_RESIGNED:
+        headline = "Resignation";
+        subline = (ctx->network_session.local_color == CHESS_COLOR_BLACK) ? "You resigned" : "Opponent resigned";
+        break;
+    case CHESS_OUTCOME_DRAW_AGREED:
+        headline = "Draw";
+        subline = "By agreement";
+        break;
     default:
         return;
     }
@@ -810,6 +825,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
 
     max_rows = (window_height - start_y - 8) / row_height;
     if (max_rows <= 0) {
+        render_panel_buttons(ctx, panel_left, (int)panel_rect.w, window_height);
         return;
     }
 
@@ -832,6 +848,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
             SDL_RenderTexture(ctx->renderer, empty_tex, NULL, &dst);
             SDL_DestroyTexture(empty_tex);
         }
+        render_panel_buttons(ctx, panel_left, (int)panel_rect.w, window_height);
         return;
     }
 
@@ -920,6 +937,161 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
             SDL_DestroyTexture(black_tex);
         }
     }
+
+    render_panel_buttons(ctx, panel_left, (int)panel_rect.w, window_height);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Resign / Draw buttons (bottom of panel)                            */
+/* ------------------------------------------------------------------ */
+
+/* Button geometry constants shared by rendering + hit-test */
+#define BTN_HEIGHT     28
+#define BTN_MARGIN      8
+#define BTN_GAP         6
+
+static void get_button_rects(int panel_left, int panel_width, int window_height,
+                             SDL_FRect *left_btn, SDL_FRect *right_btn)
+{
+    float btn_y = (float)(window_height - BTN_HEIGHT - BTN_MARGIN);
+    float usable = (float)(panel_width - 2 * BTN_MARGIN - BTN_GAP);
+    float half = usable * 0.5f;
+
+    left_btn->x  = (float)(panel_left + BTN_MARGIN);
+    left_btn->y  = btn_y;
+    left_btn->w  = half;
+    left_btn->h  = (float)BTN_HEIGHT;
+
+    right_btn->x = left_btn->x + half + (float)BTN_GAP;
+    right_btn->y = btn_y;
+    right_btn->w = half;
+    right_btn->h = (float)BTN_HEIGHT;
+}
+
+static void render_panel_button(SDL_Renderer *renderer, TTF_Font *font,
+                                const SDL_FRect *rect, const char *label,
+                                SDL_Color bg, SDL_Color fg)
+{
+    SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a);
+    SDL_RenderFillRect(renderer, rect);
+
+    {
+        SDL_Texture *tex = make_text_texture(renderer, font, label, fg);
+        if (tex) {
+            float tw = 0.0f;
+            float th = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(tex, &tw, &th);
+            dst.x = rect->x + (rect->w - tw) * 0.5f;
+            dst.y = rect->y + (rect->h - th) * 0.5f;
+            dst.w = tw;
+            dst.h = th;
+            SDL_RenderTexture(renderer, tex, NULL, &dst);
+            SDL_DestroyTexture(tex);
+        }
+    }
+}
+
+static void render_panel_buttons(AppContext *ctx, int panel_left, int panel_width, int window_height)
+{
+    SDL_FRect left_btn;
+    SDL_FRect right_btn;
+    const SDL_Color fg_normal  = {232, 232, 238, 255};
+    const SDL_Color fg_dim     = {120, 120, 128, 255};
+    bool game_over;
+    bool offer_pending;
+    bool offer_received;
+
+    if (!ctx || !ctx->renderer || !s_coord_font) {
+        return;
+    }
+
+    game_over      = (ctx->game_state.outcome != CHESS_OUTCOME_NONE);
+    offer_pending  = ctx->network_session.draw_offer_pending;
+    offer_received = ctx->network_session.draw_offer_received;
+
+    get_button_rects(panel_left, panel_width, window_height, &left_btn, &right_btn);
+
+    if (game_over) {
+        /* Both grayed out */
+        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Resign", (SDL_Color){40, 40, 46, 255}, fg_dim);
+        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Draw",   (SDL_Color){40, 40, 46, 255}, fg_dim);
+    } else if (offer_received) {
+        /* Accept (green) / Decline (red) */
+        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Accept",  (SDL_Color){30,  90, 40, 255}, fg_normal);
+        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Decline", (SDL_Color){120, 30, 30, 255}, fg_normal);
+    } else if (offer_pending) {
+        /* Resign normal, Draw grayed "Pending..." */
+        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Resign",     (SDL_Color){70, 30, 30, 255}, fg_normal);
+        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Pending...", (SDL_Color){40, 40, 46, 255}, fg_dim);
+    } else {
+        /* Normal: Resign / Draw */
+        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Resign", (SDL_Color){70, 30, 30, 255}, fg_normal);
+        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Draw",   (SDL_Color){40, 60, 90, 255}, fg_normal);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Button hit-test                                                    */
+/* ------------------------------------------------------------------ */
+
+ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, int mouse_y)
+{
+    SDL_FRect left_btn;
+    SDL_FRect right_btn;
+    int board_width;
+    int window_width = 0;
+    int window_height = 0;
+    int panel_left;
+    int panel_width;
+    float mx;
+    float my;
+    bool game_over;
+    bool offer_received;
+    bool offer_pending;
+
+    if (!ctx || !ctx->window || !ctx->network_session.game_started) {
+        return CHESS_GAME_BUTTON_NONE;
+    }
+
+    SDL_GetWindowSize(ctx->window, &window_width, &window_height);
+    board_width  = chess_ui_board_width_for_window(window_width, true);
+    panel_left   = board_width;
+    panel_width  = window_width - board_width;
+
+    if (panel_width <= 1 || mouse_x < panel_left) {
+        return CHESS_GAME_BUTTON_NONE;
+    }
+
+    game_over      = (ctx->game_state.outcome != CHESS_OUTCOME_NONE);
+    offer_received = ctx->network_session.draw_offer_received;
+    offer_pending  = ctx->network_session.draw_offer_pending;
+
+    if (game_over) {
+        return CHESS_GAME_BUTTON_NONE;
+    }
+
+    get_button_rects(panel_left, panel_width, window_height, &left_btn, &right_btn);
+
+    mx = (float)mouse_x;
+    my = (float)mouse_y;
+
+    if (mx >= left_btn.x && mx < left_btn.x + left_btn.w &&
+        my >= left_btn.y && my < left_btn.y + left_btn.h) {
+        return offer_received ? CHESS_GAME_BUTTON_ACCEPT_DRAW : CHESS_GAME_BUTTON_RESIGN;
+    }
+
+    if (mx >= right_btn.x && mx < right_btn.x + right_btn.w &&
+        my >= right_btn.y && my < right_btn.y + right_btn.h) {
+        if (offer_received) {
+            return CHESS_GAME_BUTTON_DECLINE_DRAW;
+        }
+        if (!offer_pending) {
+            return CHESS_GAME_BUTTON_DRAW;
+        }
+    }
+
+    return CHESS_GAME_BUTTON_NONE;
 }
 
 /* ------------------------------------------------------------------ */

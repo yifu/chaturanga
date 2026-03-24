@@ -29,6 +29,22 @@ bool chess_ui_screen_to_board_square(
 uint8_t chess_ui_promotion_from_mouse(AppContext *ctx, int mouse_x, int mouse_y);
 
 /**
+ * Buttons that may appear in the right panel.
+ */
+typedef enum ChessGameButton {
+    CHESS_GAME_BUTTON_NONE = 0,
+    CHESS_GAME_BUTTON_RESIGN,
+    CHESS_GAME_BUTTON_DRAW,
+    CHESS_GAME_BUTTON_ACCEPT_DRAW,
+    CHESS_GAME_BUTTON_DECLINE_DRAW
+} ChessGameButton;
+
+/**
+ * Hit-test the panel buttons. Returns which button (if any) was clicked.
+ */
+ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, int mouse_y);
+
+/**
  * Advance the remote-move animation timer.
  * Call once per frame from the main loop.
  */

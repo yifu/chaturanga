@@ -194,6 +194,13 @@ static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, u
     ctx->status_message[0] = '\0';
     ctx->status_message_until_ms = 0;
 
+    /* Playing a move implicitly declines any pending draw offer from opponent. */
+    if (ctx->network_session.draw_offer_received) {
+        ctx->network_session.draw_offer_received = false;
+        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_DECLINE,
+                              ctx->move_sequence, NULL, 0u);
+    }
+
     if (!chess_tcp_send_packet(
             &ctx->connection,
             CHESS_MSG_MOVE,
@@ -214,6 +221,58 @@ static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, u
     );
 
     return true;
+}
+
+/* ---------- resign / draw button handling ---------- */
+
+static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
+{
+    if (!ctx || ctx->connection.fd < 0) {
+        return;
+    }
+
+    switch (btn) {
+    case CHESS_GAME_BUTTON_RESIGN: {
+        ctx->game_state.outcome = (ctx->network_session.local_color == CHESS_COLOR_WHITE)
+            ? CHESS_OUTCOME_WHITE_RESIGNED
+            : CHESS_OUTCOME_BLACK_RESIGNED;
+        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_RESIGN,
+                              ctx->move_sequence, NULL, 0u);
+        if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+            (void)chess_persist_save_match_snapshot(ctx);
+        }
+        SDL_Log("GAME: local player resigned");
+        app_set_status_message(ctx, "You resigned.", 5000u);
+        break;
+    }
+    case CHESS_GAME_BUTTON_DRAW:
+        ctx->network_session.draw_offer_pending = true;
+        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_OFFER,
+                              ctx->move_sequence, NULL, 0u);
+        SDL_Log("GAME: draw offer sent");
+        app_set_status_message(ctx, "Draw offer sent.", 3000u);
+        break;
+    case CHESS_GAME_BUTTON_ACCEPT_DRAW:
+        ctx->game_state.outcome = CHESS_OUTCOME_DRAW_AGREED;
+        ctx->network_session.draw_offer_received = false;
+        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_ACCEPT,
+                              ctx->move_sequence, NULL, 0u);
+        if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+            (void)chess_persist_save_match_snapshot(ctx);
+        }
+        SDL_Log("GAME: draw accepted locally");
+        app_set_status_message(ctx, "Draw by agreement.", 5000u);
+        break;
+    case CHESS_GAME_BUTTON_DECLINE_DRAW:
+        ctx->network_session.draw_offer_received = false;
+        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_DECLINE,
+                              ctx->move_sequence, NULL, 0u);
+        SDL_Log("GAME: draw declined locally");
+        app_set_status_message(ctx, "Draw declined.", 3000u);
+        break;
+    default:
+        break;
+    }
 }
 
 /* ---------- board mouse handling ---------- */
@@ -367,6 +426,11 @@ void chess_input_handle_events(AppLoopContext *ctx)
         }
 
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+            ChessGameButton btn = chess_ui_game_button_from_mouse(ctx, event.button.x, event.button.y);
+            if (btn != CHESS_GAME_BUTTON_NONE) {
+                handle_game_button(ctx, btn);
+                continue;
+            }
             handle_board_mouse_down(ctx, event.button.x, event.button.y);
         } else if (event.type == SDL_EVENT_MOUSE_MOTION) {
             handle_board_mouse_motion(ctx, event.motion.x, event.motion.y);
