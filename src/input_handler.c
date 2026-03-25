@@ -87,6 +87,7 @@ static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
             SDL_Log("LOBBY: challenge sent to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
         } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
             chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_NONE);
+            ctx->lobby.selected_peer_idx = -1;
             chess_tcp_connection_close(&ctx->connection);
             chess_net_reset_transport_progress(ctx);
             ctx->network_session.role = CHESS_ROLE_UNKNOWN;

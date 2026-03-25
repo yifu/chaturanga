@@ -72,6 +72,12 @@ static void app_loop_context_shutdown(AppLoopContext *ctx)
     chess_tcp_connection_close(&ctx->connection);
     chess_tcp_listener_close(&ctx->listener);
     destroy_piece_textures();
+    if (ctx->cursor_pointer) {
+        SDL_DestroyCursor(ctx->cursor_pointer);
+    }
+    if (ctx->cursor_default) {
+        SDL_DestroyCursor(ctx->cursor_default);
+    }
     if (ctx->renderer) {
         SDL_DestroyRenderer(ctx->renderer);
     }
@@ -113,6 +119,10 @@ static bool app_init_window_and_renderer(AppLoopContext *ctx)
     }
 
     init_piece_textures(ctx->renderer);
+
+    ctx->cursor_default = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+    ctx->cursor_pointer = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
+
     return true;
 }
 

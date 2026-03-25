@@ -71,6 +71,10 @@ typedef struct AppContext {
     char status_message[APP_STATUS_MESSAGE_LEN];
     uint64_t status_message_until_ms;
 
+    /* ── Cursor ──────────────────────────────────────────────────────── */
+    SDL_Cursor *cursor_default;
+    SDL_Cursor *cursor_pointer;
+
     /* ── Run control ────────────────────────────────────────────────── */
     bool running;
 } AppContext;

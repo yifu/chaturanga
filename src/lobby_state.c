@@ -12,6 +12,7 @@ void chess_lobby_init(ChessLobbyState *lobby)
     memset(lobby, 0, sizeof(*lobby));
     lobby->discovered_peer_count = 0;
     lobby->selected_peer_idx = -1;
+    lobby->hovered_peer_idx = -1;
 }
 
 void chess_lobby_add_or_update_peer(

@@ -28,6 +28,7 @@ typedef struct ChessLobbyState {
     ChessDiscoveredPeerState discovered_peers[CHESS_MAX_DISCOVERED_PEERS];
     int discovered_peer_count;
     int selected_peer_idx;
+    int hovered_peer_idx;
 } ChessLobbyState;
 
 void chess_lobby_init(ChessLobbyState *lobby);

@@ -1229,6 +1229,20 @@ void chess_ui_render_frame(AppContext *ctx)
     SDL_RenderClear(ctx->renderer);
 
     if (!ctx->network_session.game_started) {
+        /* Update lobby hover state and cursor */
+        {
+            float mx = 0.0f;
+            float my = 0.0f;
+            int hovered;
+            SDL_GetMouseState(&mx, &my);
+            hovered = chess_lobby_find_clicked_peer(ctx->window, &ctx->lobby, (int)mx, (int)my);
+            ctx->lobby.hovered_peer_idx = hovered;
+            if (hovered >= 0 && ctx->cursor_pointer) {
+                SDL_SetCursor(ctx->cursor_pointer);
+            } else if (ctx->cursor_default) {
+                SDL_SetCursor(ctx->cursor_default);
+            }
+        }
         chess_lobby_render(ctx->renderer, width, height, &ctx->lobby, s_lobby_font ? s_lobby_font : s_coord_font);
     } else {
         if (ctx->drag_active) {

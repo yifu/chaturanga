@@ -43,10 +43,16 @@ void chess_lobby_render(
     /* Render peer list */
     for (i = 0; i < lobby->discovered_peer_count; ++i) {
         const ChessDiscoveredPeerState *peer_state = &lobby->discovered_peers[i];
-        const SDL_Color bg_color = (i == lobby->selected_peer_idx)
-            ? (SDL_Color){100, 150, 200, 255}
-            : (SDL_Color){60, 60, 60, 255};
+        SDL_Color bg_color;
         const SDL_Color text_color = (SDL_Color){238, 238, 210, 255};
+
+        if (i == lobby->selected_peer_idx) {
+            bg_color = (SDL_Color){100, 150, 200, 255};
+        } else if (i == lobby->hovered_peer_idx) {
+            bg_color = (SDL_Color){85, 85, 85, 255};
+        } else {
+            bg_color = (SDL_Color){60, 60, 60, 255};
+        }
         SDL_FRect peer_rect = {
             (float)peer_item_x,
             (float)y,
