@@ -21,6 +21,14 @@
 #include <unistd.h>
 
 #define CHESS_DNSSD_SERVICE_TYPE "_chess._tcp"
+#define CHESS_DNSSD_PENDING_MAX 16
+
+typedef struct {
+    char     service_name[CHESS_PROFILE_ID_STRING_LEN];
+    char     regtype[64];
+    char     reply_domain[64];
+    uint32_t interface_index;
+} ChessDnssdPendingService;
 
 typedef struct {
     DNSServiceRef register_ref;
@@ -31,6 +39,8 @@ typedef struct {
     bool          pending_peer_ready;
     ChessDiscoveredPeer pending_peer;
     char          resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    ChessDnssdPendingService pending_queue[CHESS_DNSSD_PENDING_MAX];
+    int                      pending_count;
 } ChessDnssdContext;
 
 static void txt_copy_to_buffer(
@@ -281,9 +291,30 @@ static void browse_callback(
         return;
     }
 
-    /* Skip if already in a resolve/addr pipeline or peer already found */
-    if (dnssd->resolve_ref || dnssd->pending_peer_ready) {
+    /* Skip if this service is already being resolved or queued */
+    if (SDL_strcmp(service_name, dnssd->resolving_profile_id) == 0) {
         SDL_Log("DNS-SD: already resolving or peer found, skipping '%s'", service_name);
+        return;
+    }
+    for (int i = 0; i < dnssd->pending_count; i++) {
+        if (SDL_strcmp(dnssd->pending_queue[i].service_name, service_name) == 0) {
+            SDL_Log("DNS-SD: already resolving or peer found, skipping '%s'", service_name);
+            return;
+        }
+    }
+
+    /* If a resolve is in progress or a result is pending, queue for later */
+    if (dnssd->resolve_ref || dnssd->pending_peer_ready) {
+        if (dnssd->pending_count < CHESS_DNSSD_PENDING_MAX) {
+            ChessDnssdPendingService *ps = &dnssd->pending_queue[dnssd->pending_count++];
+            SDL_strlcpy(ps->service_name, service_name, sizeof(ps->service_name));
+            SDL_strlcpy(ps->regtype, regtype, sizeof(ps->regtype));
+            SDL_strlcpy(ps->reply_domain, reply_domain, sizeof(ps->reply_domain));
+            ps->interface_index = interface_index;
+            SDL_Log("DNS-SD: queued peer service '%s' for later resolve", service_name);
+        } else {
+            SDL_Log("DNS-SD: pending queue full, skipping '%s'", service_name);
+        }
         return;
     }
 
@@ -348,6 +379,15 @@ static void register_callback(
 #include <stdio.h>
 
 #define CHESS_AVAHI_SERVICE_TYPE "_chess._tcp"
+#define CHESS_AVAHI_PENDING_MAX 16
+
+typedef struct {
+    char           name[CHESS_PROFILE_ID_STRING_LEN + 8];
+    char           type[64];
+    char           domain[64];
+    AvahiIfIndex   interface;
+    AvahiProtocol  protocol;
+} ChessAvahiPendingService;
 
 typedef struct {
     AvahiSimplePoll     *simple_poll;
@@ -359,6 +399,8 @@ typedef struct {
     ChessDiscoveredPeer  pending_peer;
     char                 resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN + 8];
     char                 service_name[CHESS_PROFILE_ID_STRING_LEN + 8]; /* "uuid:port" */
+    ChessAvahiPendingService pending_queue[CHESS_AVAHI_PENDING_MAX];
+    int                      pending_count;
 } ChessAvahiContext;
 
 static uint32_t avahi_resolve_local_ip(void)
@@ -540,12 +582,35 @@ static void avahi_browse_callback(
             break;
         }
 
-        /* Skip if already resolved/resolving this peer or a result is pending */
-        if (avahi->pending_peer_ready) {
+        /* Skip if already resolving or queued for this exact service */
+        if (avahi->resolving &&
+            SDL_strcmp(avahi->resolving_profile_id, name) == 0) {
             break;
         }
-        if (avahi->resolving &&
-            SDL_strncmp(avahi->resolving_profile_id, name, CHESS_PROFILE_ID_STRING_LEN) == 0) {
+        {
+            bool already_queued = false;
+            for (int i = 0; i < avahi->pending_count; i++) {
+                if (SDL_strcmp(avahi->pending_queue[i].name, name) == 0) {
+                    already_queued = true;
+                    break;
+                }
+            }
+            if (already_queued) {
+                break;
+            }
+        }
+
+        /* If a resolve is in progress or a result is pending, queue for later */
+        if (avahi->pending_peer_ready || avahi->resolving) {
+            if (avahi->pending_count < CHESS_AVAHI_PENDING_MAX) {
+                ChessAvahiPendingService *ps = &avahi->pending_queue[avahi->pending_count++];
+                SDL_strlcpy(ps->name, name, sizeof(ps->name));
+                SDL_strlcpy(ps->type, type, sizeof(ps->type));
+                SDL_strlcpy(ps->domain, domain, sizeof(ps->domain));
+                ps->interface = interface;
+                ps->protocol  = protocol;
+                SDL_Log("Avahi: queued peer service '%s' for later resolve", name);
+            }
             break;
         }
 
@@ -954,7 +1019,38 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
         if (avahi->pending_peer_ready) {
             *out_remote_peer = avahi->pending_peer;
             avahi->pending_peer_ready = false;
+            avahi->resolving = false;
             memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
+            avahi->resolving_profile_id[0] = '\0';
+
+            /* Start resolving the next queued service, if any */
+            while (avahi->pending_count > 0) {
+                ChessAvahiPendingService ps = avahi->pending_queue[0];
+                avahi->pending_count--;
+                if (avahi->pending_count > 0) {
+                    memmove(&avahi->pending_queue[0], &avahi->pending_queue[1],
+                            (size_t)avahi->pending_count * sizeof(avahi->pending_queue[0]));
+                }
+
+                SDL_Log("Avahi: found peer service '%s', resolving...", ps.name);
+                memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
+                SDL_strlcpy(avahi->resolving_profile_id, ps.name,
+                            sizeof(avahi->resolving_profile_id));
+                avahi->resolving = true;
+
+                if (avahi_service_resolver_new(
+                        avahi->client, ps.interface, ps.protocol,
+                        ps.name, ps.type, ps.domain,
+                        AVAHI_PROTO_INET, 0,
+                        avahi_resolver_callback, ctx)) {
+                    break;
+                }
+                SDL_Log("Avahi: failed to create resolver: %s",
+                        avahi_strerror(avahi_client_errno(avahi->client)));
+                avahi->resolving = false;
+                avahi->resolving_profile_id[0] = '\0';
+            }
+
             return true;
         }
 
@@ -987,6 +1083,41 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
             *out_remote_peer = dnssd->pending_peer;
             dnssd->pending_peer_ready = false;
             memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
+            dnssd->resolving_profile_id[0] = '\0';
+
+            /* Start resolving the next queued service, if any */
+            while (dnssd->pending_count > 0) {
+                ChessDnssdPendingService ps = dnssd->pending_queue[0];
+                dnssd->pending_count--;
+                if (dnssd->pending_count > 0) {
+                    memmove(&dnssd->pending_queue[0], &dnssd->pending_queue[1],
+                            (size_t)dnssd->pending_count * sizeof(dnssd->pending_queue[0]));
+                }
+
+                SDL_Log("DNS-SD: found peer service '%s', resolving...", ps.service_name);
+                memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
+                SDL_strlcpy(dnssd->pending_peer.peer.profile_id, ps.service_name,
+                            sizeof(dnssd->pending_peer.peer.profile_id));
+                SDL_strlcpy(dnssd->resolving_profile_id, ps.service_name,
+                            sizeof(dnssd->resolving_profile_id));
+
+                DNSServiceErrorType rerr = DNSServiceResolve(
+                    &dnssd->resolve_ref,
+                    0,
+                    ps.interface_index,
+                    ps.service_name,
+                    ps.regtype,
+                    ps.reply_domain,
+                    resolve_callback,
+                    ctx);
+                if (rerr == kDNSServiceErr_NoError) {
+                    break;
+                }
+                SDL_Log("DNS-SD: DNSServiceResolve failed: %d", rerr);
+                dnssd->resolve_ref = NULL;
+                dnssd->resolving_profile_id[0] = '\0';
+            }
+
             return true;
         }
 
