@@ -75,11 +75,7 @@ static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
         return;
     }
 
-    if (ctx->lobby.selected_peer_idx != clicked_peer) {
-        ctx->lobby.selected_peer_idx = clicked_peer;
-        SDL_Log("LOBBY: selected peer %d", clicked_peer);
-        return;
-    }
+    ctx->lobby.selected_peer_idx = clicked_peer;
 
     {
         ChessChallengeState current_state = chess_lobby_get_challenge_state(&ctx->lobby, clicked_peer);
