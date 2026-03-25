@@ -5,6 +5,7 @@
 
 #include "chess_app/game_state.h"
 #include "chess_app/lobby_state.h"
+#include "chess_app/network_discovery.h"
 #include "chess_app/network_peer.h"
 #include "chess_app/network_protocol.h"
 #include "chess_app/network_session.h"
@@ -299,6 +300,10 @@ static void net_handle_start_packet(AppContext *ctx, const ChessStartPayload *st
 
         chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IN_GAME);
 
+        /* Stop mDNS so this player is no longer listed in other lobbies
+         * while in-game.  Restarted on return to lobby. */
+        chess_discovery_stop(&ctx->discovery);
+
         if (!chess_persist_load_match_snapshot(ctx, start_payload->game_id, start_payload->resume_token)) {
             chess_game_state_init(&ctx->game_state);
             ctx->move_history_count = 0;
@@ -453,6 +458,11 @@ static void net_handle_ack_packet(AppContext *ctx, const ChessAckPayload *ack)
         }
 
         chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IN_GAME);
+
+        /* Stop mDNS so this player is no longer listed in other lobbies
+         * while in-game.  Restarted on return to lobby. */
+        chess_discovery_stop(&ctx->discovery);
+
         if (!chess_persist_load_match_snapshot(
                 ctx,
                 ctx->pending_start_payload.game_id,

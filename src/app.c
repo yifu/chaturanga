@@ -265,6 +265,11 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
     memset(&ctx->discovered_peer, 0, sizeof(ctx->discovered_peer));
     ctx->discovery.remote_emitted = false;
+
+    /* Restart mDNS so this player is visible in the lobby again and can
+     * rediscover the opponent for a potential resume. */
+    chess_discovery_stop(&ctx->discovery);
+    chess_discovery_start(&ctx->discovery, &ctx->local_peer, ctx->listener.port);
     ctx->drag_active = false;
     ctx->drag_piece = CHESS_PIECE_EMPTY;
     ctx->promotion_pending = false;
