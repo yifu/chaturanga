@@ -323,6 +323,7 @@ static void register_callback(
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <stdio.h>
 
 #define CHESS_AVAHI_SERVICE_TYPE "_chess._tcp"
 
@@ -335,6 +336,7 @@ typedef struct {
     bool                 resolving;          /* resolver in flight */
     ChessDiscoveredPeer  pending_peer;
     char                 resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    char                 service_name[CHESS_PROFILE_ID_STRING_LEN + 8]; /* "uuid:port" */
 } ChessAvahiContext;
 
 static uint32_t avahi_resolve_local_ip(void)
@@ -502,7 +504,7 @@ static void avahi_browse_callback(
     switch (event) {
     case AVAHI_BROWSER_NEW:
         /* Skip our own advertisement */
-        if (SDL_strcmp(name, ctx->local_peer.profile_id) == 0) {
+        if (SDL_strcmp(name, avahi->service_name) == 0) {
             SDL_Log("Avahi: skipping own service");
             break;
         }
@@ -677,12 +679,15 @@ bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer
         txt = avahi_string_list_add_pair(txt, "host", ctx->local_peer.hostname);
         txt = avahi_string_list_add_pair(txt, "profile", ctx->local_peer.profile_id);
 
+        (void)snprintf(avahi->service_name, sizeof(avahi->service_name),
+                       "%s:%u", ctx->local_peer.profile_id, (unsigned)ctx->game_port);
+
         avahi_error = avahi_entry_group_add_service_strlst(
             avahi->group,
             AVAHI_IF_UNSPEC,
             AVAHI_PROTO_INET,
             0,
-            ctx->local_peer.profile_id,
+            avahi->service_name,
             CHESS_AVAHI_SERVICE_TYPE,
             NULL, NULL,
             ctx->game_port,

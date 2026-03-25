@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -11,12 +12,15 @@
 
 static bool configure_connected_socket(int fd)
 {
-#if defined(SO_NOSIGPIPE)
     int opt = 1;
+#if defined(SO_NOSIGPIPE)
     if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt)) != 0) {
         return false;
     }
 #endif
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) != 0) {
+        return false;
+    }
     return true;
 }
 
@@ -27,12 +31,19 @@ static bool recv_all_with_timeout(int fd, void *buf, size_t len, int timeout_ms)
     while (received < len) {
         struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
         ssize_t n = 0;
+        int pr;
 
-        if (poll(&pfd, 1, timeout_ms) <= 0) {
+        do {
+            pr = poll(&pfd, 1, timeout_ms);
+        } while (pr < 0 && errno == EINTR);
+        if (pr <= 0) {
             return false;
         }
 
         n = recv(fd, (char *)buf + received, len - received, 0);
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
         if (n <= 0) {
             return false;
         }
@@ -54,6 +65,9 @@ static bool send_all(int fd, const void *buf, size_t len)
 #else
         n = send(fd, (const char *)buf + sent, len - sent, 0);
 #endif
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
         if (n <= 0) {
             return false;
         }
