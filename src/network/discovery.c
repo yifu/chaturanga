@@ -39,9 +39,12 @@ typedef struct {
     bool          pending_peer_ready;
     ChessDiscoveredPeer pending_peer;
     char          resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    uint64_t      resolve_started_at; /* SDL_GetTicks() when resolve began */
     ChessDnssdPendingService pending_queue[CHESS_DNSSD_PENDING_MAX];
     int                      pending_count;
 } ChessDnssdContext;
+
+#define CHESS_DNSSD_RESOLVE_TIMEOUT_MS 5000
 
 static void txt_copy_to_buffer(
     const unsigned char *txt_record,
@@ -333,6 +336,7 @@ static void browse_callback(
     SDL_strlcpy(dnssd->pending_peer.peer.profile_id, service_name,
                 sizeof(dnssd->pending_peer.peer.profile_id));
     SDL_strlcpy(dnssd->resolving_profile_id, service_name, sizeof(dnssd->resolving_profile_id));
+    dnssd->resolve_started_at = SDL_GetTicks();
 
     err = DNSServiceResolve(
         &dnssd->resolve_ref,
@@ -409,9 +413,12 @@ typedef struct {
     ChessDiscoveredPeer  pending_peer;
     char                 resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN + 8];
     char                 service_name[CHESS_PROFILE_ID_STRING_LEN + 8]; /* "uuid:port" */
+    uint64_t             resolve_started_at;
     ChessAvahiPendingService pending_queue[CHESS_AVAHI_PENDING_MAX];
     int                      pending_count;
 } ChessAvahiContext;
+
+#define CHESS_AVAHI_RESOLVE_TIMEOUT_MS 5000
 
 static uint32_t avahi_resolve_local_ip(void)
 {
@@ -628,6 +635,7 @@ static void avahi_browse_callback(
         memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
         SDL_strlcpy(avahi->resolving_profile_id, name, sizeof(avahi->resolving_profile_id));
         avahi->resolving = true;
+        avahi->resolve_started_at = SDL_GetTicks();
 
         if (!avahi_service_resolver_new(
                 avahi->client, interface, protocol,
@@ -1036,12 +1044,28 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
         /* Pump Avahi event loop (non-blocking) */
         avahi_simple_poll_iterate(avahi->simple_poll, 0);
 
-        if (avahi->pending_peer_ready) {
-            *out_remote_peer = avahi->pending_peer;
-            avahi->pending_peer_ready = false;
+        /* Detect stalled resolve: resolving flag set but no result after timeout */
+        if (!avahi->pending_peer_ready &&
+            avahi->resolving &&
+            SDL_GetTicks() - avahi->resolve_started_at > CHESS_AVAHI_RESOLVE_TIMEOUT_MS) {
+            SDL_Log("Avahi: resolve timed out for '%s', skipping", avahi->resolving_profile_id);
             avahi->resolving = false;
-            memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
             avahi->resolving_profile_id[0] = '\0';
+            memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
+        }
+
+        /* Advance: either a peer was resolved, or pipeline was cleared */
+        if (avahi->pending_peer_ready ||
+            (!avahi->resolving && avahi->pending_count > 0)) {
+
+            bool has_result = avahi->pending_peer_ready;
+            if (has_result) {
+                *out_remote_peer = avahi->pending_peer;
+                avahi->pending_peer_ready = false;
+                avahi->resolving = false;
+                memset(&avahi->pending_peer, 0, sizeof(avahi->pending_peer));
+                avahi->resolving_profile_id[0] = '\0';
+            }
 
             /* Start resolving the next queued service, if any */
             while (avahi->pending_count > 0) {
@@ -1057,6 +1081,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
                 SDL_strlcpy(avahi->resolving_profile_id, ps.name,
                             sizeof(avahi->resolving_profile_id));
                 avahi->resolving = true;
+                avahi->resolve_started_at = SDL_GetTicks();
 
                 if (avahi_service_resolver_new(
                         avahi->client, ps.interface, ps.protocol,
@@ -1071,7 +1096,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
                 avahi->resolving_profile_id[0] = '\0';
             }
 
-            return true;
+            return has_result;
         }
 
         return false;
@@ -1099,11 +1124,45 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
             dnssd_pump(dnssd->addr_ref);
         }
 
-        if (dnssd->pending_peer_ready) {
-            *out_remote_peer = dnssd->pending_peer;
-            dnssd->pending_peer_ready = false;
-            memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
+        /* Detect stalled resolve pipeline: either resolve_ref hung,
+         * addr_ref hung, or resolve finished without producing a peer. */
+        if (!dnssd->pending_peer_ready &&
+            dnssd->resolving_profile_id[0] != '\0' &&
+            SDL_GetTicks() - dnssd->resolve_started_at > CHESS_DNSSD_RESOLVE_TIMEOUT_MS) {
+            SDL_Log("DNS-SD: resolve timed out for '%s'", dnssd->resolving_profile_id);
+            if (dnssd->resolve_ref) {
+                DNSServiceRefDeallocate(dnssd->resolve_ref);
+                dnssd->resolve_ref  = NULL;
+                dnssd->resolve_done = false;
+            }
+            if (dnssd->addr_ref) {
+                DNSServiceRefDeallocate(dnssd->addr_ref);
+                dnssd->addr_ref = NULL;
+            }
             dnssd->resolving_profile_id[0] = '\0';
+            memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
+        }
+        /* Also catch immediate stall: resolve finished but no addr started */
+        if (!dnssd->pending_peer_ready &&
+            !dnssd->resolve_ref && !dnssd->addr_ref &&
+            dnssd->resolving_profile_id[0] != '\0') {
+            SDL_Log("DNS-SD: resolve stalled for '%s', skipping", dnssd->resolving_profile_id);
+            dnssd->resolving_profile_id[0] = '\0';
+            memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
+        }
+
+        /* Advance: either a peer was resolved, or pipeline was cleared */
+        if (dnssd->pending_peer_ready ||
+            (!dnssd->resolve_ref && !dnssd->addr_ref &&
+             dnssd->resolving_profile_id[0] == '\0' && dnssd->pending_count > 0)) {
+
+            bool has_result = dnssd->pending_peer_ready;
+            if (has_result) {
+                *out_remote_peer = dnssd->pending_peer;
+                dnssd->pending_peer_ready = false;
+                memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
+                dnssd->resolving_profile_id[0] = '\0';
+            }
 
             /* Start resolving the next queued service, if any */
             while (dnssd->pending_count > 0) {
@@ -1120,6 +1179,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
                             sizeof(dnssd->pending_peer.peer.profile_id));
                 SDL_strlcpy(dnssd->resolving_profile_id, ps.service_name,
                             sizeof(dnssd->resolving_profile_id));
+                dnssd->resolve_started_at = SDL_GetTicks();
 
                 DNSServiceErrorType rerr = DNSServiceResolve(
                     &dnssd->resolve_ref,
@@ -1138,7 +1198,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
                 dnssd->resolving_profile_id[0] = '\0';
             }
 
-            return true;
+            return has_result;
         }
 
         return false;
