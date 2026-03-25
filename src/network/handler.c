@@ -703,6 +703,13 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
         return;
     }
 
+    /* Don't accept connections or initiate handshakes in post-game phases;
+     * the user must click "Return to Lobby" first. */
+    if (ctx->network_session.phase == CHESS_PHASE_DISCONNECTED ||
+        ctx->network_session.phase == CHESS_PHASE_TERMINATED) {
+        return;
+    }
+
     /* Accept inbound TCP connections eagerly — even before mDNS
      * resolves the remote peer.  The HELLO handshake identifies
      * the peer.  This eliminates ~800 ms of Bonjour propagation
@@ -932,6 +939,22 @@ void chess_net_tick(AppContext *ctx)
         (SDL_GetTicks() - ctx->network_session.start_sent_at_ms) > 3000u) {
         SDL_Log("NET: START ACK timeout, will retry");
         ctx->network_session.start_sent = false;
+    }
+
+    /* Timeout TCP_CONNECTING phase after 10 seconds. */
+    if (ctx->network_session.phase == CHESS_PHASE_TCP_CONNECTING &&
+        (SDL_GetTicks() - ctx->network_session.phase_entered_at_ms) > 10000u) {
+        SDL_Log("NET: TCP_CONNECTING timeout, returning to IDLE");
+        chess_tcp_connection_close(&ctx->connection);
+        chess_net_reset_transport_progress(ctx);
+        ctx->network_session.role = CHESS_ROLE_UNKNOWN;
+        ctx->network_session.peer_available = false;
+        memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
+        chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
+        if (ctx->lobby.selected_peer_idx >= 0) {
+            chess_lobby_set_challenge_state(&ctx->lobby, ctx->lobby.selected_peer_idx, CHESS_CHALLENGE_NONE);
+        }
+        app_set_status_message(ctx, "Connection timeout. Try again.", 3000u);
     }
 
     poll_socket_events(&ctx->listener, &ctx->connection, &connection_phase_events);

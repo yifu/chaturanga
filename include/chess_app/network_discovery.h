@@ -12,6 +12,8 @@ typedef struct ChessDiscoveryContext {
     uint16_t game_port;
     uint32_t local_ipv4;            /* LAN IP (host order), for loopback substitution */
     ChessPeerInfo local_peer;
+    bool removal_pending;           /* service-removal notification for lobby */
+    char removed_profile_id[CHESS_PROFILE_ID_STRING_LEN];
     void *platform; /* platform-specific discovery backend data (heap-allocated) */
 } ChessDiscoveryContext;
 
@@ -24,5 +26,6 @@ typedef struct ChessDiscoveredPeer {
 bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer, uint16_t game_port);
 void chess_discovery_stop(ChessDiscoveryContext *ctx);
 bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer);
+bool chess_discovery_poll_removal(ChessDiscoveryContext *ctx, char *out_profile_id, size_t out_size);
 
 #endif

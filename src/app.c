@@ -382,6 +382,17 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
         ctx->pending_start_payload.resume_token[0] != '\0' &&
         ctx->resume_remote_profile_id[0] != '\0';
 
+    /* Process service removals first so re-registered peers are handled
+     * in the correct order (remove stale, then add fresh). */
+    {
+        char removed_id[CHESS_PROFILE_ID_STRING_LEN];
+        if (chess_discovery_poll_removal(&ctx->discovery, removed_id, sizeof(removed_id))) {
+            if (chess_lobby_remove_peer_by_profile_id(&ctx->lobby, removed_id)) {
+                SDL_Log("LOBBY: removed departed peer %.8s...", removed_id);
+            }
+        }
+    }
+
     if (chess_discovery_poll(&ctx->discovery, &ctx->discovered_peer)) {
         bool should_select_peer = false;
 

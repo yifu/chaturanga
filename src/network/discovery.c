@@ -249,7 +249,29 @@ static void browse_callback(
         return;
     }
     if (!(flags & kDNSServiceFlagsAdd)) {
-        return; /* service removal — ignore */
+        /* Service removed — notify lobby.
+         * Strip optional ":port" suffix so that Avahi-style service names
+         * ("profile_id:port") are matched against the clean profile_id
+         * stored in the lobby.  Pure DNS-SD names have no colon. */
+        if (service_name && service_name[0] != '\0' &&
+            !ctx->removal_pending) {
+            char clean_id[CHESS_PROFILE_ID_STRING_LEN];
+            const char *colon = strchr(service_name, ':');
+            size_t id_len = colon ? (size_t)(colon - service_name) : strlen(service_name);
+            if (id_len >= sizeof(clean_id)) {
+                id_len = sizeof(clean_id) - 1;
+            }
+            memcpy(clean_id, service_name, id_len);
+            clean_id[id_len] = '\0';
+
+            if (SDL_strcmp(clean_id, ctx->local_peer.profile_id) != 0) {
+                SDL_strlcpy(ctx->removed_profile_id, clean_id,
+                            sizeof(ctx->removed_profile_id));
+                ctx->removal_pending = true;
+            }
+        }
+        SDL_Log("DNS-SD: service '%s' removed", service_name);
+        return;
     }
 
     /* Skip our own advertisement — use exact match so a Bonjour-renamed
@@ -335,7 +357,7 @@ typedef struct {
     bool                 pending_peer_ready;
     bool                 resolving;          /* resolver in flight */
     ChessDiscoveredPeer  pending_peer;
-    char                 resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    char                 resolving_profile_id[CHESS_PROFILE_ID_STRING_LEN + 8];
     char                 service_name[CHESS_PROFILE_ID_STRING_LEN + 8]; /* "uuid:port" */
 } ChessAvahiContext;
 
@@ -467,15 +489,24 @@ static void avahi_resolver_callback(
             }
 
             avahi->pending_peer.tcp_ipv4 = resolved_ip;
-            SDL_strlcpy(avahi->pending_peer.peer.profile_id, name,
-                        sizeof(avahi->pending_peer.peer.profile_id));
+
+            /* Extract profile_id from service name (strip :port suffix) */
+            {
+                const char *colon = strchr(name, ':');
+                size_t id_len = colon ? (size_t)(colon - name) : strlen(name);
+                if (id_len >= sizeof(avahi->pending_peer.peer.profile_id)) {
+                    id_len = sizeof(avahi->pending_peer.peer.profile_id) - 1;
+                }
+                memcpy(avahi->pending_peer.peer.profile_id, name, id_len);
+                avahi->pending_peer.peer.profile_id[id_len] = '\0';
+            }
             avahi->pending_peer.tcp_port = port;
 
             avahi_fill_peer_identity_from_txt(&avahi->pending_peer.peer, txt);
             avahi->pending_peer_ready = true;
 
             SDL_Log("Avahi: peer ready — profile_id=%s port=%u",
-                    name, (unsigned)port);
+                    avahi->pending_peer.peer.profile_id, (unsigned)port);
         }
     } else {
         SDL_Log("Avahi: failed to resolve service '%s': %s",
@@ -534,9 +565,26 @@ static void avahi_browse_callback(
         }
         break;
 
-    case AVAHI_BROWSER_REMOVE:
+    case AVAHI_BROWSER_REMOVE: {
+        /* Extract profile_id from service name and signal lobby removal */
+        char profile_id[CHESS_PROFILE_ID_STRING_LEN];
+        const char *colon = strchr(name, ':');
+        size_t uuid_len = colon ? (size_t)(colon - name) : strlen(name);
+        if (uuid_len >= sizeof(profile_id)) {
+            uuid_len = sizeof(profile_id) - 1;
+        }
+        memcpy(profile_id, name, uuid_len);
+        profile_id[uuid_len] = '\0';
+
+        if (SDL_strcmp(profile_id, ctx->local_peer.profile_id) != 0 &&
+            !ctx->removal_pending) {
+            SDL_strlcpy(ctx->removed_profile_id, profile_id,
+                        sizeof(ctx->removed_profile_id));
+            ctx->removal_pending = true;
+        }
         SDL_Log("Avahi: service '%s' removed", name);
         break;
+    }
 
     case AVAHI_BROWSER_FAILURE:
         SDL_Log("Avahi: browser failure: %s",
@@ -979,4 +1027,16 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
         return true;
     }
 #endif
+}
+
+bool chess_discovery_poll_removal(ChessDiscoveryContext *ctx, char *out_profile_id, size_t out_size)
+{
+    if (!ctx || !out_profile_id || out_size == 0 || !ctx->removal_pending) {
+        return false;
+    }
+
+    SDL_strlcpy(out_profile_id, ctx->removed_profile_id, out_size);
+    ctx->removal_pending = false;
+    ctx->removed_profile_id[0] = '\0';
+    return true;
 }

@@ -1,6 +1,7 @@
 #include "chess_app/input_handler.h"
 
 #include "chess_app/app_context.h"
+#include "chess_app/net_handler.h"
 #include "chess_app/persistence.h"
 #include "chess_app/ui_game.h"
 #include "chess_app/ui_lobby.h"
@@ -90,6 +91,12 @@ static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
             SDL_Log("LOBBY: challenge sent to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
         } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
             chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_NONE);
+            chess_tcp_connection_close(&ctx->connection);
+            chess_net_reset_transport_progress(ctx);
+            ctx->network_session.role = CHESS_ROLE_UNKNOWN;
+            ctx->network_session.peer_available = false;
+            memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
+            chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
             SDL_Log("LOBBY: challenge cancelled for peer %d", clicked_peer);
         } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
             ChessAcceptPayload accept;
