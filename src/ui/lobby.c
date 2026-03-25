@@ -46,8 +46,11 @@ void chess_lobby_render(
         SDL_Color bg_color;
         const SDL_Color text_color = (SDL_Color){238, 238, 210, 255};
 
-        if (i == lobby->selected_peer_idx) {
+        if (peer_state->challenge_state == CHESS_CHALLENGE_OUTGOING_PENDING ||
+            peer_state->challenge_state == CHESS_CHALLENGE_MATCHED) {
             bg_color = (SDL_Color){100, 150, 200, 255};
+        } else if (peer_state->challenge_state == CHESS_CHALLENGE_INCOMING_PENDING) {
+            bg_color = (SDL_Color){150, 180, 100, 255};
         } else if (i == lobby->hovered_peer_idx) {
             bg_color = (SDL_Color){85, 85, 85, 255};
         } else {

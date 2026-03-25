@@ -75,32 +75,28 @@ static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
         return;
     }
 
-    ctx->lobby.selected_peer_idx = clicked_peer;
-
     {
         ChessChallengeState current_state = chess_lobby_get_challenge_state(&ctx->lobby, clicked_peer);
 
         if (current_state == CHESS_CHALLENGE_NONE) {
-            ctx->network_session.role = CHESS_ROLE_CLIENT;
+            /* Send a challenge to this peer — does not affect other challenges */
             chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
-            chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[clicked_peer].peer);
             SDL_Log("LOBBY: challenge sent to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
         } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
+            /* Cancel challenge for this specific peer */
             chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_NONE);
-            ctx->lobby.selected_peer_idx = -1;
-            chess_tcp_connection_close(&ctx->connection);
-            chess_net_reset_transport_progress(ctx);
-            ctx->network_session.role = CHESS_ROLE_UNKNOWN;
-            ctx->network_session.peer_available = false;
-            memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
-            chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
+            chess_lobby_close_challenge_connection(&ctx->lobby, clicked_peer);
             SDL_Log("LOBBY: challenge cancelled for peer %d", clicked_peer);
         } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
+            /* Accept an incoming challenge — promote to game session */
             ChessAcceptPayload accept;
             memset(&accept, 0, sizeof(accept));
             SDL_strlcpy(accept.acceptor_profile_id, ctx->network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
 
             if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
+                /* Close all outgoing challenge connections — we're starting a game */
+                chess_lobby_close_all_challenge_connections(&ctx->lobby);
+
                 ctx->network_session.challenge_done = true;
                 ctx->network_session.role = CHESS_ROLE_SERVER;
                 chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);

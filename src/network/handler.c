@@ -208,27 +208,33 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
     }
 
     if (peer_idx >= 0) {
-        /* B2 fix: if we already sent an OFFER to this peer (cross-offer),
+        /* If we already sent an OFFER to this peer (cross-offer),
          * auto-accept instead of overwriting with INCOMING_PENDING.
-         * Tiebreak: smaller profile_id => SERVER. */
+         * Use ctx->connection (the server-side connection) for the game. */
         if (chess_lobby_get_challenge_state(&ctx->lobby, peer_idx) == CHESS_CHALLENGE_OUTGOING_PENDING) {
             ChessAcceptPayload accept;
             memset(&accept, 0, sizeof(accept));
             SDL_strlcpy(accept.acceptor_profile_id, ctx->network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
             if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
-                ctx->network_session.challenge_done = true;
-                if (strncmp(ctx->network_session.local_peer.profile_id,
-                            offer->challenger_profile_id,
-                            CHESS_PROFILE_ID_STRING_LEN) < 0) {
-                    ctx->network_session.role = CHESS_ROLE_SERVER;
-                } else {
-                    ctx->network_session.role = CHESS_ROLE_CLIENT;
+                /* Close all outgoing challenge connections */
+                chess_lobby_close_all_challenge_connections(&ctx->lobby);
+                /* Clear other outgoing challenges */
+                {
+                    int j;
+                    for (j = 0; j < ctx->lobby.discovered_peer_count; ++j) {
+                        if (j != peer_idx && ctx->lobby.discovered_peers[j].challenge_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
+                            chess_lobby_set_challenge_state(&ctx->lobby, j, CHESS_CHALLENGE_NONE);
+                        }
+                    }
                 }
+                ctx->network_session.challenge_done = true;
+                ctx->network_session.role = CHESS_ROLE_SERVER;
+                ctx->network_session.hello_completed = true;
                 chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
+                chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[peer_idx].peer);
                 chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_GAME_STARTING);
-                SDL_Log("NET: cross-offer detected, auto-accepted (%.8s...) role=%s",
-                        offer->challenger_profile_id,
-                        ctx->network_session.role == CHESS_ROLE_SERVER ? "SERVER" : "CLIENT");
+                SDL_Log("NET: cross-offer detected, auto-accepted (%.8s...) role=SERVER",
+                        offer->challenger_profile_id);
             } else {
                 chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_INCOMING_PENDING);
             }
@@ -731,42 +737,182 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessSocketE
             SDL_Log("NET: accepted TCP client connection");
         }
     }
+}
 
-    /* Client outbound connect: requires role assignment (challenge accepted). */
-    if (ctx->network_session.role != CHESS_ROLE_CLIENT &&
-        ctx->network_session.role != CHESS_ROLE_SERVER) {
+/* Promote a per-peer outgoing challenge connection to the main game connection.
+ * Closes all other challenge connections and transitions to GAME_STARTING. */
+static void net_promote_challenge_to_game(AppContext *ctx, int peer_idx)
+{
+    int i;
+    ChessDiscoveredPeerState *ps;
+
+    if (!ctx || peer_idx < 0 || peer_idx >= ctx->lobby.discovered_peer_count) {
         return;
     }
 
-    {
-        const uint64_t now = SDL_GetTicks();
-        bool should_attempt_client_connect = false;
+    ps = &ctx->lobby.discovered_peers[peer_idx];
 
-        if (ctx->network_session.role == CHESS_ROLE_CLIENT) {
-            if (!ctx->network_session.connect_attempted || now >= ctx->next_connect_attempt_at) {
-                ctx->network_session.connect_attempted = true;
-                ctx->next_connect_attempt_at = now + (uint64_t)ctx->connect_retry_ms;
-                should_attempt_client_connect = true;
+    /* Take over the challenge fd as the game connection */
+    chess_tcp_connection_close(&ctx->connection);
+    ctx->connection.fd = ps->challenge_conn.fd;
+    ps->challenge_conn.fd = -1; /* prevent close_challenge_connection from closing it */
+
+    /* Close all other challenge connections */
+    for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
+        if (i != peer_idx) {
+            chess_lobby_close_challenge_connection(&ctx->lobby, i);
+            if (ctx->lobby.discovered_peers[i].challenge_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
+                chess_lobby_set_challenge_state(&ctx->lobby, i, CHESS_CHALLENGE_NONE);
+            }
+        }
+    }
+
+    /* Set up the game session */
+    chess_lobby_set_challenge_state(&ctx->lobby, peer_idx, CHESS_CHALLENGE_MATCHED);
+    ctx->network_session.challenge_done = true;
+    ctx->network_session.role = CHESS_ROLE_CLIENT;
+    ctx->network_session.transport_connected = true;
+    ctx->network_session.hello_sent = true;
+    ctx->network_session.hello_received = true;
+    ctx->network_session.hello_completed = true;
+    chess_network_session_set_remote(&ctx->network_session, &ps->peer);
+    chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_GAME_STARTING);
+
+    SDL_Log("NET: challenge exchange completed (remote accept), waiting START/ACK");
+}
+
+/* Advance per-peer outgoing challenge connections (connect + HELLO + OFFER).
+ * Each peer with OUTGOING_PENDING gets its own TCP fd and handshake state. */
+static void net_advance_outgoing_challenges(AppContext *ctx)
+{
+    int i;
+    const uint64_t now = SDL_GetTicks();
+
+    if (!ctx) {
+        return;
+    }
+
+    /* Don't advance challenges if we're already in a game or game-starting */
+    if (ctx->network_session.challenge_done ||
+        ctx->network_session.phase == CHESS_PHASE_GAME_STARTING ||
+        ctx->network_session.phase == CHESS_PHASE_IN_GAME ||
+        ctx->network_session.phase == CHESS_PHASE_DISCONNECTED ||
+        ctx->network_session.phase == CHESS_PHASE_TERMINATED) {
+        return;
+    }
+
+    for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
+        ChessDiscoveredPeerState *ps = &ctx->lobby.discovered_peers[i];
+        ChessChallengeConnection *cc = &ps->challenge_conn;
+
+        if (ps->challenge_state != CHESS_CHALLENGE_OUTGOING_PENDING) {
+            continue;
+        }
+
+        /* ── TCP connect ───────────────────────────────────────────── */
+        if (cc->fd < 0) {
+            if (!cc->connect_attempted || now >= cc->next_connect_attempt_at) {
+                ChessTcpConnection tmp_conn;
+                cc->connect_attempted = true;
+                cc->next_connect_attempt_at = now + (uint64_t)ctx->connect_retry_ms;
+
+                if (chess_tcp_connect_once(ps->tcp_ipv4, ps->tcp_port, 200, &tmp_conn)) {
+                    cc->fd = tmp_conn.fd;
+                    SDL_Log("NET: connected to peer %d (%.8s...) for challenge", i, ps->peer.profile_id);
+                }
+            }
+            continue;
+        }
+
+        /* ── HELLO handshake ───────────────────────────────────────── */
+        if (!cc->hello_completed) {
+            /* Client sends HELLO first */
+            if (!cc->hello_sent) {
+                ChessHelloPayload hello;
+                ChessTcpConnection tmp = { .fd = cc->fd };
+                memset(&hello, 0, sizeof(hello));
+                SDL_strlcpy(hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(hello.profile_id));
+                hello.role = (uint32_t)CHESS_ROLE_CLIENT;
+                if (chess_tcp_send_hello(&tmp, &hello)) {
+                    cc->hello_sent = true;
+                }
+            }
+
+            /* Try to receive HELLO reply */
+            if (cc->hello_sent && !cc->hello_received) {
+                ChessPacketHeader hdr;
+                ChessTcpConnection tmp = { .fd = cc->fd };
+                if (chess_tcp_recv_packet_header(&tmp, 5, &hdr)) {
+                    if (hdr.message_type == CHESS_MSG_HELLO && hdr.payload_size == sizeof(ChessHelloPayload)) {
+                        ChessHelloPayload remote_hello;
+                        if (chess_tcp_recv_payload(&tmp, 50, &remote_hello, sizeof(remote_hello))) {
+                            cc->hello_received = true;
+                            SDL_Log("NET: challenge HELLO completed with peer %d (%.8s...)", i, ps->peer.profile_id);
+                        }
+                    }
+                }
+            }
+
+            if (cc->hello_sent && cc->hello_received) {
+                cc->hello_completed = true;
+            }
+            continue;
+        }
+
+        /* ── Send OFFER ────────────────────────────────────────────── */
+        if (!ps->offer_sent) {
+            ChessOfferPayload offer;
+            ChessTcpConnection tmp = { .fd = cc->fd };
+            memset(&offer, 0, sizeof(offer));
+            SDL_strlcpy(offer.challenger_profile_id, ctx->network_session.local_peer.profile_id, sizeof(offer.challenger_profile_id));
+            if (chess_tcp_send_offer(&tmp, &offer)) {
+                ps->offer_sent = true;
+                SDL_Log("NET: sent OFFER to peer %d (%.8s...)", i, ps->peer.profile_id);
             }
         }
 
-        if (ctx->network_session.role == CHESS_ROLE_CLIENT && should_attempt_client_connect) {
-            uint32_t remote_ip = ctx->discovered_peer.tcp_ipv4;
-            uint16_t remote_port = ctx->discovered_peer.tcp_port;
-            if (ctx->lobby.selected_peer_idx >= 0 &&
-                ctx->lobby.selected_peer_idx < ctx->lobby.discovered_peer_count) {
-                remote_ip = ctx->lobby.discovered_peers[ctx->lobby.selected_peer_idx].tcp_ipv4;
-                remote_port = ctx->lobby.discovered_peers[ctx->lobby.selected_peer_idx].tcp_port;
-            }
+        /* ── Wait for ACCEPT on this challenge connection ──────────── */
+        if (ps->offer_sent) {
+            ChessPacketHeader hdr;
+            ChessTcpConnection tmp = { .fd = cc->fd };
+            struct pollfd pfd = { .fd = cc->fd, .events = POLLIN, .revents = 0 };
 
-            if (ctx->connection.fd < 0 &&
-                chess_tcp_connect_once(
-                    remote_ip,
-                    remote_port,
-                    200,
-                    &ctx->connection
-                )) {
-                SDL_Log("NET: connected to remote TCP host");
+            if (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN)) {
+                if (chess_tcp_recv_packet_header(&tmp, 50, &hdr)) {
+                    if (hdr.message_type == CHESS_MSG_ACCEPT && hdr.payload_size == sizeof(ChessAcceptPayload)) {
+                        ChessAcceptPayload accept;
+                        if (chess_tcp_recv_payload(&tmp, 50, &accept, sizeof(accept))) {
+                            /* Promote this connection to the game connection */
+                            SDL_Log("NET: received ACCEPT from peer %d (%.8s...)", i, ps->peer.profile_id);
+                            net_promote_challenge_to_game(ctx, i);
+                            return; /* stop iterating, we're in-game now */
+                        }
+                    } else if (hdr.message_type == CHESS_MSG_OFFER && hdr.payload_size == sizeof(ChessOfferPayload)) {
+                        /* Cross-offer: auto-accept */
+                        ChessOfferPayload cross_offer;
+                        if (chess_tcp_recv_payload(&tmp, 50, &cross_offer, sizeof(cross_offer))) {
+                            ChessAcceptPayload accept;
+                            memset(&accept, 0, sizeof(accept));
+                            SDL_strlcpy(accept.acceptor_profile_id, ctx->network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
+                            if (chess_tcp_send_accept(&tmp, &accept)) {
+                                SDL_Log("NET: cross-offer with peer %d (%.8s...), auto-accepted", i, ps->peer.profile_id);
+                                net_promote_challenge_to_game(ctx, i);
+                                return;
+                            }
+                        }
+                    } else {
+                        /* Unexpected packet or read failure — drop this challenge */
+                        uint8_t discard[512];
+                        if (hdr.payload_size > 0 && hdr.payload_size <= sizeof(discard)) {
+                            chess_tcp_recv_payload(&tmp, 50, discard, hdr.payload_size);
+                        }
+                    }
+                } else {
+                    /* Connection lost */
+                    SDL_Log("NET: challenge connection lost with peer %d (%.8s...)", i, ps->peer.profile_id);
+                    chess_lobby_close_challenge_connection(&ctx->lobby, i);
+                    chess_lobby_set_challenge_state(&ctx->lobby, i, CHESS_CHALLENGE_NONE);
+                }
             }
         }
     }
@@ -785,75 +931,44 @@ static void net_advance_hello_handshake(AppContext *ctx)
     }
 
     /* Infer server role when we accepted an inbound connection
-     * before the mDNS election completed (role still UNKNOWN). */
+     * before the mDNS election completed (role still UNKNOWN).
+     * Client-side HELLO is handled per-peer in net_advance_outgoing_challenges. */
     effective_role = ctx->network_session.role;
-    if (effective_role == CHESS_ROLE_UNKNOWN && !ctx->network_session.connect_attempted) {
+    if (effective_role == CHESS_ROLE_UNKNOWN) {
         effective_role = CHESS_ROLE_SERVER;
     }
 
-    if (effective_role == CHESS_ROLE_UNKNOWN) {
+    /* Only handle SERVER-side HELLO on ctx->connection */
+    if (effective_role != CHESS_ROLE_SERVER) {
         return;
     }
 
-    /* Commit inferred role immediately so that packet handlers
-     * (e.g. net_handle_ack_packet) see the correct role when
-     * processing packets later in the same tick. */
     if (ctx->network_session.role == CHESS_ROLE_UNKNOWN) {
-        ctx->network_session.role = effective_role;
-        SDL_Log("NET: inferred role %s from early accept",
-                effective_role == CHESS_ROLE_SERVER ? "SERVER" : "CLIENT");
+        ctx->network_session.role = CHESS_ROLE_SERVER;
+        SDL_Log("NET: inferred role SERVER from early accept");
     }
 
     {
         ChessHelloPayload local_hello;
         memset(&local_hello, 0, sizeof(local_hello));
         SDL_strlcpy(local_hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(local_hello.profile_id));
-        local_hello.role = (uint32_t)effective_role;
+        local_hello.role = (uint32_t)CHESS_ROLE_SERVER;
 
-        /* CLIENT sends HELLO first; SERVER replies after receiving. */
-        if (effective_role == CHESS_ROLE_CLIENT && !ctx->network_session.hello_sent) {
+        if (ctx->network_session.hello_received && !ctx->network_session.hello_sent) {
             if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
                 ctx->network_session.hello_sent = true;
             }
         }
 
-        if (effective_role == CHESS_ROLE_SERVER && ctx->network_session.hello_received && !ctx->network_session.hello_sent) {
-            if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
-                ctx->network_session.hello_sent = true;
-            }
-        }
-
-        /* Both sides complete once they have sent AND received. */
         if (ctx->network_session.hello_sent && ctx->network_session.hello_received) {
             ctx->network_session.hello_completed = true;
             chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_AUTHENTICATED);
-            SDL_Log("NET: HELLO handshake completed (%s)",
-                    effective_role == CHESS_ROLE_SERVER ? "server" : "client");
+            SDL_Log("NET: HELLO handshake completed (server)");
         }
     }
 }
 
-static void net_send_pending_offer_if_needed(AppContext *ctx)
-{
-    if (!ctx || !ctx->network_session.hello_completed || ctx->network_session.challenge_done || ctx->connection.fd < 0) {
-        return;
-    }
-
-    {
-        const int peer_idx = ctx->lobby.selected_peer_idx;
-        if (peer_idx >= 0 &&
-            chess_lobby_get_challenge_state(&ctx->lobby, peer_idx) == CHESS_CHALLENGE_OUTGOING_PENDING &&
-            !chess_lobby_has_offer_been_sent(&ctx->lobby, peer_idx)) {
-            ChessOfferPayload offer;
-            memset(&offer, 0, sizeof(offer));
-            SDL_strlcpy(offer.challenger_profile_id, ctx->network_session.local_peer.profile_id, sizeof(offer.challenger_profile_id));
-            if (chess_tcp_send_offer(&ctx->connection, &offer)) {
-                chess_lobby_mark_offer_sent(&ctx->lobby, peer_idx);
-                SDL_Log("NET: sent OFFER to selected peer");
-            }
-        }
-    }
-}
+/* Outgoing offers are now sent per-peer in net_advance_outgoing_challenges */
 
 static void net_send_start_if_needed(AppContext *ctx)
 {
@@ -951,27 +1066,14 @@ void chess_net_tick(AppContext *ctx)
         ctx->network_session.start_sent = false;
     }
 
-    /* Timeout TCP_CONNECTING phase after 10 seconds. */
-    if (ctx->network_session.phase == CHESS_PHASE_TCP_CONNECTING &&
-        (SDL_GetTicks() - ctx->network_session.phase_entered_at_ms) > 10000u) {
-        SDL_Log("NET: TCP_CONNECTING timeout, returning to IDLE");
-        chess_tcp_connection_close(&ctx->connection);
-        chess_net_reset_transport_progress(ctx);
-        ctx->network_session.role = CHESS_ROLE_UNKNOWN;
-        ctx->network_session.peer_available = false;
-        memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
-        chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_IDLE);
-        if (ctx->lobby.selected_peer_idx >= 0) {
-            chess_lobby_set_challenge_state(&ctx->lobby, ctx->lobby.selected_peer_idx, CHESS_CHALLENGE_NONE);
-        }
-        app_set_status_message(ctx, "Connection timeout. Try again.", 3000u);
-    }
+    /* Advance per-peer outgoing challenge connections (CLIENT role) */
+    net_advance_outgoing_challenges(ctx);
 
+    /* Server-side: accept inbound connections + HELLO handshake */
     poll_socket_events(&ctx->listener, &ctx->connection, &connection_phase_events);
     net_advance_transport_connection(ctx, &connection_phase_events);
     net_advance_hello_handshake(ctx);
     net_send_resume_request_if_needed(ctx);
-    net_send_pending_offer_if_needed(ctx);
 
     net_drain_incoming_packets(ctx);
     net_send_start_if_needed(ctx);

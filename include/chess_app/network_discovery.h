@@ -6,14 +6,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define CHESS_DISCOVERY_REMOVAL_QUEUE_MAX 16
+
 typedef struct ChessDiscoveryContext {
     bool started;
     bool remote_emitted;
     uint16_t game_port;
     uint32_t local_ipv4;            /* LAN IP (host order), for loopback substitution */
     ChessPeerInfo local_peer;
-    bool removal_pending;           /* service-removal notification for lobby */
-    char removed_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    /* Queue of service-removal notifications for lobby */
+    char removal_queue[CHESS_DISCOVERY_REMOVAL_QUEUE_MAX][CHESS_PROFILE_ID_STRING_LEN];
+    int  removal_count;
     void *platform; /* platform-specific discovery backend data (heap-allocated) */
 } ChessDiscoveryContext;
 

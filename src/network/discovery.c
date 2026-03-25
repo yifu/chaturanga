@@ -263,8 +263,7 @@ static void browse_callback(
          * Strip optional ":port" suffix so that Avahi-style service names
          * ("profile_id:port") are matched against the clean profile_id
          * stored in the lobby.  Pure DNS-SD names have no colon. */
-        if (service_name && service_name[0] != '\0' &&
-            !ctx->removal_pending) {
+        if (service_name && service_name[0] != '\0') {
             char clean_id[CHESS_PROFILE_ID_STRING_LEN];
             const char *colon = strchr(service_name, ':');
             size_t id_len = colon ? (size_t)(colon - service_name) : strlen(service_name);
@@ -274,10 +273,21 @@ static void browse_callback(
             memcpy(clean_id, service_name, id_len);
             clean_id[id_len] = '\0';
 
-            if (SDL_strcmp(clean_id, ctx->local_peer.profile_id) != 0) {
-                SDL_strlcpy(ctx->removed_profile_id, clean_id,
-                            sizeof(ctx->removed_profile_id));
-                ctx->removal_pending = true;
+            if (SDL_strcmp(clean_id, ctx->local_peer.profile_id) != 0 &&
+                ctx->removal_count < CHESS_DISCOVERY_REMOVAL_QUEUE_MAX) {
+                /* Deduplicate: skip if already queued */
+                bool already_queued = false;
+                for (int q = 0; q < ctx->removal_count; q++) {
+                    if (SDL_strcmp(ctx->removal_queue[q], clean_id) == 0) {
+                        already_queued = true;
+                        break;
+                    }
+                }
+                if (!already_queued) {
+                    SDL_strlcpy(ctx->removal_queue[ctx->removal_count],
+                                clean_id, CHESS_PROFILE_ID_STRING_LEN);
+                    ctx->removal_count++;
+                }
             }
         }
         SDL_Log("DNS-SD: service '%s' removed", service_name);
@@ -642,10 +652,20 @@ static void avahi_browse_callback(
         profile_id[uuid_len] = '\0';
 
         if (SDL_strcmp(profile_id, ctx->local_peer.profile_id) != 0 &&
-            !ctx->removal_pending) {
-            SDL_strlcpy(ctx->removed_profile_id, profile_id,
-                        sizeof(ctx->removed_profile_id));
-            ctx->removal_pending = true;
+            ctx->removal_count < CHESS_DISCOVERY_REMOVAL_QUEUE_MAX) {
+            /* Deduplicate: skip if already queued */
+            bool already_queued = false;
+            for (int q = 0; q < ctx->removal_count; q++) {
+                if (SDL_strcmp(ctx->removal_queue[q], profile_id) == 0) {
+                    already_queued = true;
+                    break;
+                }
+            }
+            if (!already_queued) {
+                SDL_strlcpy(ctx->removal_queue[ctx->removal_count],
+                            profile_id, CHESS_PROFILE_ID_STRING_LEN);
+                ctx->removal_count++;
+            }
         }
         SDL_Log("Avahi: service '%s' removed", name);
         break;
@@ -1162,12 +1182,17 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
 
 bool chess_discovery_poll_removal(ChessDiscoveryContext *ctx, char *out_profile_id, size_t out_size)
 {
-    if (!ctx || !out_profile_id || out_size == 0 || !ctx->removal_pending) {
+    if (!ctx || !out_profile_id || out_size == 0 || ctx->removal_count <= 0) {
         return false;
     }
 
-    SDL_strlcpy(out_profile_id, ctx->removed_profile_id, out_size);
-    ctx->removal_pending = false;
-    ctx->removed_profile_id[0] = '\0';
+    SDL_strlcpy(out_profile_id, ctx->removal_queue[0], out_size);
+
+    /* Shift remaining entries forward */
+    for (int i = 1; i < ctx->removal_count; i++) {
+        SDL_strlcpy(ctx->removal_queue[i - 1], ctx->removal_queue[i],
+                    CHESS_PROFILE_ID_STRING_LEN);
+    }
+    ctx->removal_count--;
     return true;
 }

@@ -69,6 +69,7 @@ static void app_loop_context_shutdown(AppLoopContext *ctx)
     }
 
     chess_discovery_stop(&ctx->discovery);
+    chess_lobby_close_all_challenge_connections(&ctx->lobby);
     chess_tcp_connection_close(&ctx->connection);
     chess_tcp_listener_close(&ctx->listener);
     destroy_piece_textures();
@@ -212,6 +213,7 @@ static void app_clear_challenges(AppLoopContext *ctx)
         return;
     }
 
+    chess_lobby_close_all_challenge_connections(&ctx->lobby);
     for (i = 0; i < ctx->lobby.discovered_peer_count; ++i) {
         chess_lobby_set_challenge_state(&ctx->lobby, i, CHESS_CHALLENGE_NONE);
     }
@@ -318,6 +320,7 @@ void app_return_to_lobby(AppLoopContext *ctx)
     SDL_Log("GAME: returning to lobby");
 
     chess_tcp_connection_close(&ctx->connection);
+    chess_lobby_close_all_challenge_connections(&ctx->lobby);
     chess_net_reset_transport_progress(ctx);
     chess_persist_clear_client_resume_state(ctx);
 
@@ -401,7 +404,7 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
      * in the correct order (remove stale, then add fresh). */
     {
         char removed_id[CHESS_PROFILE_ID_STRING_LEN];
-        if (chess_discovery_poll_removal(&ctx->discovery, removed_id, sizeof(removed_id))) {
+        while (chess_discovery_poll_removal(&ctx->discovery, removed_id, sizeof(removed_id))) {
             if (chess_lobby_remove_peer_by_profile_id(&ctx->lobby, removed_id)) {
                 SDL_Log("LOBBY: removed departed peer %.8s...", removed_id);
             }

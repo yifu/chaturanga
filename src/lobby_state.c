@@ -2,9 +2,12 @@
 
 #include <SDL3/SDL.h>
 #include <string.h>
+#include <unistd.h>
 
 void chess_lobby_init(ChessLobbyState *lobby)
 {
+    int i;
+
     if (!lobby) {
         return;
     }
@@ -13,6 +16,10 @@ void chess_lobby_init(ChessLobbyState *lobby)
     lobby->discovered_peer_count = 0;
     lobby->selected_peer_idx = -1;
     lobby->hovered_peer_idx = -1;
+
+    for (i = 0; i < CHESS_MAX_DISCOVERED_PEERS; ++i) {
+        lobby->discovered_peers[i].challenge_conn.fd = -1;
+    }
 }
 
 void chess_lobby_add_or_update_peer(
@@ -41,6 +48,7 @@ void chess_lobby_add_or_update_peer(
         if (lobby->discovered_peer_count < CHESS_MAX_DISCOVERED_PEERS) {
             idx = lobby->discovered_peer_count;
             lobby->discovered_peer_count++;
+            lobby->discovered_peers[idx].challenge_conn.fd = -1;
         } else {
             SDL_Log("Lobby is full, cannot add new peer");
             return;
@@ -151,10 +159,15 @@ bool chess_lobby_remove_peer_by_profile_id(ChessLobbyState *lobby, const char *p
         return false;
     }
 
+    /* Close challenge connection fd if open */
+    chess_lobby_close_challenge_connection(lobby, idx);
+
     for (i = idx; i + 1 < lobby->discovered_peer_count; ++i) {
         lobby->discovered_peers[i] = lobby->discovered_peers[i + 1];
     }
     lobby->discovered_peer_count -= 1;
+    /* Reset the removed slot's fd so it doesn't alias a live fd */
+    lobby->discovered_peers[lobby->discovered_peer_count].challenge_conn.fd = -1;
 
     if (lobby->selected_peer_idx == idx) {
         lobby->selected_peer_idx = -1;
@@ -163,4 +176,34 @@ bool chess_lobby_remove_peer_by_profile_id(ChessLobbyState *lobby, const char *p
     }
 
     return true;
+}
+
+void chess_lobby_close_challenge_connection(ChessLobbyState *lobby, int peer_idx)
+{
+    if (!lobby || peer_idx < 0 || peer_idx >= lobby->discovered_peer_count) {
+        return;
+    }
+
+    if (lobby->discovered_peers[peer_idx].challenge_conn.fd >= 0) {
+        close(lobby->discovered_peers[peer_idx].challenge_conn.fd);
+        lobby->discovered_peers[peer_idx].challenge_conn.fd = -1;
+    }
+    lobby->discovered_peers[peer_idx].challenge_conn.connect_attempted = false;
+    lobby->discovered_peers[peer_idx].challenge_conn.hello_sent = false;
+    lobby->discovered_peers[peer_idx].challenge_conn.hello_received = false;
+    lobby->discovered_peers[peer_idx].challenge_conn.hello_completed = false;
+    lobby->discovered_peers[peer_idx].challenge_conn.next_connect_attempt_at = 0;
+}
+
+void chess_lobby_close_all_challenge_connections(ChessLobbyState *lobby)
+{
+    int i;
+
+    if (!lobby) {
+        return;
+    }
+
+    for (i = 0; i < lobby->discovered_peer_count; ++i) {
+        chess_lobby_close_challenge_connection(lobby, i);
+    }
 }
