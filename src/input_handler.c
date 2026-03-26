@@ -87,6 +87,11 @@ static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
             chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_NONE);
             chess_lobby_close_challenge_connection(&ctx->lobby, clicked_peer);
             SDL_Log("LOBBY: challenge cancelled for peer %d", clicked_peer);
+        } else if (current_state == CHESS_CHALLENGE_CONNECT_FAILED) {
+            /* Retry: reset connection state and re-attempt */
+            chess_lobby_close_challenge_connection(&ctx->lobby, clicked_peer);
+            chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
+            SDL_Log("LOBBY: retrying challenge to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
         } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
             /* Accept an incoming challenge — promote to game session */
             ChessAcceptPayload accept;

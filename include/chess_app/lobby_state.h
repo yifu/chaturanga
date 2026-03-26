@@ -12,7 +12,8 @@ typedef enum ChessChallengeState {
     CHESS_CHALLENGE_NONE = 0,
     CHESS_CHALLENGE_OUTGOING_PENDING,
     CHESS_CHALLENGE_INCOMING_PENDING,
-    CHESS_CHALLENGE_MATCHED
+    CHESS_CHALLENGE_MATCHED,
+    CHESS_CHALLENGE_CONNECT_FAILED
 } ChessChallengeState;
 
 /* Per-peer outgoing challenge connection state.
@@ -25,6 +26,7 @@ typedef struct ChessChallengeConnection {
     bool hello_received;
     bool hello_completed;
     uint64_t next_connect_attempt_at;
+    unsigned int connect_failures;  /* consecutive TCP connect failures        */
 } ChessChallengeConnection;
 
 typedef struct ChessDiscoveredPeerState {

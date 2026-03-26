@@ -252,6 +252,8 @@ const char *lobby_state_suffix(ChessChallengeState state)
         return s_lobby_icon_incoming_available ? " [\xe2\x9a\x94]" : " [INCOMING]";
     case CHESS_CHALLENGE_MATCHED:
         return s_lobby_icon_matched_available ? " [\xe2\x9c\x93]" : " [MATCHED]";
+    case CHESS_CHALLENGE_CONNECT_FAILED:
+        return " [\xe2\x9a\xa0 UNREACHABLE]";
     }
 
     return "";

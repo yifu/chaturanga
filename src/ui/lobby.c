@@ -51,6 +51,8 @@ void chess_lobby_render(
             bg_color = (SDL_Color){100, 150, 200, 255};
         } else if (peer_state->challenge_state == CHESS_CHALLENGE_INCOMING_PENDING) {
             bg_color = (SDL_Color){150, 180, 100, 255};
+        } else if (peer_state->challenge_state == CHESS_CHALLENGE_CONNECT_FAILED) {
+            bg_color = (SDL_Color){180, 60, 60, 255};
         } else if (i == lobby->hovered_peer_idx) {
             bg_color = (SDL_Color){85, 85, 85, 255};
         } else {

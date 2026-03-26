@@ -818,7 +818,15 @@ static void net_advance_outgoing_challenges(AppContext *ctx)
 
                 if (chess_tcp_connect_once(ps->tcp_ipv4, ps->tcp_port, 200, &tmp_conn)) {
                     cc->fd = tmp_conn.fd;
+                    cc->connect_failures = 0;
                     SDL_Log("NET: connected to peer %d (%.8s...) for challenge", i, ps->peer.profile_id);
+                } else {
+                    cc->connect_failures++;
+                    if (cc->connect_failures >= 3) {
+                        SDL_Log("NET: TCP connect to peer %d (%.8s...) failed %u times, marking unreachable",
+                                i, ps->peer.profile_id, cc->connect_failures);
+                        chess_lobby_set_challenge_state(&ctx->lobby, i, CHESS_CHALLENGE_CONNECT_FAILED);
+                    }
                 }
             }
             continue;

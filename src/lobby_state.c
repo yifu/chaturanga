@@ -193,6 +193,7 @@ void chess_lobby_close_challenge_connection(ChessLobbyState *lobby, int peer_idx
     lobby->discovered_peers[peer_idx].challenge_conn.hello_received = false;
     lobby->discovered_peers[peer_idx].challenge_conn.hello_completed = false;
     lobby->discovered_peers[peer_idx].challenge_conn.next_connect_attempt_at = 0;
+    lobby->discovered_peers[peer_idx].challenge_conn.connect_failures = 0;
 }
 
 void chess_lobby_close_all_challenge_connections(ChessLobbyState *lobby)
