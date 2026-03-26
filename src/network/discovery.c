@@ -1030,6 +1030,139 @@ void chess_discovery_stop(ChessDiscoveryContext *ctx)
 
 bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer)
 {
+    bool readable[CHESS_DISCOVERY_MAX_POLL_FDS];
+    int fds[CHESS_DISCOVERY_MAX_POLL_FDS];
+    int fd_count;
+
+    if (!ctx || !ctx->started || !out_remote_peer) {
+        return false;
+    }
+
+    /* Self-contained pump: get fds, poll them, process events */
+    fd_count = chess_discovery_get_poll_fds(ctx, fds, CHESS_DISCOVERY_MAX_POLL_FDS);
+    memset(readable, 0, sizeof(readable));
+    if (fd_count > 0) {
+        struct pollfd pfds[CHESS_DISCOVERY_MAX_POLL_FDS];
+        int i;
+        for (i = 0; i < fd_count; ++i) {
+            pfds[i].fd = fds[i];
+            pfds[i].events = POLLIN;
+            pfds[i].revents = 0;
+        }
+        if (poll(pfds, (nfds_t)fd_count, 5) > 0) {
+            for (i = 0; i < fd_count; ++i) {
+                readable[i] = (pfds[i].revents & POLLIN) != 0;
+            }
+        }
+    }
+
+    chess_discovery_process_events(ctx, readable, fd_count);
+    return chess_discovery_check_result(ctx, out_remote_peer);
+}
+
+int chess_discovery_get_poll_fds(ChessDiscoveryContext *ctx, int *out_fds, int max_fds)
+{
+    if (!ctx || !ctx->started || !out_fds || max_fds <= 0 || !ctx->platform) {
+        return 0;
+    }
+
+#if defined(CHESS_APP_HAVE_DNSSD)
+    {
+        ChessDnssdContext *dnssd = (ChessDnssdContext *)ctx->platform;
+        DNSServiceRef refs[4];
+        int count = 0;
+        int i;
+
+        refs[0] = dnssd->register_ref;
+        refs[1] = dnssd->browse_ref;
+        refs[2] = dnssd->resolve_ref;
+        refs[3] = dnssd->addr_ref;
+
+        for (i = 0; i < 4 && count < max_fds; ++i) {
+            if (refs[i]) {
+                int fd = DNSServiceRefSockFD(refs[i]);
+                if (fd >= 0) {
+                    out_fds[count++] = fd;
+                }
+            }
+        }
+        return count;
+    }
+#elif defined(CHESS_APP_HAVE_AVAHI)
+    /* Avahi uses its own internal poll; no fds to expose */
+    (void)out_fds; (void)max_fds;
+    return 0;
+#else
+    (void)out_fds; (void)max_fds;
+    return 0;
+#endif
+}
+
+void chess_discovery_process_events(ChessDiscoveryContext *ctx, const bool *readable, int fd_count)
+{
+    if (!ctx || !ctx->started) {
+        return;
+    }
+
+#if defined(CHESS_APP_HAVE_DNSSD)
+    {
+        ChessDnssdContext *dnssd = (ChessDnssdContext *)ctx->platform;
+        int idx = 0;
+
+        if (!dnssd) {
+            return;
+        }
+
+        /* Process refs in the same order as get_poll_fds enumerated them */
+        if (dnssd->register_ref && DNSServiceRefSockFD(dnssd->register_ref) >= 0) {
+            if (idx < fd_count && readable && readable[idx]) {
+                DNSServiceProcessResult(dnssd->register_ref);
+            }
+            idx++;
+        }
+
+        if (dnssd->browse_ref && DNSServiceRefSockFD(dnssd->browse_ref) >= 0) {
+            if (idx < fd_count && readable && readable[idx]) {
+                DNSServiceProcessResult(dnssd->browse_ref);
+            }
+            idx++;
+        }
+
+        if (dnssd->resolve_ref && DNSServiceRefSockFD(dnssd->resolve_ref) >= 0) {
+            if (idx < fd_count && readable && readable[idx]) {
+                DNSServiceProcessResult(dnssd->resolve_ref);
+            }
+            idx++;
+        }
+        /* Clean up completed resolve (resolve_done set by callback) */
+        if (dnssd->resolve_ref && dnssd->resolve_done) {
+            DNSServiceRefDeallocate(dnssd->resolve_ref);
+            dnssd->resolve_ref  = NULL;
+            dnssd->resolve_done = false;
+        }
+
+        if (dnssd->addr_ref && DNSServiceRefSockFD(dnssd->addr_ref) >= 0) {
+            if (idx < fd_count && readable && readable[idx]) {
+                DNSServiceProcessResult(dnssd->addr_ref);
+            }
+            idx++;
+        }
+    }
+#elif defined(CHESS_APP_HAVE_AVAHI)
+    {
+        ChessAvahiContext *avahi = (ChessAvahiContext *)ctx->platform;
+        (void)readable; (void)fd_count;
+        if (avahi) {
+            avahi_simple_poll_iterate(avahi->simple_poll, 0);
+        }
+    }
+#else
+    (void)readable; (void)fd_count;
+#endif
+}
+
+bool chess_discovery_check_result(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer)
+{
     if (!ctx || !ctx->started || !out_remote_peer) {
         return false;
     }
@@ -1041,10 +1174,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
             return false;
         }
 
-        /* Pump Avahi event loop (non-blocking) */
-        avahi_simple_poll_iterate(avahi->simple_poll, 0);
-
-        /* Detect stalled resolve: resolving flag set but no result after timeout */
+        /* Detect stalled resolve */
         if (!avahi->pending_peer_ready &&
             avahi->resolving &&
             SDL_GetTicks() - avahi->resolve_started_at > CHESS_AVAHI_RESOLVE_TIMEOUT_MS) {
@@ -1108,24 +1238,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
             return false;
         }
 
-        dnssd_pump(dnssd->register_ref);
-        dnssd_pump(dnssd->browse_ref);
-
-        if (dnssd->resolve_ref) {
-            dnssd_pump(dnssd->resolve_ref);
-            if (dnssd->resolve_done) {
-                DNSServiceRefDeallocate(dnssd->resolve_ref);
-                dnssd->resolve_ref  = NULL;
-                dnssd->resolve_done = false;
-            }
-        }
-
-        if (dnssd->addr_ref) {
-            dnssd_pump(dnssd->addr_ref);
-        }
-
-        /* Detect stalled resolve pipeline: either resolve_ref hung,
-         * addr_ref hung, or resolve finished without producing a peer. */
+        /* Detect stalled resolve pipeline */
         if (!dnssd->pending_peer_ready &&
             dnssd->resolving_profile_id[0] != '\0' &&
             SDL_GetTicks() - dnssd->resolve_started_at > CHESS_DNSSD_RESOLVE_TIMEOUT_MS) {
@@ -1142,7 +1255,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
             dnssd->resolving_profile_id[0] = '\0';
             memset(&dnssd->pending_peer, 0, sizeof(dnssd->pending_peer));
         }
-        /* Also catch immediate stall: resolve finished but no addr started */
+        /* Immediate stall: resolve finished but no addr started */
         if (!dnssd->pending_peer_ready &&
             !dnssd->resolve_ref && !dnssd->addr_ref &&
             dnssd->resolving_profile_id[0] != '\0') {
@@ -1167,6 +1280,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
             /* Start resolving the next queued service, if any */
             while (dnssd->pending_count > 0) {
                 ChessDnssdPendingService ps = dnssd->pending_queue[0];
+                DNSServiceErrorType rerr;
                 dnssd->pending_count--;
                 if (dnssd->pending_count > 0) {
                     memmove(&dnssd->pending_queue[0], &dnssd->pending_queue[1],
@@ -1181,7 +1295,7 @@ bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_r
                             sizeof(dnssd->resolving_profile_id));
                 dnssd->resolve_started_at = SDL_GetTicks();
 
-                DNSServiceErrorType rerr = DNSServiceResolve(
+                rerr = DNSServiceResolve(
                     &dnssd->resolve_ref,
                     0,
                     ps.interface_index,

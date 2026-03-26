@@ -56,7 +56,16 @@ static bool recv_all_with_timeout(int fd, void *buf, size_t len, int timeout_ms)
 
 static bool send_all(int fd, const void *buf, size_t len)
 {
+    struct pollfd pfd = { .fd = fd, .events = POLLOUT, .revents = 0 };
+    int pr;
     size_t sent = 0;
+
+    do {
+        pr = poll(&pfd, 1, 0);
+    } while (pr < 0 && errno == EINTR);
+    if (pr <= 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+        return false;
+    }
 
     while (sent < len) {
         ssize_t n = 0;
@@ -168,18 +177,17 @@ bool chess_tcp_accept_once(ChessTcpListener *listener, int timeout_ms, ChessTcpC
     return true;
 }
 
-bool chess_tcp_connect_once(uint32_t remote_ipv4_host_order, uint16_t remote_port, int timeout_ms, ChessTcpConnection *out_conn)
+bool chess_tcp_connect_start(uint32_t remote_ipv4_host_order, uint16_t remote_port, int *out_fd)
 {
-    int fd = -1;
-    int flags = 0;
+    int fd;
+    int flags;
     struct sockaddr_in addr;
-    struct pollfd pfd;
-    int err = 0;
-    socklen_t err_len = sizeof(err);
 
-    if (!out_conn) {
+    if (!out_fd) {
         return false;
     }
+
+    *out_fd = -1;
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -202,8 +210,7 @@ bool chess_tcp_connect_once(uint32_t remote_ipv4_host_order, uint16_t remote_por
             close(fd);
             return false;
         }
-        (void)fcntl(fd, F_SETFL, flags);
-        out_conn->fd = fd;
+        *out_fd = fd;
         return true;
     }
 
@@ -212,29 +219,35 @@ bool chess_tcp_connect_once(uint32_t remote_ipv4_host_order, uint16_t remote_por
         return false;
     }
 
-    pfd.fd = fd;
-    pfd.events = POLLOUT;
-    pfd.revents = 0;
-
-    if (poll(&pfd, 1, timeout_ms) <= 0) {
-        close(fd);
-        return false;
-    }
-
-    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &err_len) != 0 || err != 0) {
-        close(fd);
-        return false;
-    }
-
-    (void)fcntl(fd, F_SETFL, flags);
-
-    if (!configure_connected_socket(fd)) {
-        close(fd);
-        return false;
-    }
-
-    out_conn->fd = fd;
+    *out_fd = fd;
     return true;
+}
+
+ChessConnectResult chess_tcp_connect_check(int fd)
+{
+    int err = 0;
+    socklen_t err_len = sizeof(err);
+
+    if (fd < 0) {
+        return CHESS_CONNECT_FAILED;
+    }
+
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &err_len) != 0) {
+        return CHESS_CONNECT_FAILED;
+    }
+
+    if (err == 0) {
+        if (!configure_connected_socket(fd)) {
+            return CHESS_CONNECT_FAILED;
+        }
+        return CHESS_CONNECT_CONNECTED;
+    }
+
+    if (err == EINPROGRESS || err == EALREADY) {
+        return CHESS_CONNECT_IN_PROGRESS;
+    }
+
+    return CHESS_CONNECT_FAILED;
 }
 
 void chess_tcp_connection_close(ChessTcpConnection *conn)
@@ -302,6 +315,121 @@ bool chess_tcp_recv_payload(ChessTcpConnection *conn, int timeout_ms, void *out_
     }
 
     return recv_all_with_timeout(conn->fd, out_payload, payload_size, timeout_ms);
+}
+
+/* ── Non-blocking receive ───────────────────────────────────────────── */
+
+bool chess_tcp_set_nonblocking(ChessTcpConnection *conn)
+{
+    int flags;
+
+    if (!conn || conn->fd < 0) {
+        return false;
+    }
+
+    flags = fcntl(conn->fd, F_GETFL, 0);
+    if (flags < 0) {
+        return false;
+    }
+
+    return fcntl(conn->fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+void chess_tcp_recv_reset(ChessTcpRecvBuffer *rb)
+{
+    if (!rb) {
+        return;
+    }
+
+    rb->state = CHESS_RECV_WAITING_HEADER;
+    rb->done = 0;
+}
+
+ChessRecvResult chess_tcp_recv_nonblocking(ChessTcpConnection *conn, ChessTcpRecvBuffer *rb,
+                                           ChessPacketHeader *out_header,
+                                           uint8_t *out_payload, size_t payload_capacity)
+{
+    ssize_t n;
+
+    if (!conn || conn->fd < 0 || !rb || !out_header) {
+        return CHESS_RECV_ERROR;
+    }
+
+    /* Phase 1: accumulate header bytes */
+    if (rb->state == CHESS_RECV_WAITING_HEADER) {
+        size_t need = sizeof(ChessPacketHeader) - rb->done;
+
+        n = recv(conn->fd, rb->buf + rb->done, need, 0);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                return CHESS_RECV_INCOMPLETE;
+            }
+            return CHESS_RECV_ERROR;
+        }
+        if (n == 0) {
+            return CHESS_RECV_ERROR;
+        }
+
+        rb->done += (size_t)n;
+        if (rb->done < sizeof(ChessPacketHeader)) {
+            return CHESS_RECV_INCOMPLETE;
+        }
+
+        /* Header complete — validate */
+        {
+            const ChessPacketHeader *hdr = (const ChessPacketHeader *)rb->buf;
+
+            if (hdr->protocol_version != CHESS_PROTOCOL_VERSION) {
+                return CHESS_RECV_ERROR;
+            }
+            if (hdr->payload_size > sizeof(rb->buf) - sizeof(ChessPacketHeader)) {
+                return CHESS_RECV_ERROR;
+            }
+            if (hdr->payload_size == 0u) {
+                memcpy(out_header, hdr, sizeof(*out_header));
+                chess_tcp_recv_reset(rb);
+                return CHESS_RECV_OK;
+            }
+            if (hdr->payload_size > payload_capacity) {
+                return CHESS_RECV_ERROR;
+            }
+        }
+
+        rb->state = CHESS_RECV_WAITING_PAYLOAD;
+        /* fall through to payload phase */
+    }
+
+    /* Phase 2: accumulate payload bytes */
+    {
+        const ChessPacketHeader *hdr = (const ChessPacketHeader *)rb->buf;
+        size_t payload_done = rb->done - sizeof(ChessPacketHeader);
+        size_t need = hdr->payload_size - payload_done;
+
+        n = recv(conn->fd, rb->buf + rb->done, need, 0);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                return CHESS_RECV_INCOMPLETE;
+            }
+            return CHESS_RECV_ERROR;
+        }
+        if (n == 0) {
+            return CHESS_RECV_ERROR;
+        }
+
+        rb->done += (size_t)n;
+        payload_done += (size_t)n;
+        if (payload_done < hdr->payload_size) {
+            return CHESS_RECV_INCOMPLETE;
+        }
+
+        /* Packet complete */
+        memcpy(out_header, hdr, sizeof(*out_header));
+        if (out_payload) {
+            memcpy(out_payload, rb->buf + sizeof(ChessPacketHeader), hdr->payload_size);
+        }
+        chess_tcp_recv_reset(rb);
+        return CHESS_RECV_OK;
+    }
 }
 
 bool chess_tcp_send_hello(ChessTcpConnection *conn, const ChessHelloPayload *hello)
@@ -377,26 +505,6 @@ bool chess_tcp_send_start(ChessTcpConnection *conn, const ChessStartPayload *sta
     return chess_tcp_send_packet(conn, CHESS_MSG_START, 2u, start, (uint32_t)sizeof(*start));
 }
 
-bool chess_tcp_recv_start(ChessTcpConnection *conn, int timeout_ms, ChessStartPayload *out_start)
-{
-    ChessPacketHeader header;
-
-    if (!conn || conn->fd < 0 || !out_start) {
-        return false;
-    }
-
-    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
-        return false;
-    }
-
-    if (header.message_type != CHESS_MSG_START ||
-        header.payload_size != sizeof(*out_start)) {
-        return false;
-    }
-
-    return chess_tcp_recv_payload(conn, timeout_ms, out_start, (uint32_t)sizeof(*out_start));
-}
-
 bool chess_tcp_send_offer(ChessTcpConnection *conn, const ChessOfferPayload *offer)
 {
     if (!conn || conn->fd < 0 || !offer) {
@@ -404,26 +512,6 @@ bool chess_tcp_send_offer(ChessTcpConnection *conn, const ChessOfferPayload *off
     }
 
     return chess_tcp_send_packet(conn, CHESS_MSG_OFFER, 1u, offer, (uint32_t)sizeof(*offer));
-}
-
-bool chess_tcp_recv_offer(ChessTcpConnection *conn, int timeout_ms, ChessOfferPayload *out_offer)
-{
-    ChessPacketHeader header;
-
-    if (!conn || conn->fd < 0 || !out_offer) {
-        return false;
-    }
-
-    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
-        return false;
-    }
-
-    if (header.message_type != CHESS_MSG_OFFER ||
-        header.payload_size != sizeof(*out_offer)) {
-        return false;
-    }
-
-    return chess_tcp_recv_payload(conn, timeout_ms, out_offer, (uint32_t)sizeof(*out_offer));
 }
 
 bool chess_tcp_send_accept(ChessTcpConnection *conn, const ChessAcceptPayload *accept)
@@ -435,26 +523,6 @@ bool chess_tcp_send_accept(ChessTcpConnection *conn, const ChessAcceptPayload *a
     return chess_tcp_send_packet(conn, CHESS_MSG_ACCEPT, 1u, accept, (uint32_t)sizeof(*accept));
 }
 
-bool chess_tcp_recv_accept(ChessTcpConnection *conn, int timeout_ms, ChessAcceptPayload *out_accept)
-{
-    ChessPacketHeader header;
-
-    if (!conn || conn->fd < 0 || !out_accept) {
-        return false;
-    }
-
-    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
-        return false;
-    }
-
-    if (header.message_type != CHESS_MSG_ACCEPT ||
-        header.payload_size != sizeof(*out_accept)) {
-        return false;
-    }
-
-    return chess_tcp_recv_payload(conn, timeout_ms, out_accept, (uint32_t)sizeof(*out_accept));
-}
-
 bool chess_tcp_send_resume_request(ChessTcpConnection *conn, const ChessResumeRequestPayload *request)
 {
     if (!conn || conn->fd < 0 || !request) {
@@ -462,26 +530,6 @@ bool chess_tcp_send_resume_request(ChessTcpConnection *conn, const ChessResumeRe
     }
 
     return chess_tcp_send_packet(conn, CHESS_MSG_RESUME_REQUEST, 3u, request, (uint32_t)sizeof(*request));
-}
-
-bool chess_tcp_recv_resume_request(ChessTcpConnection *conn, int timeout_ms, ChessResumeRequestPayload *out_request)
-{
-    ChessPacketHeader header;
-
-    if (!conn || conn->fd < 0 || !out_request) {
-        return false;
-    }
-
-    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
-        return false;
-    }
-
-    if (header.message_type != CHESS_MSG_RESUME_REQUEST ||
-        header.payload_size != sizeof(*out_request)) {
-        return false;
-    }
-
-    return chess_tcp_recv_payload(conn, timeout_ms, out_request, (uint32_t)sizeof(*out_request));
 }
 
 bool chess_tcp_send_resume_response(ChessTcpConnection *conn, const ChessResumeResponsePayload *response)
@@ -493,26 +541,6 @@ bool chess_tcp_send_resume_response(ChessTcpConnection *conn, const ChessResumeR
     return chess_tcp_send_packet(conn, CHESS_MSG_RESUME_RESPONSE, 3u, response, (uint32_t)sizeof(*response));
 }
 
-bool chess_tcp_recv_resume_response(ChessTcpConnection *conn, int timeout_ms, ChessResumeResponsePayload *out_response)
-{
-    ChessPacketHeader header;
-
-    if (!conn || conn->fd < 0 || !out_response) {
-        return false;
-    }
-
-    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
-        return false;
-    }
-
-    if (header.message_type != CHESS_MSG_RESUME_RESPONSE ||
-        header.payload_size != sizeof(*out_response)) {
-        return false;
-    }
-
-    return chess_tcp_recv_payload(conn, timeout_ms, out_response, (uint32_t)sizeof(*out_response));
-}
-
 bool chess_tcp_send_state_snapshot(ChessTcpConnection *conn, const ChessStateSnapshotPayload *snapshot)
 {
     if (!conn || conn->fd < 0 || !snapshot) {
@@ -522,22 +550,3 @@ bool chess_tcp_send_state_snapshot(ChessTcpConnection *conn, const ChessStateSna
     return chess_tcp_send_packet(conn, CHESS_MSG_STATE_SNAPSHOT, 4u, snapshot, (uint32_t)sizeof(*snapshot));
 }
 
-bool chess_tcp_recv_state_snapshot(ChessTcpConnection *conn, int timeout_ms, ChessStateSnapshotPayload *out_snapshot)
-{
-    ChessPacketHeader header;
-
-    if (!conn || conn->fd < 0 || !out_snapshot) {
-        return false;
-    }
-
-    if (!chess_tcp_recv_packet_header(conn, timeout_ms, &header)) {
-        return false;
-    }
-
-    if (header.message_type != CHESS_MSG_STATE_SNAPSHOT ||
-        header.payload_size != sizeof(*out_snapshot)) {
-        return false;
-    }
-
-    return chess_tcp_recv_payload(conn, timeout_ms, out_snapshot, (uint32_t)sizeof(*out_snapshot));
-}

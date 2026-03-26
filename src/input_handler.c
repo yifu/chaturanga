@@ -251,8 +251,11 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
         ctx->game_state.outcome = (ctx->network_session.local_color == CHESS_COLOR_WHITE)
             ? CHESS_OUTCOME_WHITE_RESIGNED
             : CHESS_OUTCOME_BLACK_RESIGNED;
-        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_RESIGN,
-                              ctx->move_sequence, NULL, 0u);
+        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_RESIGN,
+                              ctx->move_sequence, NULL, 0u)) {
+            app_handle_peer_disconnect(ctx, "failed to send RESIGN");
+            return;
+        }
         (void)chess_persist_save_match_snapshot(ctx);
         SDL_Log("GAME: local player resigned");
         app_set_status_message(ctx, "You resigned.", 5000u);
@@ -260,24 +263,33 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
     }
     case CHESS_GAME_BUTTON_DRAW:
         ctx->network_session.draw_offer_pending = true;
-        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_OFFER,
-                              ctx->move_sequence, NULL, 0u);
+        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_OFFER,
+                              ctx->move_sequence, NULL, 0u)) {
+            app_handle_peer_disconnect(ctx, "failed to send DRAW_OFFER");
+            return;
+        }
         SDL_Log("GAME: draw offer sent");
         app_set_status_message(ctx, "Draw offer sent.", 3000u);
         break;
     case CHESS_GAME_BUTTON_ACCEPT_DRAW:
         ctx->game_state.outcome = CHESS_OUTCOME_DRAW_AGREED;
         ctx->network_session.draw_offer_received = false;
-        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_ACCEPT,
-                              ctx->move_sequence, NULL, 0u);
+        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_ACCEPT,
+                              ctx->move_sequence, NULL, 0u)) {
+            app_handle_peer_disconnect(ctx, "failed to send DRAW_ACCEPT");
+            return;
+        }
         (void)chess_persist_save_match_snapshot(ctx);
         SDL_Log("GAME: draw accepted locally");
         app_set_status_message(ctx, "Draw by agreement.", 5000u);
         break;
     case CHESS_GAME_BUTTON_DECLINE_DRAW:
         ctx->network_session.draw_offer_received = false;
-        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_DECLINE,
-                              ctx->move_sequence, NULL, 0u);
+        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_DECLINE,
+                              ctx->move_sequence, NULL, 0u)) {
+            app_handle_peer_disconnect(ctx, "failed to send DRAW_DECLINE");
+            return;
+        }
         SDL_Log("GAME: draw declined locally");
         app_set_status_message(ctx, "Draw declined.", 3000u);
         break;

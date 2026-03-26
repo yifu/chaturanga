@@ -189,11 +189,13 @@ void chess_lobby_close_challenge_connection(ChessLobbyState *lobby, int peer_idx
         lobby->discovered_peers[peer_idx].challenge_conn.fd = -1;
     }
     lobby->discovered_peers[peer_idx].challenge_conn.connect_attempted = false;
+    lobby->discovered_peers[peer_idx].challenge_conn.connect_in_progress = false;
     lobby->discovered_peers[peer_idx].challenge_conn.hello_sent = false;
     lobby->discovered_peers[peer_idx].challenge_conn.hello_received = false;
     lobby->discovered_peers[peer_idx].challenge_conn.hello_completed = false;
     lobby->discovered_peers[peer_idx].challenge_conn.next_connect_attempt_at = 0;
     lobby->discovered_peers[peer_idx].challenge_conn.connect_failures = 0;
+    chess_tcp_recv_reset(&lobby->discovered_peers[peer_idx].challenge_conn.recv_buf);
 }
 
 void chess_lobby_close_all_challenge_connections(ChessLobbyState *lobby)

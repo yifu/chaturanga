@@ -58,6 +58,10 @@ typedef struct ChessNetworkSession {
     bool pending_resume_state_sync;
     unsigned int start_failures;
 
+    /* Pending incoming offer (OFFER arrived before mDNS discovery) */
+    bool pending_incoming_offer;
+    char pending_offer_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+
     /* Draw offer state */
     bool draw_offer_pending;        /* we sent an offer, waiting for response   */
     bool draw_offer_received;       /* opponent sent an offer, we must respond  */

@@ -119,6 +119,10 @@ static bool app_init_window_and_renderer(AppLoopContext *ctx)
         return false;
     }
 
+    if (!SDL_SetRenderVSync(ctx->renderer, 1)) {
+        SDL_Log("APP: SDL_SetRenderVSync failed: %s (continuing without vsync)", SDL_GetError());
+    }
+
     init_piece_textures(ctx->renderer);
 
     ctx->cursor_default = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
@@ -246,6 +250,7 @@ void app_handle_peer_disconnect(AppLoopContext *ctx, const char *reason)
     }
 
     chess_tcp_connection_close(&ctx->connection);
+    chess_tcp_recv_reset(&ctx->recv_buffer);
     chess_net_reset_transport_progress(ctx);
 
     /*
@@ -320,6 +325,7 @@ void app_return_to_lobby(AppLoopContext *ctx)
     SDL_Log("GAME: returning to lobby");
 
     chess_tcp_connection_close(&ctx->connection);
+    chess_tcp_recv_reset(&ctx->recv_buffer);
     chess_lobby_close_all_challenge_connections(&ctx->lobby);
     chess_net_reset_transport_progress(ctx);
     chess_persist_clear_client_resume_state(ctx);
@@ -411,10 +417,26 @@ static void app_poll_discovery_and_update_lobby(AppLoopContext *ctx)
         }
     }
 
-    if (chess_discovery_poll(&ctx->discovery, &ctx->discovered_peer)) {
+    if (chess_discovery_check_result(&ctx->discovery, &ctx->discovered_peer)) {
         bool should_select_peer = false;
 
         chess_lobby_add_or_update_peer(&ctx->lobby, &ctx->discovered_peer.peer, ctx->discovered_peer.tcp_ipv4, ctx->discovered_peer.tcp_port);
+
+        /* Apply a buffered OFFER that arrived before mDNS discovery. */
+        if (ctx->network_session.pending_incoming_offer &&
+            SDL_strncmp(ctx->discovered_peer.peer.profile_id,
+                        ctx->network_session.pending_offer_profile_id,
+                        CHESS_PROFILE_ID_STRING_LEN) == 0) {
+            int offer_peer_idx = -1;
+            (void)chess_lobby_find_peer(&ctx->lobby, &ctx->discovered_peer.peer, &offer_peer_idx);
+            if (offer_peer_idx >= 0) {
+                chess_lobby_set_challenge_state(&ctx->lobby, offer_peer_idx, CHESS_CHALLENGE_INCOMING_PENDING);
+                chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[offer_peer_idx].peer);
+                SDL_Log("LOBBY: applied buffered OFFER from %.8s...",
+                        ctx->discovered_peer.peer.profile_id);
+            }
+            ctx->network_session.pending_incoming_offer = false;
+        }
 
         if (has_resume_target) {
             should_select_peer = SDL_strncmp(
@@ -475,8 +497,8 @@ int app_run(void)
 
     while (ctx.running) {
         chess_input_handle_events(&ctx);
-        app_poll_discovery_and_update_lobby(&ctx);
         chess_net_tick(&ctx);
+        app_poll_discovery_and_update_lobby(&ctx);
 
         chess_ui_update_remote_move_animation(&ctx);
 

@@ -26,9 +26,14 @@ typedef struct ChessDiscoveredPeer {
     uint16_t tcp_port;
 } ChessDiscoveredPeer;
 
+#define CHESS_DISCOVERY_MAX_POLL_FDS 4
+
 bool chess_discovery_start(ChessDiscoveryContext *ctx, ChessPeerInfo *local_peer, uint16_t game_port);
 void chess_discovery_stop(ChessDiscoveryContext *ctx);
 bool chess_discovery_poll(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer);
 bool chess_discovery_poll_removal(ChessDiscoveryContext *ctx, char *out_profile_id, size_t out_size);
+int  chess_discovery_get_poll_fds(ChessDiscoveryContext *ctx, int *out_fds, int max_fds);
+void chess_discovery_process_events(ChessDiscoveryContext *ctx, const bool *readable, int fd_count);
+bool chess_discovery_check_result(ChessDiscoveryContext *ctx, ChessDiscoveredPeer *out_remote_peer);
 
 #endif

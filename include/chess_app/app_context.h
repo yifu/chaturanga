@@ -28,6 +28,7 @@ typedef struct AppContext {
     ChessDiscoveryContext discovery;
     ChessTcpListener listener;
     ChessTcpConnection connection;
+    ChessTcpRecvBuffer recv_buffer;
     ChessDiscoveredPeer discovered_peer;
     int connect_retry_ms;
     uint64_t next_connect_attempt_at;

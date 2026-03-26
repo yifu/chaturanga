@@ -2,6 +2,7 @@
 #define CHESS_APP_LOBBY_STATE_H
 
 #include "chess_app/network_peer.h"
+#include "chess_app/network_tcp.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -22,11 +23,13 @@ typedef enum ChessChallengeState {
 typedef struct ChessChallengeConnection {
     int fd;                         /* TCP socket, -1 if not connected         */
     bool connect_attempted;
+    bool connect_in_progress;       /* connect() returned EINPROGRESS          */
     bool hello_sent;
     bool hello_received;
     bool hello_completed;
     uint64_t next_connect_attempt_at;
     unsigned int connect_failures;  /* consecutive TCP connect failures        */
+    ChessTcpRecvBuffer recv_buf;    /* non-blocking recv state machine         */
 } ChessChallengeConnection;
 
 typedef struct ChessDiscoveredPeerState {
