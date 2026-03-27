@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 #include <errno.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 
