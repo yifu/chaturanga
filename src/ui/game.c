@@ -842,8 +842,12 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
 
     if (turn_tex) {
         SDL_FRect turn_dst;
+        float min_turn_x = (float)panel_left + 10.0f + title_w + 8.0f;
         SDL_GetTextureSize(turn_tex, &turn_w, &turn_h);
         turn_dst.x = (float)panel_right - turn_w - 10.0f;
+        if (turn_dst.x < min_turn_x) {
+            turn_dst.x = min_turn_x;
+        }
         turn_dst.y = 12.0f;
         turn_dst.w = turn_w;
         turn_dst.h = turn_h;
