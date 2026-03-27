@@ -1012,17 +1012,17 @@ static void get_button_rects(int panel_left, int panel_width, int window_height,
                              SDL_FRect *left_btn, SDL_FRect *right_btn)
 {
     float btn_y = (float)(window_height - BTN_HEIGHT - BTN_MARGIN);
-    float usable = (float)(panel_width - 2 * BTN_MARGIN - BTN_GAP);
-    float half = usable * 0.5f;
+    float col_sep = (float)panel_left + (float)panel_width * 0.52f;
+    float half_gap = (float)BTN_GAP * 0.5f;
 
     left_btn->x  = (float)(panel_left + BTN_MARGIN);
     left_btn->y  = btn_y;
-    left_btn->w  = half;
+    left_btn->w  = col_sep - half_gap - left_btn->x;
     left_btn->h  = (float)BTN_HEIGHT;
 
-    right_btn->x = left_btn->x + half + (float)BTN_GAP;
+    right_btn->x = col_sep + half_gap;
     right_btn->y = btn_y;
-    right_btn->w = half;
+    right_btn->w = (float)(panel_left + panel_width - BTN_MARGIN) - right_btn->x;
     right_btn->h = (float)BTN_HEIGHT;
 }
 
