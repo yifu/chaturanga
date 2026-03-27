@@ -1392,16 +1392,26 @@ static void render_one_player_panel(
                 SDL_FRect dst;
                 SDL_GetTextureSize(tex, &tex_w, &tex_h);
                 if (tex_h > 0.0f) {
-                    scale = 18.0f / tex_h;
+                    scale = 24.0f / tex_h;
                 } else {
                     scale = 1.0f;
                 }
                 dst.w = tex_w * scale;
-                dst.h = 18.0f;
+                dst.h = 24.0f;
                 dst.x = cursor_x;
                 dst.y = panel_rect.y + (panel_rect.h - dst.h) * 0.5f;
+                if (piece_idx >= (int)CHESS_PIECE_WHITE_PAWN &&
+                    piece_idx <= (int)CHESS_PIECE_WHITE_KING) {
+                    SDL_FRect fill;
+                    fill.w = dst.w * 0.52f;
+                    fill.h = dst.h * 0.52f;
+                    fill.x = dst.x + (dst.w - fill.w) * 0.5f;
+                    fill.y = dst.y + (dst.h - fill.h) * 0.5f;
+                    SDL_SetRenderDrawColor(renderer, 220, 215, 190, 255);
+                    SDL_RenderFillRect(renderer, &fill);
+                }
                 SDL_RenderTexture(renderer, tex, NULL, &dst);
-                cursor_x += dst.w - 2.0f; /* slight overlap for compact display */
+                cursor_x += dst.w * 0.55f; /* overlap for compact display */
             }
         }
         cursor_x += 4.0f; /* gap between piece types */
