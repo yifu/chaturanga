@@ -19,6 +19,7 @@ static bool      s_lobby_button_visible = false;
 
 /* Forward declarations */
 static void render_panel_buttons(AppContext *ctx, int panel_left, int panel_width, int window_height);
+static void render_player_panels(AppContext *ctx, int board_width, int window_height, int board_y, int board_height);
 
 /* ------------------------------------------------------------------ */
 /*  Pure coordinate / perspective helpers (static)                     */
@@ -108,6 +109,9 @@ bool chess_ui_screen_to_board_square(
     int width = 0;
     int board_width = 0;
     int height = 0;
+    int board_y = 0;
+    int board_height;
+    int local_mouse_y;
     float cell_w;
     float cell_h;
     bool black_perspective;
@@ -124,11 +128,26 @@ bool chess_ui_screen_to_board_square(
         return false;
     }
 
+    if (ctx->network_session.game_started) {
+        board_y = CHESS_UI_PLAYER_PANEL_HEIGHT;
+        board_height = height - 2 * CHESS_UI_PLAYER_PANEL_HEIGHT;
+    } else {
+        board_height = height;
+    }
+    if (board_height <= 0) {
+        return false;
+    }
+
+    local_mouse_y = mouse_y - board_y;
+    if (local_mouse_y < 0 || local_mouse_y >= board_height) {
+        return false;
+    }
+
     cell_w = (float)board_width / (float)CHESS_BOARD_SIZE;
-    cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
     black_perspective = use_black_perspective(ctx->network_session.local_color);
     screen_file = (int)(mouse_x / cell_w);
-    screen_rank = (int)(mouse_y / cell_h);
+    screen_rank = (int)(local_mouse_y / cell_h);
     *out_file = screen_to_board_index(screen_file, black_perspective);
     *out_rank = screen_to_board_index(screen_rank, black_perspective);
 
@@ -146,7 +165,8 @@ bool chess_ui_screen_to_board_square(
 static bool promotion_choice_rect(
     AppContext *ctx,
     int width,
-    int height,
+    int board_y,
+    int board_height,
     uint8_t promotion,
     SDL_FRect *out_rect)
 {
@@ -163,12 +183,12 @@ static bool promotion_choice_rect(
 
     black_perspective = use_black_perspective(ctx->network_session.local_color);
     cell_w = (float)width / (float)CHESS_BOARD_SIZE;
-    cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
     screen_file = board_to_screen_index(ctx->promotion_to_file, black_perspective);
     screen_rank = board_to_screen_index(ctx->promotion_to_rank, black_perspective);
 
     square_rect.x = screen_file * cell_w + 3.0f;
-    square_rect.y = screen_rank * cell_h + 3.0f;
+    square_rect.y = (float)board_y + screen_rank * cell_h + 3.0f;
     square_rect.w = cell_w - 6.0f;
     square_rect.h = cell_h - 6.0f;
 
@@ -208,6 +228,8 @@ uint8_t chess_ui_promotion_from_mouse(AppContext *ctx, int mouse_x, int mouse_y)
     int width;
     int board_width;
     int height;
+    int board_y = 0;
+    int board_height;
     size_t i;
 
     if (!ctx || !ctx->window || !ctx->promotion_pending) {
@@ -216,9 +238,15 @@ uint8_t chess_ui_promotion_from_mouse(AppContext *ctx, int mouse_x, int mouse_y)
 
     SDL_GetWindowSize(ctx->window, &width, &height);
     board_width = chess_ui_board_width_for_window(width, ctx->network_session.game_started);
+    if (ctx->network_session.game_started) {
+        board_y = CHESS_UI_PLAYER_PANEL_HEIGHT;
+        board_height = height - 2 * CHESS_UI_PLAYER_PANEL_HEIGHT;
+    } else {
+        board_height = height;
+    }
     for (i = 0; i < SDL_arraysize(choices); ++i) {
         SDL_FRect rect;
-        if (promotion_choice_rect(ctx, board_width, height, choices[i], &rect) &&
+        if (promotion_choice_rect(ctx, board_width, board_y, board_height, choices[i], &rect) &&
             mouse_x >= (int)rect.x &&
             mouse_x < (int)(rect.x + rect.w) &&
             mouse_y >= (int)rect.y &&
@@ -237,11 +265,12 @@ uint8_t chess_ui_promotion_from_mouse(AppContext *ctx, int mouse_x, int mouse_y)
 static void render_board_coordinates(
     SDL_Renderer *renderer,
     int width,
-    int height,
+    int board_y,
+    int board_height,
     ChessPlayerColor local_color)
 {
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
-    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
     const bool black_perspective = use_black_perspective(local_color);
     int screen_file;
     int screen_rank;
@@ -261,7 +290,7 @@ static void render_board_coordinates(
             SDL_FRect dst;
             SDL_GetTextureSize(label_tex, &tex_w, &tex_h);
             dst.x = screen_file * cell_w + cell_w - tex_w - 4.0f;
-            dst.y = (CHESS_BOARD_SIZE - 1) * cell_h + cell_h - tex_h - 2.0f;
+            dst.y = (float)board_y + (CHESS_BOARD_SIZE - 1) * cell_h + cell_h - tex_h - 2.0f;
             dst.w = tex_w;
             dst.h = tex_h;
             SDL_RenderTexture(renderer, label_tex, NULL, &dst);
@@ -279,7 +308,7 @@ static void render_board_coordinates(
             SDL_FRect dst;
             SDL_GetTextureSize(label_tex, &tex_w, &tex_h);
             dst.x = 4.0f;
-            dst.y = screen_rank * cell_h + 2.0f;
+            dst.y = (float)board_y + screen_rank * cell_h + 2.0f;
             dst.w = tex_w;
             dst.h = tex_h;
             SDL_RenderTexture(renderer, label_tex, NULL, &dst);
@@ -294,7 +323,8 @@ static void render_board_coordinates(
 static void render_game_overlay(
     SDL_Renderer *renderer,
     int width,
-    int height,
+    int board_y,
+    int board_height,
     const ChessGameState *game_state,
     ChessPlayerColor local_color,
     bool hide_piece,
@@ -302,7 +332,7 @@ static void render_game_overlay(
     int hidden_rank)
 {
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
-    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
     const bool black_perspective = use_black_perspective(local_color);
     int rank;
     int file;
@@ -335,7 +365,7 @@ static void render_game_overlay(
                     SDL_FRect dst;
                     SDL_GetTextureSize(tex, &tex_w, &tex_h);
                     dst.x = screen_file * cell_w + (cell_w - tex_w) * 0.5f;
-                    dst.y = screen_rank * cell_h + (cell_h - tex_h) * 0.5f;
+                    dst.y = (float)board_y + screen_rank * cell_h + (cell_h - tex_h) * 0.5f;
                     dst.w = tex_w;
                     dst.h = tex_h;
                     SDL_RenderTexture(renderer, tex, NULL, &dst);
@@ -345,7 +375,7 @@ static void render_game_overlay(
                     int screen_rank = board_to_screen_index(rank, black_perspective);
                     SDL_FRect pawn_rect = {
                         screen_file * cell_w + (cell_w * 0.25f),
-                        screen_rank * cell_h + (cell_h * 0.25f),
+                        (float)board_y + screen_rank * cell_h + (cell_h * 0.25f),
                         cell_w * 0.5f,
                         cell_h * 0.5f
                     };
@@ -365,7 +395,7 @@ static void render_game_overlay(
         int screen_rank = board_to_screen_index(game_state->selected_rank, black_perspective);
         SDL_FRect selected_rect = {
             screen_file * cell_w + 2.0f,
-            screen_rank * cell_h + 2.0f,
+            (float)board_y + screen_rank * cell_h + 2.0f,
             cell_w - 4.0f,
             cell_h - 4.0f
         };
@@ -378,10 +408,10 @@ static void render_game_overlay(
 /*  Drag preview                                                       */
 /* ------------------------------------------------------------------ */
 
-static void render_drag_preview(AppContext *ctx, int width, int height)
+static void render_drag_preview(AppContext *ctx, int width, int board_height)
 {
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
-    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
 
     if (!ctx || !ctx->renderer || !ctx->drag_active ||
         ctx->drag_piece <= CHESS_PIECE_EMPTY || ctx->drag_piece >= CHESS_PIECE_COUNT) {
@@ -423,7 +453,7 @@ static void render_drag_preview(AppContext *ctx, int width, int height)
 /*  Promotion overlay                                                  */
 /* ------------------------------------------------------------------ */
 
-static void render_promotion_overlay(AppContext *ctx, int width, int height)
+static void render_promotion_overlay(AppContext *ctx, int width, int board_y, int board_height)
 {
     const uint8_t choices[] = {
         CHESS_PROMOTION_QUEEN,
@@ -441,7 +471,7 @@ static void render_promotion_overlay(AppContext *ctx, int width, int height)
         SDL_FRect rect;
         ChessPiece piece;
 
-        if (!promotion_choice_rect(ctx, width, height, choices[i], &rect)) {
+        if (!promotion_choice_rect(ctx, width, board_y, board_height, choices[i], &rect)) {
             continue;
         }
 
@@ -499,10 +529,10 @@ void chess_ui_update_remote_move_animation(AppContext *ctx)
     }
 }
 
-static void render_remote_move_animation(AppContext *ctx, int width, int height)
+static void render_remote_move_animation(AppContext *ctx, int width, int board_y, int board_height)
 {
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
-    const float cell_h = (float)height / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
     const bool black_perspective = use_black_perspective(ctx->network_session.local_color);
     uint64_t now;
     uint64_t elapsed;
@@ -547,14 +577,14 @@ static void render_remote_move_animation(AppContext *ctx, int width, int height)
 
             SDL_GetTextureSize(tex, &tex_w, &tex_h);
             dst.x = interp_file * cell_w + (cell_w - tex_w) * 0.5f;
-            dst.y = interp_rank * cell_h + (cell_h - tex_h) * 0.5f;
+            dst.y = (float)board_y + interp_rank * cell_h + (cell_h - tex_h) * 0.5f;
             dst.w = tex_w;
             dst.h = tex_h;
             SDL_RenderTexture(ctx->renderer, tex, NULL, &dst);
         } else {
             SDL_FRect piece_rect = {
                 interp_file * cell_w + cell_w * 0.25f,
-                interp_rank * cell_h + cell_h * 0.25f,
+                (float)board_y + interp_rank * cell_h + cell_h * 0.25f,
                 cell_w * 0.5f,
                 cell_h * 0.5f
             };
@@ -573,7 +603,7 @@ static void render_remote_move_animation(AppContext *ctx, int width, int height)
 /*  Game-over banner                                                   */
 /* ------------------------------------------------------------------ */
 
-static void render_game_over_banner(AppContext *ctx, int width, int height)
+static void render_game_over_banner(AppContext *ctx, int width, int board_y, int board_height)
 {
     const char *headline;
     const char *subline;
@@ -627,9 +657,9 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
     {
         SDL_FRect overlay;
         overlay.x = 0.0f;
-        overlay.y = 0.0f;
+        overlay.y = (float)board_y;
         overlay.w = (float)width;
-        overlay.h = (float)height;
+        overlay.h = (float)board_height;
         SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 160);
         SDL_RenderFillRect(ctx->renderer, &overlay);
@@ -685,7 +715,7 @@ static void render_game_over_banner(AppContext *ctx, int width, int height)
         box_h = hh + sh + gap + btn_gap + btn_h + pad * 2.0f;
 
         box.x = ((float)width  - box_w) * 0.5f;
-        box.y = ((float)height - box_h) * 0.5f;
+        box.y = (float)board_y + ((float)board_height - box_h) * 0.5f;
         box.w = box_w;
         box.h = box_h;
 
@@ -1166,7 +1196,7 @@ ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, in
 /*  Status message bar                                                 */
 /* ------------------------------------------------------------------ */
 
-static void render_status_message(AppContext *ctx, int width)
+static void render_status_message(AppContext *ctx, int width, int board_y)
 {
     SDL_Texture *msg_tex;
 
@@ -1195,7 +1225,7 @@ static void render_status_message(AppContext *ctx, int width)
         bg_rect.w = tex_w + 16.0f;
         bg_rect.h = tex_h + 10.0f;
         bg_rect.x = ((float)width - bg_rect.w) * 0.5f;
-        bg_rect.y = 8.0f;
+        bg_rect.y = (float)board_y + 8.0f;
         dst.w = tex_w;
         dst.h = tex_h;
         dst.x = bg_rect.x + 8.0f;
@@ -1211,6 +1241,225 @@ static void render_status_message(AppContext *ctx, int width)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Player info panels (top / bottom)                                  */
+/* ------------------------------------------------------------------ */
+
+static void render_one_player_panel(
+    SDL_Renderer *renderer,
+    TTF_Font *font,
+    const ChessPeerInfo *peer,
+    const ChessCapturedPieces *captured,
+    SDL_FRect panel_rect,
+    ChessPlayerColor player_color)
+{
+    const SDL_Color name_color = {240, 240, 240, 255};
+    const SDL_Color host_color = {170, 170, 170, 255};
+    float cursor_x = panel_rect.x + 8.0f;
+    float text_y;
+    /* Piece types to show as captures, in display order. */
+    const ChessPiece white_order[] = {
+        CHESS_PIECE_WHITE_PAWN, CHESS_PIECE_WHITE_KNIGHT,
+        CHESS_PIECE_WHITE_BISHOP, CHESS_PIECE_WHITE_ROOK,
+        CHESS_PIECE_WHITE_QUEEN
+    };
+    const ChessPiece black_order[] = {
+        CHESS_PIECE_BLACK_PAWN, CHESS_PIECE_BLACK_KNIGHT,
+        CHESS_PIECE_BLACK_BISHOP, CHESS_PIECE_BLACK_ROOK,
+        CHESS_PIECE_BLACK_QUEEN
+    };
+    const ChessPiece *cap_order;
+    size_t cap_count;
+    size_t ci;
+
+    if (!renderer || !font) {
+        return;
+    }
+
+    /* Background */
+    SDL_SetRenderDrawColor(renderer, 28, 28, 34, 255);
+    SDL_RenderFillRect(renderer, &panel_rect);
+
+    /* Separator line at the edge closest to the board */
+    {
+        SDL_FRect sep;
+        sep.x = panel_rect.x;
+        sep.y = panel_rect.y + panel_rect.h - 1.0f;
+        sep.w = panel_rect.w;
+        sep.h = 1.0f;
+        if (panel_rect.y < 1.0f) {
+            /* Top panel: separator at bottom */
+            sep.y = panel_rect.y + panel_rect.h - 1.0f;
+        } else {
+            /* Bottom panel: separator at top */
+            sep.y = panel_rect.y;
+        }
+        SDL_SetRenderDrawColor(renderer, 55, 55, 65, 255);
+        SDL_RenderFillRect(renderer, &sep);
+    }
+
+    /* Player name: username bold + @hostname gray */
+    if (peer && peer->username[0] != '\0') {
+        SDL_Texture *name_tex = make_text_texture(renderer, font, peer->username, name_color);
+        if (name_tex) {
+            float nw = 0.0f;
+            float nh = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(name_tex, &nw, &nh);
+            text_y = panel_rect.y + (panel_rect.h - nh) * 0.5f;
+            dst.x = cursor_x;
+            dst.y = text_y;
+            dst.w = nw;
+            dst.h = nh;
+            /* Bold trick: render twice with 1px offset */
+            SDL_RenderTexture(renderer, name_tex, NULL, &dst);
+            dst.x += 1.0f;
+            SDL_RenderTexture(renderer, name_tex, NULL, &dst);
+            cursor_x += nw + 2.0f;
+            SDL_DestroyTexture(name_tex);
+        }
+
+        if (peer->hostname[0] != '\0') {
+            char host_label[CHESS_PEER_HOSTNAME_MAX_LEN + 2];
+            SDL_Texture *host_tex;
+            SDL_snprintf(host_label, sizeof(host_label), "@%s", peer->hostname);
+            host_tex = make_text_texture(renderer, font, host_label, host_color);
+            if (host_tex) {
+                float hw = 0.0f;
+                float hh = 0.0f;
+                SDL_FRect dst;
+                SDL_GetTextureSize(host_tex, &hw, &hh);
+                dst.x = cursor_x;
+                dst.y = panel_rect.y + (panel_rect.h - hh) * 0.5f;
+                dst.w = hw;
+                dst.h = hh;
+                SDL_RenderTexture(renderer, host_tex, NULL, &dst);
+                cursor_x += hw;
+                SDL_DestroyTexture(host_tex);
+            }
+        }
+    } else if (peer && peer->profile_id[0] != '\0') {
+        char id_label[16];
+        SDL_Texture *id_tex;
+        SDL_snprintf(id_label, sizeof(id_label), "%.8s...", peer->profile_id);
+        id_tex = make_text_texture(renderer, font, id_label, name_color);
+        if (id_tex) {
+            float tw = 0.0f;
+            float th = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(id_tex, &tw, &th);
+            text_y = panel_rect.y + (panel_rect.h - th) * 0.5f;
+            dst.x = cursor_x;
+            dst.y = text_y;
+            dst.w = tw;
+            dst.h = th;
+            SDL_RenderTexture(renderer, id_tex, NULL, &dst);
+            cursor_x += tw;
+            SDL_DestroyTexture(id_tex);
+        }
+    }
+
+    /* Captured pieces: pieces captured BY this player (i.e. opponent's pieces) */
+    if (!captured) {
+        return;
+    }
+
+    /* This panel shows what opponent pieces this player has captured.
+     * Player is white → show captured black pieces.
+     * Player is black → show captured white pieces. */
+    if (player_color == CHESS_COLOR_WHITE) {
+        cap_order = black_order;
+        cap_count = SDL_arraysize(black_order);
+    } else {
+        cap_order = white_order;
+        cap_count = SDL_arraysize(white_order);
+    }
+
+    cursor_x += 12.0f;
+
+    for (ci = 0; ci < cap_count; ++ci) {
+        int piece_idx = (int)cap_order[ci];
+        uint8_t n = captured->count[piece_idx];
+        uint8_t k;
+        if (n == 0) {
+            continue;
+        }
+        for (k = 0; k < n; ++k) {
+            SDL_Texture *tex = s_piece_textures[piece_idx];
+            if (tex) {
+                float tex_w = 0.0f;
+                float tex_h = 0.0f;
+                float scale;
+                SDL_FRect dst;
+                SDL_GetTextureSize(tex, &tex_w, &tex_h);
+                if (tex_h > 0.0f) {
+                    scale = 18.0f / tex_h;
+                } else {
+                    scale = 1.0f;
+                }
+                dst.w = tex_w * scale;
+                dst.h = 18.0f;
+                dst.x = cursor_x;
+                dst.y = panel_rect.y + (panel_rect.h - dst.h) * 0.5f;
+                SDL_RenderTexture(renderer, tex, NULL, &dst);
+                cursor_x += dst.w - 2.0f; /* slight overlap for compact display */
+            }
+        }
+        cursor_x += 4.0f; /* gap between piece types */
+    }
+}
+
+static void render_player_panels(
+    AppContext *ctx,
+    int board_width,
+    int window_height,
+    int board_y,
+    int board_height)
+{
+    const bool black_perspective = use_black_perspective(ctx->network_session.local_color);
+    const ChessPeerInfo *top_peer;
+    const ChessPeerInfo *bottom_peer;
+    ChessPlayerColor top_color;
+    ChessPlayerColor bottom_color;
+    ChessCapturedPieces captured;
+    TTF_Font *font = s_coord_font;
+    SDL_FRect top_rect;
+    SDL_FRect bottom_rect;
+
+    if (!ctx || !ctx->renderer) {
+        return;
+    }
+
+    chess_game_compute_captured(&ctx->game_state, &captured);
+
+    if (black_perspective) {
+        /* Black at bottom (local), white at top (opponent) */
+        top_peer = &ctx->network_session.remote_peer;
+        top_color = CHESS_COLOR_WHITE;
+        bottom_peer = &ctx->network_session.local_peer;
+        bottom_color = CHESS_COLOR_BLACK;
+    } else {
+        /* White at bottom (local), black at top (opponent) */
+        top_peer = &ctx->network_session.remote_peer;
+        top_color = CHESS_COLOR_BLACK;
+        bottom_peer = &ctx->network_session.local_peer;
+        bottom_color = CHESS_COLOR_WHITE;
+    }
+
+    top_rect.x = 0.0f;
+    top_rect.y = 0.0f;
+    top_rect.w = (float)board_width;
+    top_rect.h = (float)CHESS_UI_PLAYER_PANEL_HEIGHT;
+
+    bottom_rect.x = 0.0f;
+    bottom_rect.y = (float)(board_y + board_height);
+    bottom_rect.w = (float)board_width;
+    bottom_rect.h = (float)CHESS_UI_PLAYER_PANEL_HEIGHT;
+
+    render_one_player_panel(ctx->renderer, font, top_peer, &captured, top_rect, top_color);
+    render_one_player_panel(ctx->renderer, font, bottom_peer, &captured, bottom_rect, bottom_color);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Public: full frame render                                          */
 /* ------------------------------------------------------------------ */
 
@@ -1219,6 +1468,8 @@ void chess_ui_render_frame(AppContext *ctx)
     int width = 0;
     int board_width = 0;
     int height = 0;
+    int board_y = 0;
+    int board_height;
     bool hide_piece = false;
     int hidden_file = -1;
     int hidden_rank = -1;
@@ -1233,6 +1484,7 @@ void chess_ui_render_frame(AppContext *ctx)
     SDL_RenderClear(ctx->renderer);
 
     if (!ctx->network_session.game_started) {
+        board_height = height;
         /* Update lobby hover state and cursor */
         {
             float mx = 0.0f;
@@ -1249,6 +1501,13 @@ void chess_ui_render_frame(AppContext *ctx)
         }
         chess_lobby_render(ctx->renderer, width, height, &ctx->lobby, s_lobby_font ? s_lobby_font : s_coord_font);
     } else {
+        board_y = CHESS_UI_PLAYER_PANEL_HEIGHT;
+        board_height = height - 2 * CHESS_UI_PLAYER_PANEL_HEIGHT;
+        if (board_height < 0) {
+            board_height = height;
+            board_y = 0;
+        }
+
         if (ctx->drag_active) {
             hide_piece = true;
             hidden_file = ctx->drag_from_file;
@@ -1259,25 +1518,27 @@ void chess_ui_render_frame(AppContext *ctx)
             hidden_rank = ctx->remote_move_to_rank;
         }
 
-        render_board(ctx->renderer, board_width, height);
+        render_player_panels(ctx, board_width, height, board_y, board_height);
+        render_board(ctx->renderer, board_width, board_y, board_height);
         render_game_overlay(
             ctx->renderer,
             board_width,
-            height,
+            board_y,
+            board_height,
             &ctx->game_state,
             ctx->network_session.local_color,
             hide_piece,
             hidden_file,
             hidden_rank);
-        render_promotion_overlay(ctx, board_width, height);
-        render_remote_move_animation(ctx, board_width, height);
-        render_drag_preview(ctx, board_width, height);
-        render_board_coordinates(ctx->renderer, board_width, height, ctx->network_session.local_color);
-        render_game_over_banner(ctx, board_width, height);
+        render_promotion_overlay(ctx, board_width, board_y, board_height);
+        render_remote_move_animation(ctx, board_width, board_y, board_height);
+        render_drag_preview(ctx, board_width, board_height);
+        render_board_coordinates(ctx->renderer, board_width, board_y, board_height, ctx->network_session.local_color);
+        render_game_over_banner(ctx, board_width, board_y, board_height);
         render_move_history_panel(ctx, width, height, board_width);
     }
 
-    render_status_message(ctx, board_width);
+    render_status_message(ctx, board_width, board_y);
 
     SDL_RenderPresent(ctx->renderer);
 }

@@ -3,6 +3,6 @@
 
 #include <SDL3/SDL.h>
 
-void render_board(SDL_Renderer *renderer, int width, int height);
+void render_board(SDL_Renderer *renderer, int width, int board_y, int board_height);
 
 #endif

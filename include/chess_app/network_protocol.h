@@ -10,6 +10,7 @@
 #define CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS 64u
 #define CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES 300u
 #define CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN 24u
+#define CHESS_PIECE_COUNT_PROTOCOL 13u
 
 typedef enum ChessMessageType {
     CHESS_MSG_HELLO = 1,
@@ -111,6 +112,8 @@ typedef struct ChessStateSnapshotPayload {
     uint8_t _padding2[2];
     char resume_token[CHESS_UUID_STRING_LEN];
     uint8_t board[CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS];
+    uint8_t captured[CHESS_PIECE_COUNT_PROTOCOL];
+    uint8_t _padding3[3];
     char move_history[CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES][CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN];
 } ChessStateSnapshotPayload;
 

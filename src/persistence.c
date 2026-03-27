@@ -405,6 +405,35 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
     ctx->game_state.selected_file = -1;
     ctx->game_state.selected_rank = -1;
 
+    memset(ctx->game_state.captured, 0, sizeof(ctx->game_state.captured));
+    {
+        const char *cap_key = strstr(json, "\"captured\"");
+        if (cap_key) {
+            const char *cap_p = strchr(cap_key, '[');
+            if (cap_p) {
+                int cap_idx;
+                ++cap_p;
+                for (cap_idx = 0; cap_idx < CHESS_PIECE_COUNT; ++cap_idx) {
+                    unsigned int cap_val = 0u;
+                    int cap_consumed = 0;
+                    cap_p = skip_json_ws(cap_p);
+                    if (!cap_p || *cap_p == '\0' || *cap_p == ']') {
+                        break;
+                    }
+                    if (sscanf(cap_p, "%u%n", &cap_val, &cap_consumed) != 1 || cap_consumed <= 0) {
+                        break;
+                    }
+                    ctx->game_state.captured[cap_idx] = (uint8_t)cap_val;
+                    cap_p += cap_consumed;
+                    cap_p = skip_json_ws(cap_p);
+                    if (*cap_p == ',') {
+                        ++cap_p;
+                    }
+                }
+            }
+        }
+    }
+
     ctx->move_history_count = 0;
     history_key = strstr(json, "\"move_history\"");
     if (!history_key) {
@@ -503,6 +532,14 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
     (void)fprintf(fp, "  \"en_passant_target_file\": %d,\n", (int)ctx->game_state.en_passant_target_file);
     (void)fprintf(fp, "  \"en_passant_target_rank\": %d,\n", (int)ctx->game_state.en_passant_target_rank);
     (void)fprintf(fp, "  \"outcome\": %u,\n", (unsigned)ctx->game_state.outcome);
+    (void)fprintf(fp, "  \"captured\": [");
+    for (file = 0; file < CHESS_PIECE_COUNT; ++file) {
+        (void)fprintf(fp, "%u", (unsigned)ctx->game_state.captured[file]);
+        if (file + 1 < CHESS_PIECE_COUNT) {
+            (void)fprintf(fp, ",");
+        }
+    }
+    (void)fprintf(fp, "],\n");
     (void)fprintf(fp, "  \"board\": [");
     for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
         for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
@@ -563,6 +600,11 @@ bool chess_persist_build_state_snapshot_payload(const AppContext *ctx, ChessStat
             out_payload->board[idx] = ctx->game_state.board[rank][file];
         }
     }
+
+    memcpy(out_payload->captured, ctx->game_state.captured,
+           sizeof(out_payload->captured) < sizeof(ctx->game_state.captured)
+               ? sizeof(out_payload->captured)
+               : sizeof(ctx->game_state.captured));
 
     history_count = ctx->move_history_count;
     if (history_count > (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES) {
@@ -629,6 +671,11 @@ bool chess_persist_apply_state_snapshot_payload(
     ctx->game_state.has_selection = false;
     ctx->game_state.selected_file = -1;
     ctx->game_state.selected_rank = -1;
+
+    memcpy(ctx->game_state.captured, payload->captured,
+           sizeof(ctx->game_state.captured) < sizeof(payload->captured)
+               ? sizeof(ctx->game_state.captured)
+               : sizeof(payload->captured));
 
     history_count = payload->move_history_count;
     if (history_count > (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES) {

@@ -8,6 +8,7 @@
 #include "chess_app/game_state.h"
 
 #define CHESS_UI_HISTORY_PANEL_WIDTH 220
+#define CHESS_UI_PLAYER_PANEL_HEIGHT 30
 
 /**
  * Compute the board pixel width given the window width and game state.

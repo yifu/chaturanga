@@ -2,11 +2,11 @@
 
 #include <stdbool.h>
 
-void render_board(SDL_Renderer *renderer, int width, int height)
+void render_board(SDL_Renderer *renderer, int width, int board_y, int board_height)
 {
     const int board_size = 8;
     const float cell_w = (float)width / (float)board_size;
-    const float cell_h = (float)height / (float)board_size;
+    const float cell_h = (float)board_height / (float)board_size;
 
     for (int y = 0; y < board_size; ++y) {
         for (int x = 0; x < board_size; ++x) {
@@ -19,7 +19,7 @@ void render_board(SDL_Renderer *renderer, int width, int height)
 
             SDL_FRect rect = {
                 x * cell_w,
-                y * cell_h,
+                (float)board_y + y * cell_h,
                 cell_w,
                 cell_h
             };

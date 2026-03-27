@@ -52,7 +52,12 @@ typedef struct ChessGameState {
     int selected_file;
     int selected_rank;
     ChessGameOutcome outcome;
+    uint8_t captured[CHESS_PIECE_COUNT];
 } ChessGameState;
+
+typedef struct ChessCapturedPieces {
+    uint8_t count[CHESS_PIECE_COUNT];
+} ChessCapturedPieces;
 
 void chess_game_state_init(ChessGameState *state);
 void chess_game_clear_selection(ChessGameState *state);
@@ -83,5 +88,6 @@ bool chess_move_format_algebraic_notation(
     size_t out_size
 );
 bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote_color, const ChessMovePayload *move);
+void chess_game_compute_captured(const ChessGameState *state, ChessCapturedPieces *out);
 
 #endif

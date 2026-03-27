@@ -601,6 +601,16 @@ static bool apply_move(
     is_castling = is_castling_king_move((ChessPiece)piece, from_file, from_rank, to_file, to_rank);
     is_en_passant = is_en_passant_capture_move(state, (ChessPiece)piece, from_file, from_rank, to_file, to_rank);
 
+    if (captured != CHESS_PIECE_EMPTY && (int)captured < CHESS_PIECE_COUNT) {
+        state->captured[(int)captured]++;
+    }
+    if (is_en_passant) {
+        uint8_t ep_victim = state->board[from_rank][to_file];
+        if (ep_victim != CHESS_PIECE_EMPTY && (int)ep_victim < CHESS_PIECE_COUNT) {
+            state->captured[(int)ep_victim]++;
+        }
+    }
+
     if (piece == CHESS_PIECE_WHITE_KING) {
         state->white_can_castle_kingside = false;
         state->white_can_castle_queenside = false;
@@ -1140,4 +1150,15 @@ bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote
         (int)move->to_rank,
         move->promotion
     );
+}
+
+void chess_game_compute_captured(const ChessGameState *state, ChessCapturedPieces *out)
+{
+    memset(out, 0, sizeof(*out));
+
+    if (!state) {
+        return;
+    }
+
+    memcpy(out->count, state->captured, sizeof(out->count));
 }
