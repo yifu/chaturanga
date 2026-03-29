@@ -617,6 +617,11 @@ void chess_ui_update_capture_animation(AppContext *ctx)
     now = SDL_GetTicks();
     elapsed = now - ctx->capture_anim_started_at_ms;
     if (ctx->capture_anim_duration_ms == 0u || elapsed >= (uint64_t)ctx->capture_anim_duration_ms) {
+        /* Animation finished: now add the piece to the captured list */
+        if ((int)ctx->capture_anim_piece > 0 &&
+            (int)ctx->capture_anim_piece < CHESS_PIECE_COUNT) {
+            ctx->game_state.captured[(int)ctx->capture_anim_piece]++;
+        }
         ctx->capture_anim_active = false;
         ctx->capture_anim_piece = CHESS_PIECE_EMPTY;
     }
@@ -645,6 +650,12 @@ void chess_ui_start_capture_animation(
     ctx->capture_anim_target_top = (captured_is_black == black_persp);
     ctx->capture_anim_started_at_ms = SDL_GetTicks();
     ctx->capture_anim_duration_ms = CHESS_CAPTURE_ANIM_DEFAULT_MS;
+
+    /* Hide the piece from the captured list during the animation;
+       it will be re-added when the animation finishes. */
+    if (ctx->game_state.captured[(int)captured_piece] > 0) {
+        ctx->game_state.captured[(int)captured_piece]--;
+    }
 }
 
 static void render_capture_animation(AppContext *ctx, int board_width, int board_y, int board_height)
