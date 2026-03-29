@@ -66,6 +66,8 @@ typedef struct ChessPacketHeader {
 
 typedef struct ChessHelloPayload {
     char profile_id[CHESS_PROFILE_ID_STRING_LEN];
+    char username[CHESS_PEER_USERNAME_MAX_LEN];
+    char hostname[CHESS_PEER_HOSTNAME_MAX_LEN];
     uint32_t role;
 } ChessHelloPayload;
 

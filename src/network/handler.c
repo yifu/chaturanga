@@ -225,6 +225,26 @@ static void net_handle_hello_packet(AppContext *ctx, const ChessHelloPayload *he
 
     ctx->network_session.hello_received = true;
 
+    /* If we already know this peer from mDNS, verify that the HELLO
+     * identity matches what the discovery layer advertised. */
+    if (ctx->network_session.peer_available &&
+        ctx->network_session.remote_peer.username[0] != '\0') {
+        if (hello->username[0] != '\0' &&
+            SDL_strncmp(ctx->network_session.remote_peer.username,
+                        hello->username,
+                        sizeof(ctx->network_session.remote_peer.username)) != 0) {
+            SDL_Log("NET: HELLO identity mismatch: expected user '%s', got '%s'",
+                    ctx->network_session.remote_peer.username, hello->username);
+        }
+        if (hello->hostname[0] != '\0' &&
+            SDL_strncmp(ctx->network_session.remote_peer.hostname,
+                        hello->hostname,
+                        sizeof(ctx->network_session.remote_peer.hostname)) != 0) {
+            SDL_Log("NET: HELLO identity mismatch: expected host '%s', got '%s'",
+                    ctx->network_session.remote_peer.hostname, hello->hostname);
+        }
+    }
+
     /* When the connection was accepted before mDNS discovery,
      * register minimal identity so that the later set_remote()
      * from mDNS sees same_remote == true and does not reset. */
@@ -232,6 +252,10 @@ static void net_handle_hello_packet(AppContext *ctx, const ChessHelloPayload *he
         memset(&ctx->network_session.remote_peer, 0, sizeof(ctx->network_session.remote_peer));
         SDL_strlcpy(ctx->network_session.remote_peer.profile_id, hello->profile_id,
                      sizeof(ctx->network_session.remote_peer.profile_id));
+        SDL_strlcpy(ctx->network_session.remote_peer.username, hello->username,
+                     sizeof(ctx->network_session.remote_peer.username));
+        SDL_strlcpy(ctx->network_session.remote_peer.hostname, hello->hostname,
+                     sizeof(ctx->network_session.remote_peer.hostname));
         ctx->network_session.peer_available = true;
     }
 
@@ -989,6 +1013,8 @@ static void net_advance_outgoing_challenges(AppContext *ctx, const ChessNetPollR
                 ChessTcpConnection tmp = { .fd = cc->fd };
                 memset(&hello, 0, sizeof(hello));
                 SDL_strlcpy(hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(hello.profile_id));
+                SDL_strlcpy(hello.username, ctx->network_session.local_peer.username, sizeof(hello.username));
+                SDL_strlcpy(hello.hostname, ctx->network_session.local_peer.hostname, sizeof(hello.hostname));
                 hello.role = (uint32_t)CHESS_ROLE_CLIENT;
                 if (chess_tcp_send_hello(&tmp, &hello)) {
                     cc->hello_sent = true;
@@ -1010,6 +1036,19 @@ static void net_advance_outgoing_challenges(AppContext *ctx, const ChessNetPollR
                     (uint8_t *)&remote_hello, sizeof(remote_hello));
                 if (rr == CHESS_RECV_OK) {
                     if (hdr.message_type == CHESS_MSG_HELLO && hdr.payload_size == sizeof(ChessHelloPayload)) {
+                        /* Verify HELLO identity matches mDNS-discovered peer */
+                        if (ps->peer.username[0] != '\0' && remote_hello.username[0] != '\0' &&
+                            SDL_strncmp(ps->peer.username, remote_hello.username, sizeof(ps->peer.username)) != 0) {
+                            SDL_Log("NET: challenge HELLO identity mismatch for peer %d: "
+                                    "expected user '%s', got '%s'",
+                                    i, ps->peer.username, remote_hello.username);
+                        }
+                        if (ps->peer.hostname[0] != '\0' && remote_hello.hostname[0] != '\0' &&
+                            SDL_strncmp(ps->peer.hostname, remote_hello.hostname, sizeof(ps->peer.hostname)) != 0) {
+                            SDL_Log("NET: challenge HELLO identity mismatch for peer %d: "
+                                    "expected host '%s', got '%s'",
+                                    i, ps->peer.hostname, remote_hello.hostname);
+                        }
                         cc->hello_received = true;
                         SDL_Log("NET: challenge HELLO completed with peer %d (%.8s...)", i, ps->peer.profile_id);
                     } else {
@@ -1127,6 +1166,8 @@ static void net_advance_hello_handshake(AppContext *ctx)
             ChessHelloPayload local_hello;
             memset(&local_hello, 0, sizeof(local_hello));
             SDL_strlcpy(local_hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(local_hello.profile_id));
+            SDL_strlcpy(local_hello.username, ctx->network_session.local_peer.username, sizeof(local_hello.username));
+            SDL_strlcpy(local_hello.hostname, ctx->network_session.local_peer.hostname, sizeof(local_hello.hostname));
             local_hello.role = (uint32_t)CHESS_ROLE_CLIENT;
             if (chess_tcp_send_hello(&ctx->connection, &local_hello)) {
                 ctx->network_session.hello_sent = true;
@@ -1152,6 +1193,8 @@ static void net_advance_hello_handshake(AppContext *ctx)
         ChessHelloPayload local_hello;
         memset(&local_hello, 0, sizeof(local_hello));
         SDL_strlcpy(local_hello.profile_id, ctx->network_session.local_peer.profile_id, sizeof(local_hello.profile_id));
+        SDL_strlcpy(local_hello.username, ctx->network_session.local_peer.username, sizeof(local_hello.username));
+        SDL_strlcpy(local_hello.hostname, ctx->network_session.local_peer.hostname, sizeof(local_hello.hostname));
         local_hello.role = (uint32_t)CHESS_ROLE_SERVER;
 
         if (ctx->network_session.hello_received && !ctx->network_session.hello_sent) {
