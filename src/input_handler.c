@@ -175,14 +175,41 @@ static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, u
         notation_ready = true;
     }
 
-    if (!chess_game_try_local_move(
-            &ctx->game_state,
-            ctx->network_session.local_color,
-            to_file,
-            to_rank,
-            promotion,
-            &move)) {
-        return false;
+    /* Detect capture before the move modifies the board */
+    {
+        ChessPiece victim = CHESS_PIECE_EMPTY;
+        int victim_file = to_file;
+        int victim_rank = to_rank;
+
+        if (ctx->game_state.has_selection) {
+            victim = chess_game_get_piece(&ctx->game_state, to_file, to_rank);
+            if (victim == CHESS_PIECE_EMPTY) {
+                /* Check for en passant: pawn moving diagonally to empty square */
+                ChessPiece mover = chess_game_get_piece(
+                    &ctx->game_state,
+                    ctx->game_state.selected_file,
+                    ctx->game_state.selected_rank);
+                if ((mover == CHESS_PIECE_WHITE_PAWN || mover == CHESS_PIECE_BLACK_PAWN) &&
+                    to_file != ctx->game_state.selected_file) {
+                    victim_rank = ctx->game_state.selected_rank;
+                    victim = chess_game_get_piece(&ctx->game_state, to_file, victim_rank);
+                }
+            }
+        }
+
+        if (!chess_game_try_local_move(
+                &ctx->game_state,
+                ctx->network_session.local_color,
+                to_file,
+                to_rank,
+                promotion,
+                &move)) {
+            return false;
+        }
+
+        if (victim != CHESS_PIECE_EMPTY) {
+            chess_ui_start_capture_animation(ctx, victim, victim_file, victim_rank);
+        }
     }
 
     if (notation_ready) {

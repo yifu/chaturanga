@@ -501,6 +501,7 @@ int app_run(void)
         app_poll_discovery_and_update_lobby(&ctx);
 
         chess_ui_update_remote_move_animation(&ctx);
+        chess_ui_update_capture_animation(&ctx);
 
         chess_ui_render_frame(&ctx);
     }

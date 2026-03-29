@@ -68,6 +68,15 @@ typedef struct AppContext {
     uint64_t remote_move_anim_started_at_ms;
     uint32_t remote_move_anim_duration_ms;
 
+    /* ── Capture animation (piece flies to panel, shrinking) ─────── */
+    bool capture_anim_active;
+    ChessPiece capture_anim_piece;
+    int capture_anim_from_file;
+    int capture_anim_from_rank;
+    bool capture_anim_target_top;  /* true = fly to top panel */
+    uint64_t capture_anim_started_at_ms;
+    uint32_t capture_anim_duration_ms;
+
     /* ── Status messages ────────────────────────────────────────────── */
     char status_message[APP_STATUS_MESSAGE_LEN];
     uint64_t status_message_until_ms;

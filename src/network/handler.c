@@ -2,6 +2,7 @@
 
 #include "chess_app/app_context.h"
 #include "chess_app/persistence.h"
+#include "chess_app/ui_game.h"
 
 #include "chess_app/game_state.h"
 #include "chess_app/lobby_state.h"
@@ -604,42 +605,67 @@ static void net_handle_move_packet(AppContext *ctx, const ChessMovePayload *move
         notation_ready = true;
     }
 
-    if (chess_game_apply_remote_move(&ctx->game_state, remote_color, move)) {
-        ChessPiece piece_to_animate = moving_piece;
-        if (piece_to_animate == CHESS_PIECE_EMPTY) {
-            piece_to_animate = chess_game_get_piece(&ctx->game_state, (int)move->to_file, (int)move->to_rank);
-        }
+    /* Detect capture before the move modifies the board */
+    {
+        ChessPiece victim = chess_game_get_piece(
+            &ctx->game_state, (int)move->to_file, (int)move->to_rank);
+        int victim_file = (int)move->to_file;
+        int victim_rank = (int)move->to_rank;
 
-        if (piece_to_animate != CHESS_PIECE_EMPTY) {
-            ctx->remote_move_anim_active = true;
-            ctx->remote_move_anim_piece = piece_to_animate;
-            ctx->remote_move_from_file = (int)move->from_file;
-            ctx->remote_move_from_rank = (int)move->from_rank;
-            ctx->remote_move_to_file = (int)move->to_file;
-            ctx->remote_move_to_rank = (int)move->to_rank;
-            ctx->remote_move_anim_started_at_ms = SDL_GetTicks();
-            if (ctx->remote_move_anim_duration_ms == 0u) {
-                ctx->remote_move_anim_duration_ms = CHESS_REMOTE_MOVE_ANIM_DEFAULT_MS;
+        if (victim == CHESS_PIECE_EMPTY) {
+            /* En passant: pawn moving diagonally to empty square */
+            ChessPiece mover = chess_game_get_piece(
+                &ctx->game_state, (int)move->from_file, (int)move->from_rank);
+            if ((mover == CHESS_PIECE_WHITE_PAWN || mover == CHESS_PIECE_BLACK_PAWN) &&
+                move->to_file != move->from_file) {
+                victim_rank = (int)move->from_rank;
+                victim = chess_game_get_piece(
+                    &ctx->game_state, (int)move->to_file, victim_rank);
             }
         }
 
-        if (notation_ready) {
-            app_append_move_history(ctx, notation);
-        }
+        if (chess_game_apply_remote_move(&ctx->game_state, remote_color, move)) {
+            if (victim != CHESS_PIECE_EMPTY) {
+                chess_ui_start_capture_animation(
+                    ctx, victim, victim_file, victim_rank);
+            }
 
-        if (ctx->network_session.role == CHESS_ROLE_SERVER) {
-            (void)chess_persist_save_match_snapshot(ctx);
-        }
+            ChessPiece piece_to_animate = moving_piece;
+            if (piece_to_animate == CHESS_PIECE_EMPTY) {
+                piece_to_animate = chess_game_get_piece(&ctx->game_state, (int)move->to_file, (int)move->to_rank);
+            }
 
-        SDL_Log(
-            "GAME: applied remote move (%u,%u) -> (%u,%u)",
-            (unsigned)move->from_file,
-            (unsigned)move->from_rank,
-            (unsigned)move->to_file,
-            (unsigned)move->to_rank
-        );
-    } else {
-        SDL_Log("GAME: ignoring invalid remote MOVE payload");
+            if (piece_to_animate != CHESS_PIECE_EMPTY) {
+                ctx->remote_move_anim_active = true;
+                ctx->remote_move_anim_piece = piece_to_animate;
+                ctx->remote_move_from_file = (int)move->from_file;
+                ctx->remote_move_from_rank = (int)move->from_rank;
+                ctx->remote_move_to_file = (int)move->to_file;
+                ctx->remote_move_to_rank = (int)move->to_rank;
+                ctx->remote_move_anim_started_at_ms = SDL_GetTicks();
+                if (ctx->remote_move_anim_duration_ms == 0u) {
+                    ctx->remote_move_anim_duration_ms = CHESS_REMOTE_MOVE_ANIM_DEFAULT_MS;
+                }
+            }
+
+            if (notation_ready) {
+                app_append_move_history(ctx, notation);
+            }
+
+            if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+                (void)chess_persist_save_match_snapshot(ctx);
+            }
+
+            SDL_Log(
+                "GAME: applied remote move (%u,%u) -> (%u,%u)",
+                (unsigned)move->from_file,
+                (unsigned)move->from_rank,
+                (unsigned)move->to_file,
+                (unsigned)move->to_rank
+            );
+        } else {
+            SDL_Log("GAME: ignoring invalid remote MOVE payload");
+        }
     }
 }
 

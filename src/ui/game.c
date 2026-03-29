@@ -600,6 +600,150 @@ static void render_remote_move_animation(AppContext *ctx, int width, int board_y
 }
 
 /* ------------------------------------------------------------------ */
+/*  Capture animation (piece flies to panel, shrinking)                */
+/* ------------------------------------------------------------------ */
+
+#define CHESS_CAPTURE_ANIM_DEFAULT_MS 350u
+
+void chess_ui_update_capture_animation(AppContext *ctx)
+{
+    uint64_t now;
+    uint64_t elapsed;
+
+    if (!ctx || !ctx->capture_anim_active) {
+        return;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->capture_anim_started_at_ms;
+    if (ctx->capture_anim_duration_ms == 0u || elapsed >= (uint64_t)ctx->capture_anim_duration_ms) {
+        ctx->capture_anim_active = false;
+        ctx->capture_anim_piece = CHESS_PIECE_EMPTY;
+    }
+}
+
+void chess_ui_start_capture_animation(
+    AppContext *ctx,
+    ChessPiece captured_piece,
+    int from_file,
+    int from_rank)
+{
+    bool captured_is_black;
+    bool black_persp;
+
+    if (!ctx || captured_piece == CHESS_PIECE_EMPTY || (int)captured_piece >= CHESS_PIECE_COUNT) {
+        return;
+    }
+
+    captured_is_black = ((int)captured_piece >= (int)CHESS_PIECE_BLACK_PAWN);
+    black_persp = use_black_perspective(ctx->network_session.local_color);
+
+    ctx->capture_anim_active = true;
+    ctx->capture_anim_piece = captured_piece;
+    ctx->capture_anim_from_file = from_file;
+    ctx->capture_anim_from_rank = from_rank;
+    ctx->capture_anim_target_top = (captured_is_black == black_persp);
+    ctx->capture_anim_started_at_ms = SDL_GetTicks();
+    ctx->capture_anim_duration_ms = CHESS_CAPTURE_ANIM_DEFAULT_MS;
+}
+
+static void render_capture_animation(AppContext *ctx, int board_width, int board_y, int board_height)
+{
+    const float cell_w = (float)board_width / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
+    const bool black_perspective = use_black_perspective(ctx->network_session.local_color);
+    const float panel_h = (float)CHESS_UI_PLAYER_PANEL_HEIGHT;
+    const float target_size = 24.0f;
+    uint64_t now;
+    uint64_t elapsed;
+    float t;
+    int screen_file;
+    int screen_rank;
+    float start_x;
+    float start_y;
+    float start_size;
+    float target_x;
+    float target_y;
+    float cur_x;
+    float cur_y;
+    float cur_size;
+    SDL_Texture *tex;
+
+    if (!ctx || !ctx->renderer || !ctx->capture_anim_active ||
+        ctx->capture_anim_piece <= CHESS_PIECE_EMPTY ||
+        ctx->capture_anim_piece >= CHESS_PIECE_COUNT) {
+        return;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->capture_anim_started_at_ms;
+    if (ctx->capture_anim_duration_ms == 0u) {
+        t = 1.0f;
+    } else {
+        t = (float)elapsed / (float)ctx->capture_anim_duration_ms;
+        if (t > 1.0f) {
+            t = 1.0f;
+        }
+    }
+
+    /* Source position: center of the board square where capture happened */
+    screen_file = board_to_screen_index(ctx->capture_anim_from_file, black_perspective);
+    screen_rank = board_to_screen_index(ctx->capture_anim_from_rank, black_perspective);
+    start_size = cell_h;
+    start_x = screen_file * cell_w + cell_w * 0.5f;
+    start_y = (float)board_y + screen_rank * cell_h + cell_h * 0.5f;
+
+    /* Target position: center of the target player panel */
+    target_x = (float)board_width * 0.45f;
+    if (ctx->capture_anim_target_top) {
+        target_y = panel_h * 0.5f;
+    } else {
+        target_y = (float)(board_y + board_height) + panel_h * 0.5f;
+    }
+
+    /* Linear interpolation of position and size */
+    cur_x = (1.0f - t) * start_x + t * target_x;
+    cur_y = (1.0f - t) * start_y + t * target_y;
+    cur_size = (1.0f - t) * start_size + t * target_size;
+
+    tex = s_piece_textures[(int)ctx->capture_anim_piece];
+    if (tex) {
+        float tex_w = 0.0f;
+        float tex_h = 0.0f;
+        float scale;
+        SDL_FRect dst;
+
+        SDL_GetTextureSize(tex, &tex_w, &tex_h);
+        scale = (tex_h > 0.0f) ? cur_size / tex_h : 1.0f;
+        dst.w = tex_w * scale;
+        dst.h = cur_size;
+        dst.x = cur_x - dst.w * 0.5f;
+        dst.y = cur_y - dst.h * 0.5f;
+
+        /* White silhouette halo behind dark pieces */
+        if ((int)ctx->capture_anim_piece >= (int)CHESS_PIECE_BLACK_PAWN &&
+            s_piece_silhouettes[(int)ctx->capture_anim_piece]) {
+            static const float offsets[][2] = {
+                {-2, -2}, {-1, -2}, { 0, -2}, { 1, -2}, { 2, -2},
+                {-2, -1},                               { 2, -1},
+                {-2,  0},                               { 2,  0},
+                {-2,  1},                               { 2,  1},
+                {-2,  2}, {-1,  2}, { 0,  2}, { 1,  2}, { 2,  2},
+            };
+            size_t oi;
+            for (oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); ++oi) {
+                SDL_FRect halo = dst;
+                halo.x += offsets[oi][0];
+                halo.y += offsets[oi][1];
+                SDL_RenderTexture(ctx->renderer, s_piece_silhouettes[(int)ctx->capture_anim_piece], NULL, &halo);
+            }
+        }
+
+        SDL_RenderTexture(ctx->renderer, tex, NULL, &dst);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Game-over banner                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -1551,6 +1695,7 @@ void chess_ui_render_frame(AppContext *ctx)
             hidden_rank);
         render_promotion_overlay(ctx, board_width, board_y, board_height);
         render_remote_move_animation(ctx, board_width, board_y, board_height);
+        render_capture_animation(ctx, board_width, board_y, board_height);
         render_drag_preview(ctx, board_width, board_height);
         render_board_coordinates(ctx->renderer, board_width, board_y, board_height, ctx->network_session.local_color);
         render_game_over_banner(ctx, board_width, board_y, board_height);

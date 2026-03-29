@@ -53,6 +53,22 @@ ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, in
 void chess_ui_update_remote_move_animation(AppContext *ctx);
 
 /**
+ * Advance the capture animation timer.
+ * Call once per frame from the main loop.
+ */
+void chess_ui_update_capture_animation(AppContext *ctx);
+
+/**
+ * Start a capture animation: the captured piece flies from its board
+ * square to the appropriate player panel, shrinking along the way.
+ */
+void chess_ui_start_capture_animation(
+    AppContext *ctx,
+    ChessPiece captured_piece,
+    int from_file,
+    int from_rank);
+
+/**
  * Full frame rendering: lobby, board, overlays, history panel, status.
  */
 void chess_ui_render_frame(AppContext *ctx);
