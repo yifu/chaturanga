@@ -10,6 +10,9 @@
 #include "chess_app/game_state.h"
 #include "chess_app/lobby_state.h"
 
+#include "embedded_pieces.h"
+#include <SDL3_image/SDL_image.h>
+
 #include "chess_app/network_discovery.h"
 #include "chess_app/network_peer.h"
 #include "chess_app/network_session.h"
@@ -124,6 +127,18 @@ static bool app_init_window_and_renderer(AppLoopContext *ctx)
     }
 
     init_piece_textures(ctx->renderer);
+
+    /* Set window icon to white knight */
+    {
+        SDL_IOStream *io = SDL_IOFromConstMem(embedded_Chess_nlt60, embedded_Chess_nlt60_size);
+        if (io) {
+            SDL_Surface *icon = IMG_Load_IO(io, true);
+            if (icon) {
+                SDL_SetWindowIcon(ctx->window, icon);
+                SDL_DestroySurface(icon);
+            }
+        }
+    }
 
     ctx->cursor_default = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
     ctx->cursor_pointer = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
