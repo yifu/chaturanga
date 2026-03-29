@@ -1400,15 +1400,24 @@ static void render_one_player_panel(
                 dst.h = 24.0f;
                 dst.x = cursor_x;
                 dst.y = panel_rect.y + (panel_rect.h - dst.h) * 0.5f;
-                if (piece_idx >= (int)CHESS_PIECE_WHITE_PAWN &&
-                    piece_idx <= (int)CHESS_PIECE_WHITE_KING) {
-                    SDL_FRect fill;
-                    fill.w = dst.w * 0.52f;
-                    fill.h = dst.h * 0.52f;
-                    fill.x = dst.x + (dst.w - fill.w) * 0.5f;
-                    fill.y = dst.y + (dst.h - fill.h) * 0.5f;
-                    SDL_SetRenderDrawColor(renderer, 220, 215, 190, 255);
-                    SDL_RenderFillRect(renderer, &fill);
+                /* White silhouette halo behind dark pieces on dark panel */
+                if (piece_idx >= (int)CHESS_PIECE_BLACK_PAWN &&
+                    piece_idx <= (int)CHESS_PIECE_BLACK_KING &&
+                    s_piece_silhouettes[piece_idx]) {
+                    static const float offsets[][2] = {
+                        {-2, -2}, {-1, -2}, { 0, -2}, { 1, -2}, { 2, -2},
+                        {-2, -1},                               { 2, -1},
+                        {-2,  0},                               { 2,  0},
+                        {-2,  1},                               { 2,  1},
+                        {-2,  2}, {-1,  2}, { 0,  2}, { 1,  2}, { 2,  2},
+                    };
+                    size_t oi;
+                    for (oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); ++oi) {
+                        SDL_FRect halo = dst;
+                        halo.x += offsets[oi][0];
+                        halo.y += offsets[oi][1];
+                        SDL_RenderTexture(renderer, s_piece_silhouettes[piece_idx], NULL, &halo);
+                    }
                 }
                 SDL_RenderTexture(renderer, tex, NULL, &dst);
                 cursor_x += dst.w * 0.55f; /* overlap for compact display */

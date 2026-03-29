@@ -10,10 +10,10 @@
 
 /* ── Global font / texture resources (owned by ui/fonts.c) ────────── */
 
-extern TTF_Font    *s_chess_font;
 extern TTF_Font    *s_coord_font;
 extern TTF_Font    *s_lobby_font;
 extern SDL_Texture *s_piece_textures[CHESS_PIECE_COUNT];
+extern SDL_Texture *s_piece_silhouettes[CHESS_PIECE_COUNT];
 extern SDL_Texture *s_file_label_textures[CHESS_BOARD_SIZE][2];
 extern SDL_Texture *s_rank_label_textures[CHESS_BOARD_SIZE][2];
 extern bool         s_ttf_initialized;

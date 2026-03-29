@@ -2,18 +2,20 @@
 
 #include "chess_app/game_state.h"
 #include "chess_app/lobby_state.h"
+#include "embedded_pieces.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <SDL3_image/SDL_image.h>
 #include <stdbool.h>
 #include <string.h>
 
 /* ── Global resource pool (declared extern in ui_fonts.h) ─────────── */
 
-TTF_Font    *s_chess_font                     = NULL;
 TTF_Font    *s_coord_font                     = NULL;
 TTF_Font    *s_lobby_font                     = NULL;
 SDL_Texture *s_piece_textures[CHESS_PIECE_COUNT];
+SDL_Texture *s_piece_silhouettes[CHESS_PIECE_COUNT];
 SDL_Texture *s_file_label_textures[CHESS_BOARD_SIZE][2];
 SDL_Texture *s_rank_label_textures[CHESS_BOARD_SIZE][2];
 bool         s_ttf_initialized                = false;
@@ -170,56 +172,6 @@ static TTF_Font *open_lobby_font_from_candidates(const char * const *font_paths,
     return NULL;
 }
 
-static SDL_Texture *make_outlined_glyph_texture(
-    SDL_Renderer *renderer,
-    TTF_Font     *font,
-    Uint32        codepoint,
-    SDL_Color     fg,
-    SDL_Color     outline_col,
-    int           outline_px)
-{
-    SDL_Surface *outline_surf = NULL;
-    SDL_Surface *fill_surf    = NULL;
-    SDL_Surface *combined     = NULL;
-    SDL_Texture *tex          = NULL;
-    SDL_Rect     fill_dst;
-
-    TTF_SetFontOutline(font, outline_px);
-    outline_surf = TTF_RenderGlyph_Blended(font, codepoint, outline_col);
-    TTF_SetFontOutline(font, 0);
-    fill_surf    = TTF_RenderGlyph_Blended(font, codepoint, fg);
-
-    if (!outline_surf || !fill_surf) {
-        goto cleanup;
-    }
-
-    combined = SDL_CreateSurface(outline_surf->w, outline_surf->h, SDL_PIXELFORMAT_ARGB8888);
-    if (!combined) {
-        goto cleanup;
-    }
-    SDL_FillSurfaceRect(combined, NULL, 0u);
-
-    SDL_SetSurfaceBlendMode(outline_surf, SDL_BLENDMODE_BLEND);
-    SDL_BlitSurface(outline_surf, NULL, combined, NULL);
-
-    fill_dst.x = outline_px;
-    fill_dst.y = outline_px;
-    fill_dst.w = fill_surf->w;
-    fill_dst.h = fill_surf->h;
-    SDL_SetSurfaceBlendMode(fill_surf, SDL_BLENDMODE_BLEND);
-    SDL_BlitSurface(fill_surf, NULL, combined, &fill_dst);
-
-    tex = SDL_CreateTextureFromSurface(renderer, combined);
-    SDL_DestroySurface(combined);
-    combined = NULL;
-
-cleanup:
-    if (outline_surf) SDL_DestroySurface(outline_surf);
-    if (fill_surf)    SDL_DestroySurface(fill_surf);
-    if (combined)     SDL_DestroySurface(combined);
-    return tex;
-}
-
 /* ── Public API ───────────────────────────────────────────────────── */
 
 SDL_Texture *make_text_texture(SDL_Renderer *renderer, TTF_Font *font, const char *text, SDL_Color color)
@@ -259,21 +211,64 @@ const char *lobby_state_suffix(ChessChallengeState state)
     return "";
 }
 
+static SDL_Texture *load_embedded_png(SDL_Renderer *renderer,
+                                       const unsigned char *data,
+                                       size_t size)
+{
+    SDL_IOStream *io = SDL_IOFromConstMem(data, size);
+    if (!io) {
+        SDL_Log("UI: SDL_IOFromConstMem failed: %s", SDL_GetError());
+        return NULL;
+    }
+    SDL_Texture *tex = IMG_LoadTexture_IO(renderer, io, true);
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    }
+    return tex;
+}
+
+/* Create a white silhouette texture: same alpha channel, all RGB set to white.
+ * Used to draw a visible halo behind dark pieces on dark backgrounds. */
+static SDL_Texture *make_white_silhouette(SDL_Renderer *renderer,
+                                          const unsigned char *data,
+                                          size_t size)
+{
+    SDL_IOStream *io = SDL_IOFromConstMem(data, size);
+    SDL_Surface *surf;
+    SDL_Surface *converted;
+    SDL_Texture *tex;
+    int x, y;
+
+    if (!io) {
+        return NULL;
+    }
+    surf = IMG_Load_IO(io, true);
+    if (!surf) {
+        return NULL;
+    }
+    converted = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(surf);
+    if (!converted) {
+        return NULL;
+    }
+    /* Set all RGB to white, keep alpha untouched */
+    for (y = 0; y < converted->h; ++y) {
+        uint32_t *row = (uint32_t *)((uint8_t *)converted->pixels + y * converted->pitch);
+        for (x = 0; x < converted->w; ++x) {
+            uint32_t a = row[x] & 0xFF000000u;
+            row[x] = a | 0x00FFFFFFu;
+        }
+    }
+    tex = SDL_CreateTextureFromSurface(renderer, converted);
+    SDL_DestroySurface(converted);
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    }
+    return tex;
+}
+
 void init_piece_textures(SDL_Renderer *renderer)
 {
-    static const char * const chess_font_paths[] = {
-        /* macOS */
-        "/Library/Fonts/Arial Unicode.ttf",
-        "/System/Library/Fonts/Apple Symbols.ttf",
-        /* Linux */
-        "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
-        "/usr/local/share/fonts/FreeSans.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
-        NULL
-    };
     static const char * const coord_font_paths[] = {
         /* macOS */
         "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -306,28 +301,27 @@ void init_piece_textures(SDL_Renderer *renderer)
         "/usr/share/fonts/opentype/urw-base35/StandardSymbolsPS.otf",
         NULL
     };
-    static const Uint32 piece_codepoints[CHESS_PIECE_COUNT] = {
-        [CHESS_PIECE_WHITE_PAWN]   = 0x2659u,
-        [CHESS_PIECE_WHITE_KNIGHT] = 0x2658u,
-        [CHESS_PIECE_WHITE_BISHOP] = 0x2657u,
-        [CHESS_PIECE_WHITE_ROOK]   = 0x2656u,
-        [CHESS_PIECE_WHITE_QUEEN]  = 0x2655u,
-        [CHESS_PIECE_WHITE_KING]   = 0x2654u,
-        [CHESS_PIECE_BLACK_PAWN]   = 0x265Fu,
-        [CHESS_PIECE_BLACK_KNIGHT] = 0x265Eu,
-        [CHESS_PIECE_BLACK_BISHOP] = 0x265Du,
-        [CHESS_PIECE_BLACK_ROOK]   = 0x265Cu,
-        [CHESS_PIECE_BLACK_QUEEN]  = 0x265Bu,
-        [CHESS_PIECE_BLACK_KING]   = 0x265Au,
+    static const struct {
+        int piece;
+        const unsigned char *data;
+        const size_t *size;
+    } embedded_pieces[] = {
+        { CHESS_PIECE_WHITE_PAWN,   embedded_Chess_plt60, &embedded_Chess_plt60_size },
+        { CHESS_PIECE_WHITE_KNIGHT, embedded_Chess_nlt60, &embedded_Chess_nlt60_size },
+        { CHESS_PIECE_WHITE_BISHOP, embedded_Chess_blt60, &embedded_Chess_blt60_size },
+        { CHESS_PIECE_WHITE_ROOK,   embedded_Chess_rlt60, &embedded_Chess_rlt60_size },
+        { CHESS_PIECE_WHITE_QUEEN,  embedded_Chess_qlt60, &embedded_Chess_qlt60_size },
+        { CHESS_PIECE_WHITE_KING,   embedded_Chess_klt60, &embedded_Chess_klt60_size },
+        { CHESS_PIECE_BLACK_PAWN,   embedded_Chess_pdt60, &embedded_Chess_pdt60_size },
+        { CHESS_PIECE_BLACK_KNIGHT, embedded_Chess_ndt60, &embedded_Chess_ndt60_size },
+        { CHESS_PIECE_BLACK_BISHOP, embedded_Chess_bdt60, &embedded_Chess_bdt60_size },
+        { CHESS_PIECE_BLACK_ROOK,   embedded_Chess_rdt60, &embedded_Chess_rdt60_size },
+        { CHESS_PIECE_BLACK_QUEEN,  embedded_Chess_qdt60, &embedded_Chess_qdt60_size },
+        { CHESS_PIECE_BLACK_KING,   embedded_Chess_kdt60, &embedded_Chess_kdt60_size },
     };
-    const SDL_Color white_fg      = {245, 238, 200, 255};
-    const SDL_Color white_outline = { 50,  35,  20, 255};
-    const SDL_Color black_fg      = { 45,  30,  20, 255};
-    const SDL_Color black_outline = {215, 210, 175, 255};
     const SDL_Color coord_on_light = {60, 70, 45, 255};
     const SDL_Color coord_on_dark  = {238, 238, 210, 255};
     int i;
-    float font_size = 52.0f;
 
     if (!TTF_Init()) {
         SDL_Log("UI: TTF_Init failed: %s", SDL_GetError());
@@ -335,21 +329,19 @@ void init_piece_textures(SDL_Renderer *renderer)
     }
     s_ttf_initialized = true;
 
-    s_chess_font = open_font_from_candidates(chess_font_paths, font_size);
-    if (!s_chess_font) {
-        SDL_Log("UI: no chess font found, piece rendering will use fallback rectangles");
-    }
-
-    if (s_chess_font) {
-        for (i = 1; i < CHESS_PIECE_COUNT; ++i) {
-            bool is_white = (i < (int)CHESS_PIECE_BLACK_PAWN);
-            SDL_Color fg      = is_white ? white_fg      : black_fg;
-            SDL_Color outline = is_white ? white_outline : black_outline;
-            s_piece_textures[i] = make_outlined_glyph_texture(
-                renderer, s_chess_font, piece_codepoints[i], fg, outline, 2);
-            if (!s_piece_textures[i]) {
-                SDL_Log("UI: failed to create texture for piece %d: %s", i, SDL_GetError());
-            }
+    /* Load embedded PNG piece sprites */
+    for (i = 0; i < (int)(sizeof(embedded_pieces) / sizeof(embedded_pieces[0])); ++i) {
+        int idx = embedded_pieces[i].piece;
+        s_piece_textures[idx] =
+            load_embedded_png(renderer, embedded_pieces[i].data, *embedded_pieces[i].size);
+        if (!s_piece_textures[idx]) {
+            SDL_Log("UI: failed to load embedded PNG for piece %d: %s",
+                    idx, SDL_GetError());
+        }
+        /* White silhouette for dark pieces (used as halo on dark backgrounds) */
+        if (idx >= (int)CHESS_PIECE_BLACK_PAWN && idx <= (int)CHESS_PIECE_BLACK_KING) {
+            s_piece_silhouettes[idx] =
+                make_white_silhouette(renderer, embedded_pieces[i].data, *embedded_pieces[i].size);
         }
     }
 
@@ -399,6 +391,10 @@ void destroy_piece_textures(void)
             SDL_DestroyTexture(s_piece_textures[i]);
             s_piece_textures[i] = NULL;
         }
+        if (s_piece_silhouettes[i]) {
+            SDL_DestroyTexture(s_piece_silhouettes[i]);
+            s_piece_silhouettes[i] = NULL;
+        }
     }
 
     for (i = 0; i < CHESS_BOARD_SIZE; ++i) {
@@ -420,10 +416,6 @@ void destroy_piece_textures(void)
         }
     }
 
-    if (s_chess_font) {
-        TTF_CloseFont(s_chess_font);
-        s_chess_font = NULL;
-    }
     if (s_lobby_font && s_lobby_font != s_coord_font) {
         TTF_CloseFont(s_lobby_font);
         s_lobby_font = NULL;
