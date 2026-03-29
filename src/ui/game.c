@@ -17,6 +17,10 @@ static const int s_history_entry_len   = (int)CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_
 static SDL_FRect s_lobby_button_rect = {0};
 static bool      s_lobby_button_visible = false;
 
+/* Cursor X where captured pieces start drawing, per panel (set each frame). */
+static float s_cap_cursor_start_top = 0.0f;
+static float s_cap_cursor_start_bottom = 0.0f;
+
 /* Forward declarations */
 static void render_panel_buttons(AppContext *ctx, int panel_left, int panel_width, int window_height);
 static void render_player_panels(AppContext *ctx, int board_width, int window_height, int board_y, int board_height);
@@ -704,8 +708,85 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
     start_x = screen_file * cell_w + cell_w * 0.5f;
     start_y = (float)board_y + screen_rank * cell_h + cell_h * 0.5f;
 
-    /* Target position: center of the target player panel */
-    target_x = (float)board_width * 0.45f;
+    /* Target position: compute exact final X by simulating the captured
+       pieces layout.  The animated piece has been temporarily removed from
+       captured[], so we replay the layout with it virtually re-inserted. */
+    {
+        const ChessPiece white_order[] = {
+            CHESS_PIECE_WHITE_PAWN, CHESS_PIECE_WHITE_KNIGHT,
+            CHESS_PIECE_WHITE_BISHOP, CHESS_PIECE_WHITE_ROOK,
+            CHESS_PIECE_WHITE_QUEEN
+        };
+        const ChessPiece black_order[] = {
+            CHESS_PIECE_BLACK_PAWN, CHESS_PIECE_BLACK_KNIGHT,
+            CHESS_PIECE_BLACK_BISHOP, CHESS_PIECE_BLACK_ROOK,
+            CHESS_PIECE_BLACK_QUEEN
+        };
+        const ChessPiece *cap_order;
+        size_t cap_count;
+        size_t ci;
+        bool piece_is_black = ((int)ctx->capture_anim_piece >= (int)CHESS_PIECE_BLACK_PAWN);
+        ChessPlayerColor panel_color;
+        ChessCapturedPieces sim_cap;
+        float sim_cursor;
+        bool found = false;
+
+        /* Determine which player panel captures this piece:
+         * White captures black pieces, black captures white pieces. */
+        panel_color = piece_is_black ? CHESS_COLOR_WHITE : CHESS_COLOR_BLACK;
+
+        if (panel_color == CHESS_COLOR_WHITE) {
+            cap_order = black_order;
+            cap_count = sizeof(black_order) / sizeof(black_order[0]);
+        } else {
+            cap_order = white_order;
+            cap_count = sizeof(white_order) / sizeof(white_order[0]);
+        }
+
+        /* Simulate with the animated piece included */
+        chess_game_compute_captured(&ctx->game_state, &sim_cap);
+        sim_cap.count[(int)ctx->capture_anim_piece]++;
+
+        sim_cursor = ctx->capture_anim_target_top
+            ? s_cap_cursor_start_top
+            : s_cap_cursor_start_bottom;
+
+        for (ci = 0; ci < cap_count && !found; ++ci) {
+            int idx = (int)cap_order[ci];
+            uint8_t n = sim_cap.count[idx];
+            uint8_t k;
+            if (n == 0) {
+                continue;
+            }
+            for (k = 0; k < n; ++k) {
+                SDL_Texture *ptex = s_piece_textures[idx];
+                float pw = 0.0f;
+                float ph = 0.0f;
+                float ps;
+                if (ptex) {
+                    SDL_GetTextureSize(ptex, &pw, &ph);
+                    ps = (ph > 0.0f) ? 24.0f / ph : 1.0f;
+                    pw *= ps;
+                }
+                if (idx == (int)ctx->capture_anim_piece && k == n - 1) {
+                    /* This is the slot for the animated piece */
+                    target_x = sim_cursor + pw * 0.5f;
+                    found = true;
+                    break;
+                }
+                if (ptex) {
+                    sim_cursor += pw * 0.55f;
+                }
+            }
+            if (!found) {
+                sim_cursor += 4.0f;
+            }
+        }
+
+        if (!found) {
+            target_x = sim_cursor;
+        }
+    }
     if (ctx->capture_anim_target_top) {
         target_y = panel_h * 0.5f;
     } else {
@@ -1530,6 +1611,13 @@ static void render_one_player_panel(
     }
 
     cursor_x += 12.0f;
+
+    /* Record cursor origin for capture animation targeting */
+    if (panel_rect.y < 1.0f) {
+        s_cap_cursor_start_top = cursor_x;
+    } else {
+        s_cap_cursor_start_bottom = cursor_x;
+    }
 
     for (ci = 0; ci < cap_count; ++ci) {
         int piece_idx = (int)cap_order[ci];
