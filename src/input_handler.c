@@ -11,6 +11,7 @@
 
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/transport.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -98,7 +99,7 @@ static void handle_lobby_click(AppContext *ctx, int clicked_peer)
             memset(&accept, 0, sizeof(accept));
             SDL_strlcpy(accept.acceptor_profile_id, ctx->network.network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
 
-            if (ctx->network.connection.fd >= 0 && chess_tcp_send_accept(&ctx->network.connection, &accept)) {
+            if (transport_send_accept(&ctx->network.transport.base, &accept)) {
                 /* Close all outgoing challenge connections — we're starting a game */
                 chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
 
@@ -141,7 +142,7 @@ static bool try_send_local_move(AppContext *ctx, int to_file, int to_rank, uint8
     char notation[24];
     bool notation_ready = false;
 
-    if (!ctx || ctx->network.connection.fd < 0) {
+    if (!ctx || transport_get_fd(&ctx->network.transport.base) < 0) {
         return false;
     }
 
@@ -229,12 +230,12 @@ static bool try_send_local_move(AppContext *ctx, int to_file, int to_rank, uint8
     /* Playing a move implicitly declines any pending draw offer from opponent. */
     if (ctx->network.network_session.draw_offer_received) {
         ctx->network.network_session.draw_offer_received = false;
-        chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_DECLINE,
+        transport_send_packet(&ctx->network.transport.base, CHESS_MSG_DRAW_DECLINE,
                               ctx->protocol.move_sequence, NULL, 0u);
     }
 
-    if (!chess_tcp_send_packet(
-            &ctx->network.connection,
+    if (!transport_send_packet(
+            &ctx->network.transport.base,
             CHESS_MSG_MOVE,
             ctx->protocol.move_sequence++,
             &move,
@@ -269,7 +270,7 @@ static void handle_game_button(AppContext *ctx, ChessGameButton btn)
         return;
     }
 
-    if (ctx->network.connection.fd < 0) {
+    if (transport_get_fd(&ctx->network.transport.base) < 0) {
         return;
     }
 
@@ -278,7 +279,7 @@ static void handle_game_button(AppContext *ctx, ChessGameButton btn)
         ctx->game.game_state.outcome = (ctx->network.network_session.local_color == CHESS_COLOR_WHITE)
             ? CHESS_OUTCOME_WHITE_RESIGNED
             : CHESS_OUTCOME_BLACK_RESIGNED;
-        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_RESIGN,
+        if (!transport_send_packet(&ctx->network.transport.base, CHESS_MSG_RESIGN,
                               ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send RESIGN");
             return;
@@ -290,7 +291,7 @@ static void handle_game_button(AppContext *ctx, ChessGameButton btn)
     }
     case CHESS_GAME_BUTTON_DRAW:
         ctx->network.network_session.draw_offer_pending = true;
-        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_OFFER,
+        if (!transport_send_packet(&ctx->network.transport.base, CHESS_MSG_DRAW_OFFER,
                               ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send DRAW_OFFER");
             return;
@@ -301,7 +302,7 @@ static void handle_game_button(AppContext *ctx, ChessGameButton btn)
     case CHESS_GAME_BUTTON_ACCEPT_DRAW:
         ctx->game.game_state.outcome = CHESS_OUTCOME_DRAW_AGREED;
         ctx->network.network_session.draw_offer_received = false;
-        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_ACCEPT,
+        if (!transport_send_packet(&ctx->network.transport.base, CHESS_MSG_DRAW_ACCEPT,
                               ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send DRAW_ACCEPT");
             return;
@@ -312,7 +313,7 @@ static void handle_game_button(AppContext *ctx, ChessGameButton btn)
         break;
     case CHESS_GAME_BUTTON_DECLINE_DRAW:
         ctx->network.network_session.draw_offer_received = false;
-        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_DECLINE,
+        if (!transport_send_packet(&ctx->network.transport.base, CHESS_MSG_DRAW_DECLINE,
                               ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send DRAW_DECLINE");
             return;
@@ -332,7 +333,7 @@ static void handle_board_mouse_down(AppContext *ctx, int mouse_x, int mouse_y)
     int file;
     int rank;
 
-    if (!ctx || ctx->network.connection.fd < 0) {
+    if (!ctx || transport_get_fd(&ctx->network.transport.base) < 0) {
         return;
     }
 
@@ -440,7 +441,7 @@ void chess_input_handle_events(AppContext *ctx)
             continue;
         }
 
-        if (ctx->network.connection.fd < 0) {
+        if (transport_get_fd(&ctx->network.transport.base) < 0) {
             /* Still allow clicking the "Return to Lobby" overlay button */
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
                 ChessGameButton btn = chess_ui_game_button_from_mouse(ctx, event.button.x, event.button.y);
