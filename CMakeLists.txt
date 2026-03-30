@@ -74,6 +74,8 @@ add_executable(chess_app
     src/network/handler.c
     src/network/packet_handlers.c
     src/network/discovery.c
+    src/network/discovery_dnssd.c
+    src/network/discovery_avahi.c
     src/network/tcp.c
     ${EMBEDDED_SOURCES}
 )
