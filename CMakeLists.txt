@@ -60,6 +60,7 @@ add_executable(chess_app
     src/app.c
     src/game_actions.c
     src/input_handler.c
+    src/input_board.c
     src/persistence.c
     src/persistence_resume.c
     src/ui/fonts.c
@@ -76,6 +77,9 @@ add_executable(chess_app
     src/network/handler.c
     src/network/handler_challenges.c
     src/network/packet_handlers.c
+    src/network/packet_handshake.c
+    src/network/packet_game_init.c
+    src/network/packet_gameplay.c
     src/network/discovery.c
     src/network/discovery_dnssd.c
     src/network/discovery_avahi.c
