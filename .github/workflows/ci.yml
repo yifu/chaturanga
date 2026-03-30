@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          for pkg in cmake sdl3 sdl3_ttf pkg-config; do
+          for pkg in cmake sdl3 sdl3_ttf sdl3_image pkg-config; do
             brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
           done
 
