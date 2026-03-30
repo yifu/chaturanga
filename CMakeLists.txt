@@ -61,17 +61,20 @@ add_executable(chess_app
     src/game_actions.c
     src/input_handler.c
     src/persistence.c
+    src/persistence_resume.c
     src/ui/fonts.c
     src/ui/lobby.c
     src/ui/game.c
     src/ui/game_panels.c
     src/ui/game_animations.c
     src/game_state.c
+    src/game_notation.c
     src/lobby_state.c
     src/render/board.c
     src/network/peer.c
     src/network/session.c
     src/network/handler.c
+    src/network/handler_challenges.c
     src/network/packet_handlers.c
     src/network/discovery.c
     src/network/discovery_dnssd.c
@@ -102,6 +105,7 @@ target_link_libraries(chess_app PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image
 add_executable(chess_app_tests
     tests/test_suite.c
     src/game_state.c
+    src/game_notation.c
     src/lobby_state.c
     src/network/tcp.c
     src/network/session.c

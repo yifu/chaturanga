@@ -1,4 +1,5 @@
 #include "chess_app/game_state.h"
+#include "game_state_internal.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -8,7 +9,7 @@ static int abs_i(int v)
     return (v < 0) ? -v : v;
 }
 
-static bool in_bounds(int file, int rank)
+bool chess_gs_in_bounds(int file, int rank)
 {
     return file >= 0 && file < CHESS_BOARD_SIZE && rank >= 0 && rank < CHESS_BOARD_SIZE;
 }
@@ -21,7 +22,7 @@ static bool can_castle(
     int to_file,
     int to_rank);
 
-static ChessPlayerColor piece_color(ChessPiece piece)
+ChessPlayerColor chess_gs_piece_color(ChessPiece piece)
 {
     if (piece >= CHESS_PIECE_WHITE_PAWN && piece <= CHESS_PIECE_WHITE_KING) {
         return CHESS_COLOR_WHITE;
@@ -43,7 +44,7 @@ static ChessPlayerColor opposite_color(ChessPlayerColor color)
     return CHESS_COLOR_UNASSIGNED;
 }
 
-static bool is_castling_king_move(ChessPiece piece, int from_file, int from_rank, int to_file, int to_rank)
+bool chess_gs_is_castling_king_move(ChessPiece piece, int from_file, int from_rank, int to_file, int to_rank)
 {
     if (piece == CHESS_PIECE_WHITE_KING) {
         return from_file == 4 && from_rank == 7 && (to_file == 2 || to_file == 6) && to_rank == 7;
@@ -54,7 +55,7 @@ static bool is_castling_king_move(ChessPiece piece, int from_file, int from_rank
     return false;
 }
 
-static bool is_en_passant_capture_move(
+bool chess_gs_is_en_passant_capture_move(
     const ChessGameState *state,
     ChessPiece piece,
     int from_file,
@@ -98,7 +99,7 @@ static bool is_valid_promotion_choice(uint8_t promotion)
            promotion == CHESS_PROMOTION_KNIGHT;
 }
 
-static bool is_pawn_promotion_move(ChessPiece piece, int to_rank)
+bool chess_gs_is_pawn_promotion_move(ChessPiece piece, int to_rank)
 {
     return (piece == CHESS_PIECE_WHITE_PAWN && to_rank == 0) ||
            (piece == CHESS_PIECE_BLACK_PAWN && to_rank == 7);
@@ -215,7 +216,7 @@ static bool is_pseudo_legal_move(
     int df;
     int dr;
 
-    if (!state || !in_bounds(from_file, from_rank) || !in_bounds(to_file, to_rank)) {
+    if (!state || !chess_gs_in_bounds(from_file, from_rank) || !chess_gs_in_bounds(to_file, to_rank)) {
         return false;
     }
 
@@ -224,7 +225,7 @@ static bool is_pseudo_legal_move(
     }
 
     target_piece = (ChessPiece)state->board[to_rank][to_file];
-    if (piece_color(target_piece) == piece_color(piece)) {
+    if (chess_gs_piece_color(target_piece) == chess_gs_piece_color(piece)) {
         return false;
     }
 
@@ -252,7 +253,7 @@ static bool is_pseudo_legal_move(
             if (target_piece != CHESS_PIECE_EMPTY) {
                 return true;
             }
-            return is_en_passant_capture_move(state, piece, from_file, from_rank, to_file, to_rank);
+            return chess_gs_is_en_passant_capture_move(state, piece, from_file, from_rank, to_file, to_rank);
         }
         return false;
     }
@@ -274,7 +275,7 @@ static bool is_pseudo_legal_move(
         if (abs_i(df) <= 1 && abs_i(dr) <= 1) {
             return true;
         }
-        return can_castle(state, piece_color(piece), from_file, from_rank, to_file, to_rank);
+        return can_castle(state, chess_gs_piece_color(piece), from_file, from_rank, to_file, to_rank);
     case CHESS_PIECE_EMPTY:
     case CHESS_PIECE_COUNT:
     default:
@@ -309,7 +310,7 @@ static bool is_square_attacked(const ChessGameState *state, int target_file, int
     int rank;
     int file;
 
-    if (!state || !in_bounds(target_file, target_rank)) {
+    if (!state || !chess_gs_in_bounds(target_file, target_rank)) {
         return false;
     }
 
@@ -319,7 +320,7 @@ static bool is_square_attacked(const ChessGameState *state, int target_file, int
             int df = target_file - file;
             int dr = target_rank - rank;
 
-            if (piece == CHESS_PIECE_EMPTY || piece_color(piece) != by_color) {
+            if (piece == CHESS_PIECE_EMPTY || chess_gs_piece_color(piece) != by_color) {
                 continue;
             }
 
@@ -376,7 +377,7 @@ static bool is_square_attacked(const ChessGameState *state, int target_file, int
     return false;
 }
 
-static bool is_king_in_check(const ChessGameState *state, ChessPlayerColor color)
+bool chess_gs_is_king_in_check(const ChessGameState *state, ChessPlayerColor color)
 {
     int king_file;
     int king_rank;
@@ -471,7 +472,7 @@ static bool can_castle(
     return false;
 }
 
-static bool is_legal_move(
+bool chess_gs_is_legal_move(
     const ChessGameState *state,
     ChessPlayerColor moving_color,
     int from_file,
@@ -483,12 +484,12 @@ static bool is_legal_move(
     ChessGameState copy;
     ChessPiece piece;
 
-    if (!state || !in_bounds(from_file, from_rank) || !in_bounds(to_file, to_rank)) {
+    if (!state || !chess_gs_in_bounds(from_file, from_rank) || !chess_gs_in_bounds(to_file, to_rank)) {
         return false;
     }
 
     piece = (ChessPiece)state->board[from_rank][from_file];
-    if (piece == CHESS_PIECE_EMPTY || piece_color(piece) != moving_color) {
+    if (piece == CHESS_PIECE_EMPTY || chess_gs_piece_color(piece) != moving_color) {
         return false;
     }
 
@@ -496,7 +497,7 @@ static bool is_legal_move(
         return false;
     }
 
-    if (is_pawn_promotion_move(piece, to_rank)) {
+    if (chess_gs_is_pawn_promotion_move(piece, to_rank)) {
         if (!is_valid_promotion_choice(promotion)) {
             return false;
         }
@@ -508,11 +509,11 @@ static bool is_legal_move(
     copy.board[to_rank][to_file] = copy.board[from_rank][from_file];
     copy.board[from_rank][from_file] = CHESS_PIECE_EMPTY;
 
-    if (is_en_passant_capture_move(state, piece, from_file, from_rank, to_file, to_rank)) {
+    if (chess_gs_is_en_passant_capture_move(state, piece, from_file, from_rank, to_file, to_rank)) {
         copy.board[from_rank][to_file] = CHESS_PIECE_EMPTY;
     }
 
-    if (is_castling_king_move(piece, from_file, from_rank, to_file, to_rank)) {
+    if (chess_gs_is_castling_king_move(piece, from_file, from_rank, to_file, to_rank)) {
         if (to_file == 6) {
             copy.board[to_rank][5] = copy.board[to_rank][7];
             copy.board[to_rank][7] = CHESS_PIECE_EMPTY;
@@ -522,7 +523,7 @@ static bool is_legal_move(
         }
     }
 
-    if (is_pawn_promotion_move(piece, to_rank)) {
+    if (chess_gs_is_pawn_promotion_move(piece, to_rank)) {
         ChessPiece promoted = promoted_piece_for_choice(moving_color, promotion);
         if (promoted == CHESS_PIECE_EMPTY) {
             return false;
@@ -530,10 +531,10 @@ static bool is_legal_move(
         copy.board[to_rank][to_file] = (uint8_t)promoted;
     }
 
-    return !is_king_in_check(&copy, moving_color);
+    return !chess_gs_is_king_in_check(&copy, moving_color);
 }
 
-static bool has_any_legal_move(const ChessGameState *state, ChessPlayerColor color)
+bool chess_gs_has_any_legal_move(const ChessGameState *state, ChessPlayerColor color)
 {
     int from_rank;
     int from_file;
@@ -544,19 +545,19 @@ static bool has_any_legal_move(const ChessGameState *state, ChessPlayerColor col
     for (from_rank = 0; from_rank < CHESS_BOARD_SIZE; ++from_rank) {
         for (from_file = 0; from_file < CHESS_BOARD_SIZE; ++from_file) {
             piece = (ChessPiece)state->board[from_rank][from_file];
-            if (piece == CHESS_PIECE_EMPTY || piece_color(piece) != color) {
+            if (piece == CHESS_PIECE_EMPTY || chess_gs_piece_color(piece) != color) {
                 continue;
             }
             for (to_rank = 0; to_rank < CHESS_BOARD_SIZE; ++to_rank) {
                 for (to_file = 0; to_file < CHESS_BOARD_SIZE; ++to_file) {
-                    if (is_pawn_promotion_move(piece, to_rank)) {
-                        if (is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_QUEEN) ||
-                            is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_ROOK) ||
-                            is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_BISHOP) ||
-                            is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_KNIGHT)) {
+                    if (chess_gs_is_pawn_promotion_move(piece, to_rank)) {
+                        if (chess_gs_is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_QUEEN) ||
+                            chess_gs_is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_ROOK) ||
+                            chess_gs_is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_BISHOP) ||
+                            chess_gs_is_legal_move(state, color, from_file, from_rank, to_file, to_rank, CHESS_PROMOTION_KNIGHT)) {
                             return true;
                         }
-                    } else if (is_legal_move(
+                    } else if (chess_gs_is_legal_move(
                                    state,
                                    color,
                                    from_file,
@@ -573,7 +574,7 @@ static bool has_any_legal_move(const ChessGameState *state, ChessPlayerColor col
     return false;
 }
 
-static bool apply_move(
+bool chess_gs_apply_move(
     ChessGameState *state,
     int from_file,
     int from_rank,
@@ -587,7 +588,7 @@ static bool apply_move(
     bool is_castling;
     bool is_en_passant;
 
-    if (!state || !in_bounds(from_file, from_rank) || !in_bounds(to_file, to_rank)) {
+    if (!state || !chess_gs_in_bounds(from_file, from_rank) || !chess_gs_in_bounds(to_file, to_rank)) {
         return false;
     }
 
@@ -598,8 +599,8 @@ static bool apply_move(
 
     captured = (ChessPiece)state->board[to_rank][to_file];
     is_pawn_move = piece == CHESS_PIECE_WHITE_PAWN || piece == CHESS_PIECE_BLACK_PAWN;
-    is_castling = is_castling_king_move((ChessPiece)piece, from_file, from_rank, to_file, to_rank);
-    is_en_passant = is_en_passant_capture_move(state, (ChessPiece)piece, from_file, from_rank, to_file, to_rank);
+    is_castling = chess_gs_is_castling_king_move((ChessPiece)piece, from_file, from_rank, to_file, to_rank);
+    is_en_passant = chess_gs_is_en_passant_capture_move(state, (ChessPiece)piece, from_file, from_rank, to_file, to_rank);
 
     if (captured != CHESS_PIECE_EMPTY && (int)captured < CHESS_PIECE_COUNT) {
         state->captured[(int)captured]++;
@@ -672,8 +673,8 @@ static bool apply_move(
         }
     }
 
-    if (is_pawn_promotion_move((ChessPiece)piece, to_rank)) {
-        ChessPiece promoted = promoted_piece_for_choice(piece_color((ChessPiece)piece), promotion);
+    if (chess_gs_is_pawn_promotion_move((ChessPiece)piece, to_rank)) {
+        ChessPiece promoted = promoted_piece_for_choice(chess_gs_piece_color((ChessPiece)piece), promotion);
         if (promoted == CHESS_PIECE_EMPTY) {
             return false;
         }
@@ -699,8 +700,8 @@ static bool apply_move(
         ChessPlayerColor next_color = state->side_to_move;
         if (state->halfmove_clock >= 100) {
             state->outcome = CHESS_OUTCOME_FIFTY_MOVE_RULE;
-        } else if (!has_any_legal_move(state, next_color)) {
-            if (is_king_in_check(state, next_color)) {
+        } else if (!chess_gs_has_any_legal_move(state, next_color)) {
+            if (chess_gs_is_king_in_check(state, next_color)) {
                 state->outcome = (next_color == CHESS_COLOR_WHITE)
                     ? CHESS_OUTCOME_CHECKMATE_BLACK_WINS
                     : CHESS_OUTCOME_CHECKMATE_WHITE_WINS;
@@ -710,233 +711,6 @@ static bool apply_move(
         }
     }
 
-    return true;
-}
-
-static char piece_letter(ChessPiece piece)
-{
-    switch (piece) {
-    case CHESS_PIECE_WHITE_KNIGHT:
-    case CHESS_PIECE_BLACK_KNIGHT:
-        return 'N';
-    case CHESS_PIECE_WHITE_BISHOP:
-    case CHESS_PIECE_BLACK_BISHOP:
-        return 'B';
-    case CHESS_PIECE_WHITE_ROOK:
-    case CHESS_PIECE_BLACK_ROOK:
-        return 'R';
-    case CHESS_PIECE_WHITE_QUEEN:
-    case CHESS_PIECE_BLACK_QUEEN:
-        return 'Q';
-    case CHESS_PIECE_WHITE_KING:
-    case CHESS_PIECE_BLACK_KING:
-        return 'K';
-    default:
-        return '\0';
-    }
-}
-
-static bool needs_san_disambiguation(
-    const ChessGameState *state,
-    ChessPiece moving_piece,
-    int from_file,
-    int from_rank,
-    int to_file,
-    int to_rank,
-    uint8_t promotion,
-    bool *out_need_file,
-    bool *out_need_rank)
-{
-    ChessPlayerColor color;
-    int rank;
-    int file;
-    bool file_conflict = false;
-    bool rank_conflict = false;
-
-    if (!state || !out_need_file || !out_need_rank) {
-        return false;
-    }
-
-    *out_need_file = false;
-    *out_need_rank = false;
-
-    color = piece_color(moving_piece);
-    if (color == CHESS_COLOR_UNASSIGNED ||
-        moving_piece == CHESS_PIECE_WHITE_PAWN || moving_piece == CHESS_PIECE_BLACK_PAWN ||
-        moving_piece == CHESS_PIECE_WHITE_KING || moving_piece == CHESS_PIECE_BLACK_KING) {
-        return false;
-    }
-
-    for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
-        for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
-            if (file == from_file && rank == from_rank) {
-                continue;
-            }
-            if ((ChessPiece)state->board[rank][file] != moving_piece) {
-                continue;
-            }
-            if (is_legal_move(state, color, file, rank, to_file, to_rank, promotion)) {
-                if (file == from_file) {
-                    file_conflict = true;
-                }
-                if (rank == from_rank) {
-                    rank_conflict = true;
-                }
-                if (file != from_file && rank != from_rank) {
-                    *out_need_file = true;
-                    return true;
-                }
-            }
-        }
-    }
-
-    if (file_conflict) {
-        *out_need_rank = true;
-    }
-    if (rank_conflict || (!file_conflict && !rank_conflict && (*out_need_rank))) {
-        *out_need_file = true;
-    }
-    if (file_conflict && rank_conflict) {
-        *out_need_file = true;
-        *out_need_rank = true;
-    }
-
-    return *out_need_file || *out_need_rank;
-}
-
-static char promotion_letter(uint8_t promotion)
-{
-    switch (promotion) {
-    case CHESS_PROMOTION_QUEEN:
-        return 'Q';
-    case CHESS_PROMOTION_ROOK:
-        return 'R';
-    case CHESS_PROMOTION_BISHOP:
-        return 'B';
-    case CHESS_PROMOTION_KNIGHT:
-        return 'N';
-    default:
-        return '\0';
-    }
-}
-
-bool chess_move_format_algebraic_notation(
-    const ChessGameState *state,
-    int from_file,
-    int from_rank,
-    int to_file,
-    int to_rank,
-    uint8_t promotion,
-    char *out,
-    size_t out_size)
-{
-    ChessPiece moving_piece;
-    ChessPiece target_piece;
-    ChessPlayerColor moving_color;
-    bool is_capture;
-    bool is_castling;
-    bool is_en_passant;
-    char san[32];
-    size_t len = 0;
-    ChessGameState after;
-    ChessPlayerColor next_color;
-
-    if (!out || out_size == 0) {
-        return false;
-    }
-
-    out[0] = '\0';
-
-    if (!state || !in_bounds(from_file, from_rank) || !in_bounds(to_file, to_rank)) {
-        return false;
-    }
-
-    moving_piece = (ChessPiece)state->board[from_rank][from_file];
-    target_piece = (ChessPiece)state->board[to_rank][to_file];
-    moving_color = piece_color(moving_piece);
-
-    if (moving_piece == CHESS_PIECE_EMPTY || moving_color == CHESS_COLOR_UNASSIGNED) {
-        return false;
-    }
-
-    if (!is_legal_move(state, moving_color, from_file, from_rank, to_file, to_rank, promotion)) {
-        return false;
-    }
-
-    is_castling = is_castling_king_move(moving_piece, from_file, from_rank, to_file, to_rank);
-    is_en_passant = is_en_passant_capture_move(state, moving_piece, from_file, from_rank, to_file, to_rank);
-    is_capture = (target_piece != CHESS_PIECE_EMPTY) || is_en_passant;
-
-    memset(san, 0, sizeof(san));
-
-    if (is_castling) {
-        (void)snprintf(san, sizeof(san), "%s", (to_file == 6) ? "O-O" : "O-O-O");
-        len = strlen(san);
-    } else if (moving_piece == CHESS_PIECE_WHITE_PAWN || moving_piece == CHESS_PIECE_BLACK_PAWN) {
-        if (is_capture) {
-            san[len++] = (char)('a' + from_file);
-            san[len++] = 'x';
-        }
-        san[len++] = (char)('a' + to_file);
-        san[len++] = (char)('8' - to_rank);
-        if (is_pawn_promotion_move(moving_piece, to_rank)) {
-            char promo = promotion_letter(promotion);
-            if (promo != '\0') {
-                san[len++] = '=';
-                san[len++] = promo;
-            }
-        }
-        san[len] = '\0';
-    } else {
-        bool need_file = false;
-        bool need_rank = false;
-        char p = piece_letter(moving_piece);
-
-        if (p == '\0') {
-            return false;
-        }
-
-        san[len++] = p;
-        (void)needs_san_disambiguation(
-            state,
-            moving_piece,
-            from_file,
-            from_rank,
-            to_file,
-            to_rank,
-            promotion,
-            &need_file,
-            &need_rank);
-        if (need_file) {
-            san[len++] = (char)('a' + from_file);
-        }
-        if (need_rank) {
-            san[len++] = (char)('8' - from_rank);
-        }
-        if (is_capture) {
-            san[len++] = 'x';
-        }
-        san[len++] = (char)('a' + to_file);
-        san[len++] = (char)('8' - to_rank);
-        san[len] = '\0';
-    }
-
-    after = *state;
-    if (!apply_move(&after, from_file, from_rank, to_file, to_rank, promotion)) {
-        return false;
-    }
-
-    next_color = after.side_to_move;
-    if (is_king_in_check(&after, next_color)) {
-        if (!has_any_legal_move(&after, next_color)) {
-            san[len++] = '#';
-        } else {
-            san[len++] = '+';
-        }
-        san[len] = '\0';
-    }
-
-    (void)snprintf(out, out_size, "%s", san);
     return true;
 }
 
@@ -1000,7 +774,7 @@ void chess_game_clear_selection(ChessGameState *state)
 
 ChessPiece chess_game_get_piece(const ChessGameState *state, int file, int rank)
 {
-    if (!state || !in_bounds(file, rank)) {
+    if (!state || !chess_gs_in_bounds(file, rank)) {
         return CHESS_PIECE_EMPTY;
     }
 
@@ -1011,7 +785,7 @@ bool chess_game_select_local_piece(ChessGameState *state, ChessPlayerColor local
 {
     ChessPiece piece;
 
-    if (!state || !in_bounds(file, rank)) {
+    if (!state || !chess_gs_in_bounds(file, rank)) {
         return false;
     }
 
@@ -1020,7 +794,7 @@ bool chess_game_select_local_piece(ChessGameState *state, ChessPlayerColor local
     }
 
     piece = (ChessPiece)state->board[rank][file];
-    if (piece_color(piece) != local_color) {
+    if (chess_gs_piece_color(piece) != local_color) {
         return false;
     }
 
@@ -1038,7 +812,7 @@ bool chess_game_local_move_requires_promotion(
 {
     ChessPiece piece;
 
-    if (!state || !in_bounds(to_file, to_rank) || !state->has_selection) {
+    if (!state || !chess_gs_in_bounds(to_file, to_rank) || !state->has_selection) {
         return false;
     }
 
@@ -1047,17 +821,17 @@ bool chess_game_local_move_requires_promotion(
     }
 
     piece = (ChessPiece)state->board[state->selected_rank][state->selected_file];
-    if (piece_color(piece) != local_color) {
+    if (chess_gs_piece_color(piece) != local_color) {
         return false;
     }
 
-    if (!is_pawn_promotion_move(piece, to_rank)) {
+    if (!chess_gs_is_pawn_promotion_move(piece, to_rank)) {
         return false;
     }
 
     /* Use any valid promotion choice as a legality probe here. The actual
      * promoted piece is selected later by the UI/network flow. */
-    return is_legal_move(
+    return chess_gs_is_legal_move(
         state,
         local_color,
         state->selected_file,
@@ -1075,7 +849,7 @@ bool chess_game_try_local_move(
     uint8_t promotion,
     ChessMovePayload *out_move)
 {
-    if (!state || !out_move || !in_bounds(to_file, to_rank) || !state->has_selection) {
+    if (!state || !out_move || !chess_gs_in_bounds(to_file, to_rank) || !state->has_selection) {
         return false;
     }
 
@@ -1083,7 +857,7 @@ bool chess_game_try_local_move(
         return false;
     }
 
-    if (piece_color((ChessPiece)state->board[state->selected_rank][state->selected_file]) != local_color) {
+    if (chess_gs_piece_color((ChessPiece)state->board[state->selected_rank][state->selected_file]) != local_color) {
         return false;
     }
 
@@ -1098,7 +872,7 @@ bool chess_game_try_local_move(
     out_move->to_rank = (uint8_t)to_rank;
     out_move->promotion = promotion;
 
-    if (!is_legal_move(
+    if (!chess_gs_is_legal_move(
             state,
             local_color,
             state->selected_file,
@@ -1109,7 +883,7 @@ bool chess_game_try_local_move(
         return false;
     }
 
-    return apply_move(state, state->selected_file, state->selected_rank, to_file, to_rank, promotion);
+    return chess_gs_apply_move(state, state->selected_file, state->selected_rank, to_file, to_rank, promotion);
 }
 
 bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote_color, const ChessMovePayload *move)
@@ -1118,8 +892,8 @@ bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote
         return false;
     }
 
-    if (!in_bounds((int)move->from_file, (int)move->from_rank) ||
-        !in_bounds((int)move->to_file, (int)move->to_rank)) {
+    if (!chess_gs_in_bounds((int)move->from_file, (int)move->from_rank) ||
+        !chess_gs_in_bounds((int)move->to_file, (int)move->to_rank)) {
         return false;
     }
 
@@ -1127,11 +901,11 @@ bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote
         return false;
     }
 
-    if (piece_color((ChessPiece)state->board[move->from_rank][move->from_file]) != remote_color) {
+    if (chess_gs_piece_color((ChessPiece)state->board[move->from_rank][move->from_file]) != remote_color) {
         return false;
     }
 
-    if (!is_legal_move(
+    if (!chess_gs_is_legal_move(
             state,
             remote_color,
             (int)move->from_file,
@@ -1142,7 +916,7 @@ bool chess_game_apply_remote_move(ChessGameState *state, ChessPlayerColor remote
         return false;
     }
 
-    return apply_move(
+    return chess_gs_apply_move(
         state,
         (int)move->from_file,
         (int)move->from_rank,
