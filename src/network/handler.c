@@ -11,6 +11,7 @@
 #include "chess_app/network_protocol.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/tcp_transport.h"
 #include "chess_app/transport.h"
 
 #include <SDL3/SDL.h>
@@ -872,6 +873,8 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessNetPoll
             ChessDiscoveredPeerState *ps = &ctx->game.lobby.discovered_peers[peer_idx];
 
             if (chess_tcp_connect_start(ps->tcp_ipv4, ps->tcp_port, &new_fd)) {
+                /* Direct fd assignment: TCP connect is transport-establishment,
+                 * intentionally concrete per design (recv not ready until connected). */
                 ctx->network.transport.connection.fd = new_fd;
                 /* Check if already connected (immediate local connect) */
                 {
@@ -919,9 +922,11 @@ accept_inbound:
     if (transport_get_fd(t) < 0 &&
         ctx->network.listener.fd >= 0 &&
         socket_events->listener_readable) {
-        if (chess_tcp_accept_once(&ctx->network.listener, 0, &ctx->network.transport.connection)) {
+        ChessTcpConnection accepted_conn;
+        accepted_conn.fd = -1;
+        if (chess_tcp_accept_once(&ctx->network.listener, 0, &accepted_conn)) {
+            tcp_transport_init_from_fd(&ctx->network.transport, accepted_conn.fd);
             transport_set_nonblocking(t);
-            transport_recv_reset(t);
             SDL_Log("NET: accepted TCP client connection");
         }
     }
@@ -933,22 +938,22 @@ static void net_promote_challenge_to_game(AppContext *ctx, int peer_idx)
 {
     int i;
     ChessDiscoveredPeerState *ps;
+    Transport *t;
 
     if (!ctx || peer_idx < 0 || peer_idx >= ctx->game.lobby.discovered_peer_count) {
         return;
     }
 
     ps = &ctx->game.lobby.discovered_peers[peer_idx];
+    t = &ctx->network.transport.base;
 
     /* Take over the challenge fd as the game connection */
     {
-        Transport *t = &ctx->network.transport.base;
-        transport_close(t);
-        ctx->network.transport.connection.fd = ps->challenge_conn.fd;
+        int fd = ps->challenge_conn.fd;
         ps->challenge_conn.fd = -1; /* prevent close_challenge_connection from closing it */
-
+        transport_close(t);
+        tcp_transport_init_from_fd(&ctx->network.transport, fd);
         transport_set_nonblocking(t);
-        transport_recv_reset(t);
     }
 
     /* Close all other challenge connections */
