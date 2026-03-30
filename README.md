@@ -7,6 +7,7 @@
 Le projet utilise:
 - SDL3
 - SDL3_ttf
+- SDL3_image
 - CMake
 - un compilateur C compatible C11
 - bibliotheque de threads POSIX (pthread, fournie par le systeme sur Linux/macOS)
@@ -21,7 +22,7 @@ Installer les dependances:
 
 ```sh
 brew update
-brew install cmake sdl3 sdl3_ttf pkg-config
+brew install cmake sdl3 sdl3_ttf sdl3_image pkg-config
 ```
 
 Compiler:
@@ -40,7 +41,7 @@ Installer les dependances:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential cmake pkg-config libsdl3-dev libsdl3-ttf-dev
+sudo apt install -y build-essential cmake pkg-config libsdl3-dev libsdl3-ttf-dev libsdl3-image-dev
 ```
 
 Optionnel (decouverte reseau mDNS/Avahi), un paquet par ligne:
@@ -55,7 +56,7 @@ sudo apt install -y avahi-daemon
 Installer les dependances:
 
 ```sh
-sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config SDL3-devel SDL3_ttf-devel
+sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config SDL3-devel SDL3_ttf-devel SDL3_image-devel
 ```
 
 Optionnel (decouverte reseau mDNS/Avahi), un paquet par ligne:
@@ -71,7 +72,7 @@ sudo dnf install -y avahi
 Installer les dependances:
 
 ```sh
-sudo pacman -Syu --needed base-devel cmake pkgconf sdl3 sdl3_ttf
+sudo pacman -Syu --needed base-devel cmake pkgconf sdl3 sdl3_ttf sdl3_image
 ```
 
 Optionnel (decouverte reseau mDNS/Avahi), un paquet par ligne:
