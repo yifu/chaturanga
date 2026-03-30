@@ -67,6 +67,7 @@ add_executable(chess_app
     src/ui/game_panels.c
     src/ui/game_animations.c
     src/game_state.c
+    src/game_notation.c
     src/lobby_state.c
     src/render/board.c
     src/network/peer.c
@@ -102,6 +103,7 @@ target_link_libraries(chess_app PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image
 add_executable(chess_app_tests
     tests/test_suite.c
     src/game_state.c
+    src/game_notation.c
     src/lobby_state.c
     src/network/tcp.c
     src/network/session.c
