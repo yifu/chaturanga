@@ -154,9 +154,6 @@ ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, in
 
     get_button_rects(panel_left, panel_width, window_height, &left_btn, &right_btn);
 
-    mx = (float)mouse_x;
-    my = (float)mouse_y;
-
     if (mx >= left_btn.x && mx < left_btn.x + left_btn.w &&
         my >= left_btn.y && my < left_btn.y + left_btn.h) {
         return offer_received ? CHESS_GAME_BUTTON_ACCEPT_DRAW : CHESS_GAME_BUTTON_RESIGN;

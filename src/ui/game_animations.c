@@ -237,10 +237,10 @@ void chess_ui_render_capture_animation(AppContext *ctx, int board_width, int boa
 
         if (panel_color == CHESS_COLOR_WHITE) {
             cap_order = black_order;
-            cap_count = sizeof(black_order) / sizeof(black_order[0]);
+            cap_count = SDL_arraysize(black_order);
         } else {
             cap_order = white_order;
-            cap_count = sizeof(white_order) / sizeof(white_order[0]);
+            cap_count = SDL_arraysize(white_order);
         }
 
         /* Simulate with the animated piece included */
