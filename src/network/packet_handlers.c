@@ -11,6 +11,7 @@
 #include "chess_app/network_protocol.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/transport.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -36,12 +37,14 @@ static ChessPlayerColor opposite_color(ChessPlayerColor color)
 static ChessRecvResult net_receive_next_packet(AppContext *ctx, ChessPacketHeader *header, uint8_t *payload, size_t payload_capacity)
 {
     ChessRecvResult result;
+    Transport *t;
 
     if (!ctx || !header || !payload) {
         return CHESS_RECV_ERROR;
     }
 
-    result = chess_tcp_recv_nonblocking(&ctx->network.connection, &ctx->network.recv_buffer, header, payload, payload_capacity);
+    t = &ctx->network.transport.base;
+    result = transport_recv_nonblocking(t, header, payload, payload_capacity);
 
     if (result == CHESS_RECV_ERROR) {
         SDL_Log("NET: recv error on game connection, closing");
@@ -119,12 +122,12 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
     if (peer_idx >= 0) {
         /* If we already sent an OFFER to this peer (cross-offer),
          * auto-accept instead of overwriting with INCOMING_PENDING.
-         * Use ctx->network.connection (the server-side connection) for the game. */
+         * Use the transport (the server-side connection) for the game. */
         if (chess_lobby_get_challenge_state(&ctx->game.lobby, peer_idx) == CHESS_CHALLENGE_OUTGOING_PENDING) {
             ChessAcceptPayload accept;
             memset(&accept, 0, sizeof(accept));
             SDL_strlcpy(accept.acceptor_profile_id, ctx->network.network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
-            if (ctx->network.connection.fd >= 0 && chess_tcp_send_accept(&ctx->network.connection, &accept)) {
+            if (transport_send_accept(&ctx->network.transport.base, &accept)) {
                 /* Close all outgoing challenge connections */
                 chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
                 /* Clear other outgoing challenges */
@@ -206,7 +209,7 @@ static void net_handle_start_packet(AppContext *ctx, const ChessStartPayload *st
         return;
     }
 
-    if (chess_tcp_send_ack(&ctx->network.connection, CHESS_MSG_START, 2u, 0u)) {
+    if (transport_send_ack(&ctx->network.transport.base, CHESS_MSG_START, 2u, 0u)) {
         chess_network_session_start_game(
             &ctx->network.network_session,
             start_payload->game_id,
@@ -315,7 +318,7 @@ static void net_handle_resume_request_packet(AppContext *ctx, const ChessResumeR
         SDL_Log("NET: resume request rejected for game %u", request->game_id);
     }
 
-    if (!chess_tcp_send_resume_response(&ctx->network.connection, &response)) {
+    if (!transport_send_resume_response(&ctx->network.transport.base, &response)) {
         SDL_Log("NET: failed to send resume response, disconnecting");
         app_handle_peer_disconnect(ctx, "failed to send RESUME_RESPONSE");
     }
@@ -610,7 +613,7 @@ void chess_net_drain_incoming_packets(AppContext *ctx, bool initially_readable)
     const int max_packets_per_frame = 8;
     int packet_idx;
 
-    if (!ctx || ctx->network.connection.fd < 0 || !initially_readable) {
+    if (!ctx || transport_get_fd(&ctx->network.transport.base) < 0 || !initially_readable) {
         return;
     }
 

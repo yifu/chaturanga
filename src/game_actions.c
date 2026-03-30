@@ -7,6 +7,7 @@
 #include "chess_app/network_discovery.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/transport.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -102,8 +103,8 @@ void app_handle_peer_disconnect(AppContext *ctx, const char *reason)
         SDL_Log("NET: peer disconnected");
     }
 
-    chess_tcp_connection_close(&ctx->network.connection);
-    chess_tcp_recv_reset(&ctx->network.recv_buffer);
+    transport_close(&ctx->network.transport.base);
+    transport_recv_reset(&ctx->network.transport.base);
     chess_net_reset_transport_progress(ctx);
 
     /*
@@ -179,8 +180,8 @@ void app_return_to_lobby(AppContext *ctx)
 
     SDL_Log("GAME: returning to lobby");
 
-    chess_tcp_connection_close(&ctx->network.connection);
-    chess_tcp_recv_reset(&ctx->network.recv_buffer);
+    transport_close(&ctx->network.transport.base);
+    transport_recv_reset(&ctx->network.transport.base);
     chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
     chess_net_reset_transport_progress(ctx);
     chess_persist_clear_client_resume_state(ctx);

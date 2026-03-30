@@ -2,6 +2,7 @@
 #define CHESS_APP_NETWORK_TCP_H
 
 #include "chess_app/network_protocol.h"
+#include "chess_app/transport.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,12 +22,6 @@ typedef enum ChessRecvState {
     CHESS_RECV_WAITING_HEADER = 0,
     CHESS_RECV_WAITING_PAYLOAD
 } ChessRecvState;
-
-typedef enum ChessRecvResult {
-    CHESS_RECV_OK,
-    CHESS_RECV_INCOMPLETE,
-    CHESS_RECV_ERROR
-} ChessRecvResult;
 
 typedef struct ChessTcpRecvBuffer {
     ChessRecvState state;

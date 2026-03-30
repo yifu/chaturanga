@@ -6,7 +6,7 @@
 #include "chess_app/network_discovery.h"
 #include "chess_app/network_peer.h"
 #include "chess_app/network_session.h"
-#include "chess_app/network_tcp.h"
+#include "chess_app/tcp_transport.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -31,8 +31,7 @@ typedef struct NetworkContext {
     ChessNetworkSession network_session;
     ChessDiscoveryContext discovery;
     ChessTcpListener listener;
-    ChessTcpConnection connection;
-    ChessTcpRecvBuffer recv_buffer;
+    TcpTransport transport;              /* replaces: connection + recv_buffer */
     ChessDiscoveredPeer discovered_peer;
     int connect_retry_ms;
     uint64_t next_connect_attempt_at;

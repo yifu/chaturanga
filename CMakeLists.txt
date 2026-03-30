@@ -80,6 +80,7 @@ add_executable(chess_app
     src/network/discovery_dnssd.c
     src/network/discovery_avahi.c
     src/network/tcp.c
+    src/network/tcp_transport.c
     ${EMBEDDED_SOURCES}
 )
 

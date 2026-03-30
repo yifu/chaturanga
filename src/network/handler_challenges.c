@@ -5,6 +5,8 @@
 #include "chess_app/network_protocol.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/tcp_transport.h"
+#include "chess_app/transport.h"
 
 #include <SDL3/SDL.h>
 #include <string.h>
@@ -16,20 +18,23 @@ static void net_promote_challenge_to_game(AppContext *ctx, int peer_idx)
 {
     int i;
     ChessDiscoveredPeerState *ps;
+    Transport *t;
 
     if (!ctx || peer_idx < 0 || peer_idx >= ctx->game.lobby.discovered_peer_count) {
         return;
     }
 
     ps = &ctx->game.lobby.discovered_peers[peer_idx];
+    t = &ctx->network.transport.base;
 
     /* Take over the challenge fd as the game connection */
-    chess_tcp_connection_close(&ctx->network.connection);
-    ctx->network.connection.fd = ps->challenge_conn.fd;
-    ps->challenge_conn.fd = -1; /* prevent close_challenge_connection from closing it */
-
-    chess_tcp_set_nonblocking(&ctx->network.connection);
-    chess_tcp_recv_reset(&ctx->network.recv_buffer);
+    {
+        int fd = ps->challenge_conn.fd;
+        ps->challenge_conn.fd = -1; /* prevent close_challenge_connection from closing it */
+        transport_close(t);
+        tcp_transport_init_from_fd(&ctx->network.transport, fd);
+        transport_set_nonblocking(t);
+    }
 
     /* Close all other challenge connections */
     for (i = 0; i < ctx->game.lobby.discovered_peer_count; ++i) {
