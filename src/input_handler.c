@@ -19,7 +19,7 @@
 
 /* ---------- clipboard helper ---------- */
 
-static void copy_move_history_to_clipboard(AppLoopContext *ctx)
+static void copy_move_history_to_clipboard(AppContext *ctx)
 {
     size_t capacity;
     char *buffer;
@@ -30,12 +30,12 @@ static void copy_move_history_to_clipboard(AppLoopContext *ctx)
         return;
     }
 
-    if (ctx->move_history_count == 0u) {
+    if (ctx->game.move_history_count == 0u) {
         app_set_status_message(ctx, "No moves to copy", 1200u);
         return;
     }
 
-    total_turns = ((int)ctx->move_history_count + 1) / 2;
+    total_turns = ((int)ctx->game.move_history_count + 1) / 2;
     capacity = ((size_t)total_turns * 48u) + 1u;
     buffer = (char *)SDL_malloc(capacity);
     if (!buffer) {
@@ -48,8 +48,8 @@ static void copy_move_history_to_clipboard(AppLoopContext *ctx)
         char line[96];
         int white_idx = (turn - 1) * 2;
         int black_idx = white_idx + 1;
-        const char *white_move = (white_idx < (int)ctx->move_history_count) ? ctx->move_history[white_idx] : "";
-        const char *black_move = (black_idx < (int)ctx->move_history_count) ? ctx->move_history[black_idx] : "";
+        const char *white_move = (white_idx < (int)ctx->game.move_history_count) ? ctx->game.move_history[white_idx] : "";
+        const char *black_move = (black_idx < (int)ctx->game.move_history_count) ? ctx->game.move_history[black_idx] : "";
 
         if (black_move[0] != '\0') {
             SDL_snprintf(line, sizeof(line), "%d. %s %s\n", turn, white_move, black_move);
@@ -69,45 +69,45 @@ static void copy_move_history_to_clipboard(AppLoopContext *ctx)
 
 /* ---------- lobby interaction ---------- */
 
-static void handle_lobby_click(AppLoopContext *ctx, int clicked_peer)
+static void handle_lobby_click(AppContext *ctx, int clicked_peer)
 {
-    if (!ctx || clicked_peer < 0 || clicked_peer >= ctx->lobby.discovered_peer_count) {
+    if (!ctx || clicked_peer < 0 || clicked_peer >= ctx->game.lobby.discovered_peer_count) {
         return;
     }
 
     {
-        ChessChallengeState current_state = chess_lobby_get_challenge_state(&ctx->lobby, clicked_peer);
+        ChessChallengeState current_state = chess_lobby_get_challenge_state(&ctx->game.lobby, clicked_peer);
 
         if (current_state == CHESS_CHALLENGE_NONE) {
             /* Send a challenge to this peer — does not affect other challenges */
-            chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
-            SDL_Log("LOBBY: challenge sent to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
+            chess_lobby_set_challenge_state(&ctx->game.lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
+            SDL_Log("LOBBY: challenge sent to peer %d (%.8s...)", clicked_peer, ctx->game.lobby.discovered_peers[clicked_peer].peer.profile_id);
         } else if (current_state == CHESS_CHALLENGE_OUTGOING_PENDING) {
             /* Cancel challenge for this specific peer */
-            chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_NONE);
-            chess_lobby_close_challenge_connection(&ctx->lobby, clicked_peer);
+            chess_lobby_set_challenge_state(&ctx->game.lobby, clicked_peer, CHESS_CHALLENGE_NONE);
+            chess_lobby_close_challenge_connection(&ctx->game.lobby, clicked_peer);
             SDL_Log("LOBBY: challenge cancelled for peer %d", clicked_peer);
         } else if (current_state == CHESS_CHALLENGE_CONNECT_FAILED) {
             /* Retry: reset connection state and re-attempt */
-            chess_lobby_close_challenge_connection(&ctx->lobby, clicked_peer);
-            chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
-            SDL_Log("LOBBY: retrying challenge to peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
+            chess_lobby_close_challenge_connection(&ctx->game.lobby, clicked_peer);
+            chess_lobby_set_challenge_state(&ctx->game.lobby, clicked_peer, CHESS_CHALLENGE_OUTGOING_PENDING);
+            SDL_Log("LOBBY: retrying challenge to peer %d (%.8s...)", clicked_peer, ctx->game.lobby.discovered_peers[clicked_peer].peer.profile_id);
         } else if (current_state == CHESS_CHALLENGE_INCOMING_PENDING) {
             /* Accept an incoming challenge — promote to game session */
             ChessAcceptPayload accept;
             memset(&accept, 0, sizeof(accept));
-            SDL_strlcpy(accept.acceptor_profile_id, ctx->network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
+            SDL_strlcpy(accept.acceptor_profile_id, ctx->network.network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
 
-            if (ctx->connection.fd >= 0 && chess_tcp_send_accept(&ctx->connection, &accept)) {
+            if (ctx->network.connection.fd >= 0 && chess_tcp_send_accept(&ctx->network.connection, &accept)) {
                 /* Close all outgoing challenge connections — we're starting a game */
-                chess_lobby_close_all_challenge_connections(&ctx->lobby);
+                chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
 
-                ctx->network_session.challenge_done = true;
-                ctx->network_session.role = CHESS_ROLE_SERVER;
-                chess_lobby_set_challenge_state(&ctx->lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);
-                chess_network_session_set_remote(&ctx->network_session, &ctx->lobby.discovered_peers[clicked_peer].peer);
-                chess_network_session_set_phase(&ctx->network_session, CHESS_PHASE_GAME_STARTING);
-                SDL_Log("LOBBY: accepted challenge from peer %d (%.8s...)", clicked_peer, ctx->lobby.discovered_peers[clicked_peer].peer.profile_id);
+                ctx->network.network_session.challenge_done = true;
+                ctx->network.network_session.role = CHESS_ROLE_SERVER;
+                chess_lobby_set_challenge_state(&ctx->game.lobby, clicked_peer, CHESS_CHALLENGE_MATCHED);
+                chess_network_session_set_remote(&ctx->network.network_session, &ctx->game.lobby.discovered_peers[clicked_peer].peer);
+                chess_network_session_set_phase(&ctx->network.network_session, CHESS_PHASE_GAME_STARTING);
+                SDL_Log("LOBBY: accepted challenge from peer %d (%.8s...)", clicked_peer, ctx->game.lobby.discovered_peers[clicked_peer].peer.profile_id);
             } else {
                 SDL_Log("NET: cannot accept challenge yet, transport not ready");
             }
@@ -135,38 +135,38 @@ static uint8_t key_to_promotion_choice(SDL_Keycode key)
 
 /* ---------- move sending ---------- */
 
-static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, uint8_t promotion)
+static bool try_send_local_move(AppContext *ctx, int to_file, int to_rank, uint8_t promotion)
 {
     ChessMovePayload move;
     char notation[24];
     bool notation_ready = false;
 
-    if (!ctx || ctx->connection.fd < 0) {
+    if (!ctx || ctx->network.connection.fd < 0) {
         return false;
     }
 
-    if (ctx->game_state.outcome != CHESS_OUTCOME_NONE) {
+    if (ctx->game.game_state.outcome != CHESS_OUTCOME_NONE) {
         return false;
     }
 
     if (promotion == CHESS_PROMOTION_NONE &&
         chess_game_local_move_requires_promotion(
-            &ctx->game_state,
-            ctx->network_session.local_color,
+            &ctx->game.game_state,
+            ctx->network.network_session.local_color,
             to_file,
             to_rank)) {
-        ctx->promotion_pending = true;
-        ctx->promotion_to_file = to_file;
-        ctx->promotion_to_rank = to_rank;
+        ctx->ui.drag.promotion_pending = true;
+        ctx->ui.drag.promotion_to_file = to_file;
+        ctx->ui.drag.promotion_to_rank = to_rank;
         app_set_status_message(ctx, "Promotion: press Q (queen), R (rook), B (bishop), N (knight)", 30000u);
         return false;
     }
 
-    if (ctx->game_state.has_selection &&
+    if (ctx->game.game_state.has_selection &&
         chess_move_format_algebraic_notation(
-            &ctx->game_state,
-            ctx->game_state.selected_file,
-            ctx->game_state.selected_rank,
+            &ctx->game.game_state,
+            ctx->game.game_state.selected_file,
+            ctx->game.game_state.selected_rank,
             to_file,
             to_rank,
             promotion,
@@ -181,25 +181,25 @@ static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, u
         int victim_file = to_file;
         int victim_rank = to_rank;
 
-        if (ctx->game_state.has_selection) {
-            victim = chess_game_get_piece(&ctx->game_state, to_file, to_rank);
+        if (ctx->game.game_state.has_selection) {
+            victim = chess_game_get_piece(&ctx->game.game_state, to_file, to_rank);
             if (victim == CHESS_PIECE_EMPTY) {
                 /* Check for en passant: pawn moving diagonally to empty square */
                 ChessPiece mover = chess_game_get_piece(
-                    &ctx->game_state,
-                    ctx->game_state.selected_file,
-                    ctx->game_state.selected_rank);
+                    &ctx->game.game_state,
+                    ctx->game.game_state.selected_file,
+                    ctx->game.game_state.selected_rank);
                 if ((mover == CHESS_PIECE_WHITE_PAWN || mover == CHESS_PIECE_BLACK_PAWN) &&
-                    to_file != ctx->game_state.selected_file) {
-                    victim_rank = ctx->game_state.selected_rank;
-                    victim = chess_game_get_piece(&ctx->game_state, to_file, victim_rank);
+                    to_file != ctx->game.game_state.selected_file) {
+                    victim_rank = ctx->game.game_state.selected_rank;
+                    victim = chess_game_get_piece(&ctx->game.game_state, to_file, victim_rank);
                 }
             }
         }
 
         if (!chess_game_try_local_move(
-                &ctx->game_state,
-                ctx->network_session.local_color,
+                &ctx->game.game_state,
+                ctx->network.network_session.local_color,
                 to_file,
                 to_rank,
                 promotion,
@@ -216,27 +216,27 @@ static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, u
         app_append_move_history(ctx, notation);
     }
 
-    if (ctx->network_session.role == CHESS_ROLE_SERVER) {
+    if (ctx->network.network_session.role == CHESS_ROLE_SERVER) {
         (void)chess_persist_save_match_snapshot(ctx);
     }
 
-    ctx->promotion_pending = false;
-    ctx->promotion_to_file = -1;
-    ctx->promotion_to_rank = -1;
-    ctx->status_message[0] = '\0';
-    ctx->status_message_until_ms = 0;
+    ctx->ui.drag.promotion_pending = false;
+    ctx->ui.drag.promotion_to_file = -1;
+    ctx->ui.drag.promotion_to_rank = -1;
+    ctx->ui.status_message[0] = '\0';
+    ctx->ui.status_message_until_ms = 0;
 
     /* Playing a move implicitly declines any pending draw offer from opponent. */
-    if (ctx->network_session.draw_offer_received) {
-        ctx->network_session.draw_offer_received = false;
-        chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_DECLINE,
-                              ctx->move_sequence, NULL, 0u);
+    if (ctx->network.network_session.draw_offer_received) {
+        ctx->network.network_session.draw_offer_received = false;
+        chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_DECLINE,
+                              ctx->protocol.move_sequence, NULL, 0u);
     }
 
     if (!chess_tcp_send_packet(
-            &ctx->connection,
+            &ctx->network.connection,
             CHESS_MSG_MOVE,
-            ctx->move_sequence++,
+            ctx->protocol.move_sequence++,
             &move,
             (uint32_t)sizeof(move))) {
         SDL_Log("NET: failed to send MOVE packet, closing connection");
@@ -257,7 +257,7 @@ static bool try_send_local_move(AppLoopContext *ctx, int to_file, int to_rank, u
 
 /* ---------- resign / draw button handling ---------- */
 
-static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
+static void handle_game_button(AppContext *ctx, ChessGameButton btn)
 {
     if (!ctx) {
         return;
@@ -269,17 +269,17 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
         return;
     }
 
-    if (ctx->connection.fd < 0) {
+    if (ctx->network.connection.fd < 0) {
         return;
     }
 
     switch (btn) {
     case CHESS_GAME_BUTTON_RESIGN: {
-        ctx->game_state.outcome = (ctx->network_session.local_color == CHESS_COLOR_WHITE)
+        ctx->game.game_state.outcome = (ctx->network.network_session.local_color == CHESS_COLOR_WHITE)
             ? CHESS_OUTCOME_WHITE_RESIGNED
             : CHESS_OUTCOME_BLACK_RESIGNED;
-        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_RESIGN,
-                              ctx->move_sequence, NULL, 0u)) {
+        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_RESIGN,
+                              ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send RESIGN");
             return;
         }
@@ -289,9 +289,9 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
         break;
     }
     case CHESS_GAME_BUTTON_DRAW:
-        ctx->network_session.draw_offer_pending = true;
-        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_OFFER,
-                              ctx->move_sequence, NULL, 0u)) {
+        ctx->network.network_session.draw_offer_pending = true;
+        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_OFFER,
+                              ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send DRAW_OFFER");
             return;
         }
@@ -299,10 +299,10 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
         app_set_status_message(ctx, "Draw offer sent.", 3000u);
         break;
     case CHESS_GAME_BUTTON_ACCEPT_DRAW:
-        ctx->game_state.outcome = CHESS_OUTCOME_DRAW_AGREED;
-        ctx->network_session.draw_offer_received = false;
-        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_ACCEPT,
-                              ctx->move_sequence, NULL, 0u)) {
+        ctx->game.game_state.outcome = CHESS_OUTCOME_DRAW_AGREED;
+        ctx->network.network_session.draw_offer_received = false;
+        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_ACCEPT,
+                              ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send DRAW_ACCEPT");
             return;
         }
@@ -311,9 +311,9 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
         app_set_status_message(ctx, "Draw by agreement.", 5000u);
         break;
     case CHESS_GAME_BUTTON_DECLINE_DRAW:
-        ctx->network_session.draw_offer_received = false;
-        if (!chess_tcp_send_packet(&ctx->connection, CHESS_MSG_DRAW_DECLINE,
-                              ctx->move_sequence, NULL, 0u)) {
+        ctx->network.network_session.draw_offer_received = false;
+        if (!chess_tcp_send_packet(&ctx->network.connection, CHESS_MSG_DRAW_DECLINE,
+                              ctx->protocol.move_sequence, NULL, 0u)) {
             app_handle_peer_disconnect(ctx, "failed to send DRAW_DECLINE");
             return;
         }
@@ -327,23 +327,23 @@ static void handle_game_button(AppLoopContext *ctx, ChessGameButton btn)
 
 /* ---------- board mouse handling ---------- */
 
-static void handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mouse_y)
+static void handle_board_mouse_down(AppContext *ctx, int mouse_x, int mouse_y)
 {
     int file;
     int rank;
 
-    if (!ctx || ctx->connection.fd < 0) {
+    if (!ctx || ctx->network.connection.fd < 0) {
         return;
     }
 
-    if (ctx->game_state.outcome != CHESS_OUTCOME_NONE) {
+    if (ctx->game.game_state.outcome != CHESS_OUTCOME_NONE) {
         return;
     }
 
-    if (ctx->promotion_pending) {
+    if (ctx->ui.drag.promotion_pending) {
         uint8_t promotion = chess_ui_promotion_from_mouse(ctx, mouse_x, mouse_y);
         if (promotion != CHESS_PROMOTION_NONE) {
-            (void)try_send_local_move(ctx, ctx->promotion_to_file, ctx->promotion_to_rank, promotion);
+            (void)try_send_local_move(ctx, ctx->ui.drag.promotion_to_file, ctx->ui.drag.promotion_to_rank, promotion);
         }
         return;
     }
@@ -352,19 +352,19 @@ static void handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mouse_
         return;
     }
 
-    if (chess_game_select_local_piece(&ctx->game_state, ctx->network_session.local_color, file, rank)) {
-        ctx->drag_active = true;
-        ctx->drag_piece = chess_game_get_piece(&ctx->game_state, file, rank);
-        ctx->drag_from_file = file;
-        ctx->drag_from_rank = rank;
-        ctx->drag_mouse_x = mouse_x;
-        ctx->drag_mouse_y = mouse_y;
+    if (chess_game_select_local_piece(&ctx->game.game_state, ctx->network.network_session.local_color, file, rank)) {
+        ctx->ui.drag.drag_active = true;
+        ctx->ui.drag.drag_piece = chess_game_get_piece(&ctx->game.game_state, file, rank);
+        ctx->ui.drag.drag_from_file = file;
+        ctx->ui.drag.drag_from_rank = rank;
+        ctx->ui.drag.drag_mouse_x = mouse_x;
+        ctx->ui.drag.drag_mouse_y = mouse_y;
         return;
     }
 
-    if (ctx->game_state.has_selection) {
-        if (ctx->game_state.selected_file == file && ctx->game_state.selected_rank == rank) {
-            chess_game_clear_selection(&ctx->game_state);
+    if (ctx->game.game_state.has_selection) {
+        if (ctx->game.game_state.selected_file == file && ctx->game.game_state.selected_rank == rank) {
+            chess_game_clear_selection(&ctx->game.game_state);
             return;
         }
 
@@ -372,33 +372,33 @@ static void handle_board_mouse_down(AppLoopContext *ctx, int mouse_x, int mouse_
     }
 }
 
-static void handle_board_mouse_motion(AppLoopContext *ctx, int mouse_x, int mouse_y)
+static void handle_board_mouse_motion(AppContext *ctx, int mouse_x, int mouse_y)
 {
-    if (!ctx || !ctx->drag_active) {
+    if (!ctx || !ctx->ui.drag.drag_active) {
         return;
     }
 
-    ctx->drag_mouse_x = mouse_x;
-    ctx->drag_mouse_y = mouse_y;
+    ctx->ui.drag.drag_mouse_x = mouse_x;
+    ctx->ui.drag.drag_mouse_y = mouse_y;
 }
 
-static void handle_board_mouse_up(AppLoopContext *ctx, int mouse_x, int mouse_y)
+static void handle_board_mouse_up(AppContext *ctx, int mouse_x, int mouse_y)
 {
     int to_file;
     int to_rank;
 
-    if (!ctx || !ctx->drag_active) {
+    if (!ctx || !ctx->ui.drag.drag_active) {
         return;
     }
 
-    ctx->drag_mouse_x = mouse_x;
-    ctx->drag_mouse_y = mouse_y;
+    ctx->ui.drag.drag_mouse_x = mouse_x;
+    ctx->ui.drag.drag_mouse_y = mouse_y;
 
-    if (ctx->promotion_pending) {
-        ctx->drag_active = false;
-        ctx->drag_piece = CHESS_PIECE_EMPTY;
-        ctx->drag_from_file = -1;
-        ctx->drag_from_rank = -1;
+    if (ctx->ui.drag.promotion_pending) {
+        ctx->ui.drag.drag_active = false;
+        ctx->ui.drag.drag_piece = CHESS_PIECE_EMPTY;
+        ctx->ui.drag.drag_from_file = -1;
+        ctx->ui.drag.drag_from_rank = -1;
         return;
     }
 
@@ -406,15 +406,15 @@ static void handle_board_mouse_up(AppLoopContext *ctx, int mouse_x, int mouse_y)
         (void)try_send_local_move(ctx, to_file, to_rank, CHESS_PROMOTION_NONE);
     }
 
-    ctx->drag_active = false;
-    ctx->drag_piece = CHESS_PIECE_EMPTY;
-    ctx->drag_from_file = -1;
-    ctx->drag_from_rank = -1;
+    ctx->ui.drag.drag_active = false;
+    ctx->ui.drag.drag_piece = CHESS_PIECE_EMPTY;
+    ctx->ui.drag.drag_from_file = -1;
+    ctx->ui.drag.drag_from_rank = -1;
 }
 
 /* ---------- public entry point ---------- */
 
-void chess_input_handle_events(AppLoopContext *ctx)
+void chess_input_handle_events(AppContext *ctx)
 {
     SDL_Event event;
 
@@ -428,11 +428,11 @@ void chess_input_handle_events(AppLoopContext *ctx)
             continue;
         }
 
-        if (!ctx->network_session.game_started) {
+        if (!ctx->network.network_session.game_started) {
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 event.button.button == SDL_BUTTON_LEFT &&
-                ctx->lobby.discovered_peer_count > 0) {
-                const int clicked_peer = chess_lobby_find_clicked_peer(ctx->window, &ctx->lobby, event.button.x, event.button.y);
+                ctx->game.lobby.discovered_peer_count > 0) {
+                const int clicked_peer = chess_lobby_find_clicked_peer(ctx->win.window, &ctx->game.lobby, event.button.x, event.button.y);
                 if (clicked_peer >= 0) {
                     handle_lobby_click(ctx, clicked_peer);
                 }
@@ -440,7 +440,7 @@ void chess_input_handle_events(AppLoopContext *ctx)
             continue;
         }
 
-        if (ctx->connection.fd < 0) {
+        if (ctx->network.connection.fd < 0) {
             /* Still allow clicking the "Return to Lobby" overlay button */
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
                 ChessGameButton btn = chess_ui_game_button_from_mouse(ctx, event.button.x, event.button.y);
@@ -459,12 +459,12 @@ void chess_input_handle_events(AppLoopContext *ctx)
             }
         }
 
-        if (event.type == SDL_EVENT_KEY_DOWN && ctx->promotion_pending) {
+        if (event.type == SDL_EVENT_KEY_DOWN && ctx->ui.drag.promotion_pending) {
             if (event.key.key == SDLK_ESCAPE) {
-                ctx->promotion_pending = false;
-                ctx->promotion_to_file = -1;
-                ctx->promotion_to_rank = -1;
-                chess_game_clear_selection(&ctx->game_state);
+                ctx->ui.drag.promotion_pending = false;
+                ctx->ui.drag.promotion_to_file = -1;
+                ctx->ui.drag.promotion_to_rank = -1;
+                chess_game_clear_selection(&ctx->game.game_state);
                 app_set_status_message(ctx, "Promotion cancelled", 1200u);
                 continue;
             }
@@ -474,8 +474,8 @@ void chess_input_handle_events(AppLoopContext *ctx)
                 if (promotion != CHESS_PROMOTION_NONE) {
                     (void)try_send_local_move(
                         ctx,
-                        ctx->promotion_to_file,
-                        ctx->promotion_to_rank,
+                        ctx->ui.drag.promotion_to_file,
+                        ctx->ui.drag.promotion_to_rank,
                         promotion);
                     continue;
                 }

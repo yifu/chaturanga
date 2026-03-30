@@ -357,7 +357,7 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
         return false;
     }
 
-    chess_game_state_init(&ctx->game_state);
+    chess_game_state_init(&ctx->game.game_state);
 
     board_key = strstr(json, "\"board\"");
     if (!board_key) {
@@ -383,7 +383,7 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
         if (piece >= CHESS_PIECE_COUNT) {
             return false;
         }
-        ctx->game_state.board[idx / CHESS_BOARD_SIZE][idx % CHESS_BOARD_SIZE] = (uint8_t)piece;
+        ctx->game.game_state.board[idx / CHESS_BOARD_SIZE][idx % CHESS_BOARD_SIZE] = (uint8_t)piece;
         p += consumed;
         p = skip_json_ws(p);
         if (*p == ',') {
@@ -391,21 +391,21 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
         }
     }
 
-    ctx->game_state.side_to_move = (ChessPlayerColor)side_to_move;
-    ctx->game_state.fullmove_number = (uint16_t)fullmove_number;
-    ctx->game_state.halfmove_clock = (uint16_t)halfmove_clock;
-    ctx->game_state.outcome = (ChessGameOutcome)outcome;
-    ctx->game_state.white_can_castle_kingside = (white_castle_k != 0u);
-    ctx->game_state.white_can_castle_queenside = (white_castle_q != 0u);
-    ctx->game_state.black_can_castle_kingside = (black_castle_k != 0u);
-    ctx->game_state.black_can_castle_queenside = (black_castle_q != 0u);
-    ctx->game_state.en_passant_target_file = (int8_t)en_passant_file;
-    ctx->game_state.en_passant_target_rank = (int8_t)en_passant_rank;
-    ctx->game_state.has_selection = false;
-    ctx->game_state.selected_file = -1;
-    ctx->game_state.selected_rank = -1;
+    ctx->game.game_state.side_to_move = (ChessPlayerColor)side_to_move;
+    ctx->game.game_state.fullmove_number = (uint16_t)fullmove_number;
+    ctx->game.game_state.halfmove_clock = (uint16_t)halfmove_clock;
+    ctx->game.game_state.outcome = (ChessGameOutcome)outcome;
+    ctx->game.game_state.white_can_castle_kingside = (white_castle_k != 0u);
+    ctx->game.game_state.white_can_castle_queenside = (white_castle_q != 0u);
+    ctx->game.game_state.black_can_castle_kingside = (black_castle_k != 0u);
+    ctx->game.game_state.black_can_castle_queenside = (black_castle_q != 0u);
+    ctx->game.game_state.en_passant_target_file = (int8_t)en_passant_file;
+    ctx->game.game_state.en_passant_target_rank = (int8_t)en_passant_rank;
+    ctx->game.game_state.has_selection = false;
+    ctx->game.game_state.selected_file = -1;
+    ctx->game.game_state.selected_rank = -1;
 
-    memset(ctx->game_state.captured, 0, sizeof(ctx->game_state.captured));
+    memset(ctx->game.game_state.captured, 0, sizeof(ctx->game.game_state.captured));
     {
         const char *cap_key = strstr(json, "\"captured\"");
         if (cap_key) {
@@ -423,7 +423,7 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
                     if (sscanf(cap_p, "%u%n", &cap_val, &cap_consumed) != 1 || cap_consumed <= 0) {
                         break;
                     }
-                    ctx->game_state.captured[cap_idx] = (uint8_t)cap_val;
+                    ctx->game.game_state.captured[cap_idx] = (uint8_t)cap_val;
                     cap_p += cap_consumed;
                     cap_p = skip_json_ws(cap_p);
                     if (*cap_p == ',') {
@@ -434,7 +434,7 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
         }
     }
 
-    ctx->move_history_count = 0;
+    ctx->game.move_history_count = 0;
     history_key = strstr(json, "\"move_history\"");
     if (!history_key) {
         return false;
@@ -445,7 +445,7 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
     }
     ++p;
 
-    while (ctx->move_history_count < (uint16_t)APP_MOVE_HISTORY_MAX) {
+    while (ctx->game.move_history_count < (uint16_t)APP_MOVE_HISTORY_MAX) {
         const char *start;
         const char *end;
         size_t len;
@@ -468,9 +468,9 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
         if (len >= (size_t)APP_MOVE_HISTORY_ENTRY) {
             len = (size_t)APP_MOVE_HISTORY_ENTRY - 1u;
         }
-        memcpy(ctx->move_history[ctx->move_history_count], start, len);
-        ctx->move_history[ctx->move_history_count][len] = '\0';
-        ctx->move_history_count += 1u;
+        memcpy(ctx->game.move_history[ctx->game.move_history_count], start, len);
+        ctx->game.move_history[ctx->game.move_history_count][len] = '\0';
+        ctx->game.move_history_count += 1u;
 
         p = end + 1;
         p = skip_json_ws(p);
@@ -493,7 +493,7 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
     int rank;
     int file;
 
-    if (!ctx || !ctx->network_session.game_started || ctx->network_session.game_id == 0u) {
+    if (!ctx || !ctx->network.network_session.game_started || ctx->network.network_session.game_id == 0u) {
         return false;
     }
 
@@ -501,15 +501,15 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
         return false;
     }
 
-    (void)snprintf(path, sizeof(path), "%s/%u.json", dir, ctx->network_session.game_id);
+    (void)snprintf(path, sizeof(path), "%s/%u.json", dir, ctx->network.network_session.game_id);
     (void)snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
-    white_profile_id = (ctx->network_session.local_color == CHESS_COLOR_WHITE)
-        ? ctx->local_peer.profile_id
-        : ctx->network_session.remote_peer.profile_id;
-    black_profile_id = (ctx->network_session.local_color == CHESS_COLOR_BLACK)
-        ? ctx->local_peer.profile_id
-        : ctx->network_session.remote_peer.profile_id;
+    white_profile_id = (ctx->network.network_session.local_color == CHESS_COLOR_WHITE)
+        ? ctx->network.local_peer.profile_id
+        : ctx->network.network_session.remote_peer.profile_id;
+    black_profile_id = (ctx->network.network_session.local_color == CHESS_COLOR_BLACK)
+        ? ctx->network.local_peer.profile_id
+        : ctx->network.network_session.remote_peer.profile_id;
 
     fp = fopen(tmp_path, "wb");
     if (!fp) {
@@ -518,23 +518,23 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
 
     (void)fprintf(fp, "{\n");
     (void)fprintf(fp, "  \"version\": 1,\n");
-    (void)fprintf(fp, "  \"game_id\": %u,\n", ctx->network_session.game_id);
+    (void)fprintf(fp, "  \"game_id\": %u,\n", ctx->network.network_session.game_id);
     (void)fprintf(fp, "  \"white_profile_id\": \"%s\",\n", white_profile_id ? white_profile_id : "");
     (void)fprintf(fp, "  \"black_profile_id\": \"%s\",\n", black_profile_id ? black_profile_id : "");
-    (void)fprintf(fp, "  \"resume_token\": \"%s\",\n", ctx->pending_start_payload.resume_token);
-    (void)fprintf(fp, "  \"side_to_move\": %u,\n", (unsigned)ctx->game_state.side_to_move);
-    (void)fprintf(fp, "  \"fullmove_number\": %u,\n", (unsigned)ctx->game_state.fullmove_number);
-    (void)fprintf(fp, "  \"halfmove_clock\": %u,\n", (unsigned)ctx->game_state.halfmove_clock);
-    (void)fprintf(fp, "  \"white_can_castle_kingside\": %u,\n", ctx->game_state.white_can_castle_kingside ? 1u : 0u);
-    (void)fprintf(fp, "  \"white_can_castle_queenside\": %u,\n", ctx->game_state.white_can_castle_queenside ? 1u : 0u);
-    (void)fprintf(fp, "  \"black_can_castle_kingside\": %u,\n", ctx->game_state.black_can_castle_kingside ? 1u : 0u);
-    (void)fprintf(fp, "  \"black_can_castle_queenside\": %u,\n", ctx->game_state.black_can_castle_queenside ? 1u : 0u);
-    (void)fprintf(fp, "  \"en_passant_target_file\": %d,\n", (int)ctx->game_state.en_passant_target_file);
-    (void)fprintf(fp, "  \"en_passant_target_rank\": %d,\n", (int)ctx->game_state.en_passant_target_rank);
-    (void)fprintf(fp, "  \"outcome\": %u,\n", (unsigned)ctx->game_state.outcome);
+    (void)fprintf(fp, "  \"resume_token\": \"%s\",\n", ctx->protocol.pending_start_payload.resume_token);
+    (void)fprintf(fp, "  \"side_to_move\": %u,\n", (unsigned)ctx->game.game_state.side_to_move);
+    (void)fprintf(fp, "  \"fullmove_number\": %u,\n", (unsigned)ctx->game.game_state.fullmove_number);
+    (void)fprintf(fp, "  \"halfmove_clock\": %u,\n", (unsigned)ctx->game.game_state.halfmove_clock);
+    (void)fprintf(fp, "  \"white_can_castle_kingside\": %u,\n", ctx->game.game_state.white_can_castle_kingside ? 1u : 0u);
+    (void)fprintf(fp, "  \"white_can_castle_queenside\": %u,\n", ctx->game.game_state.white_can_castle_queenside ? 1u : 0u);
+    (void)fprintf(fp, "  \"black_can_castle_kingside\": %u,\n", ctx->game.game_state.black_can_castle_kingside ? 1u : 0u);
+    (void)fprintf(fp, "  \"black_can_castle_queenside\": %u,\n", ctx->game.game_state.black_can_castle_queenside ? 1u : 0u);
+    (void)fprintf(fp, "  \"en_passant_target_file\": %d,\n", (int)ctx->game.game_state.en_passant_target_file);
+    (void)fprintf(fp, "  \"en_passant_target_rank\": %d,\n", (int)ctx->game.game_state.en_passant_target_rank);
+    (void)fprintf(fp, "  \"outcome\": %u,\n", (unsigned)ctx->game.game_state.outcome);
     (void)fprintf(fp, "  \"captured\": [");
     for (file = 0; file < CHESS_PIECE_COUNT; ++file) {
-        (void)fprintf(fp, "%u", (unsigned)ctx->game_state.captured[file]);
+        (void)fprintf(fp, "%u", (unsigned)ctx->game.game_state.captured[file]);
         if (file + 1 < CHESS_PIECE_COUNT) {
             (void)fprintf(fp, ",");
         }
@@ -543,7 +543,7 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
     (void)fprintf(fp, "  \"board\": [");
     for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
         for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
-            (void)fprintf(fp, "%u", (unsigned)ctx->game_state.board[rank][file]);
+            (void)fprintf(fp, "%u", (unsigned)ctx->game.game_state.board[rank][file]);
             if (!(rank == CHESS_BOARD_SIZE - 1 && file == CHESS_BOARD_SIZE - 1)) {
                 (void)fprintf(fp, ",");
             }
@@ -551,9 +551,9 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
     }
     (void)fprintf(fp, "],\n");
     (void)fprintf(fp, "  \"move_history\": [");
-    for (file = 0; file < (int)ctx->move_history_count; ++file) {
-        (void)fprintf(fp, "\"%s\"", ctx->move_history[file]);
-        if (file + 1 < (int)ctx->move_history_count) {
+    for (file = 0; file < (int)ctx->game.move_history_count; ++file) {
+        (void)fprintf(fp, "\"%s\"", ctx->game.move_history[file]);
+        if (file + 1 < (int)ctx->game.move_history_count) {
             (void)fprintf(fp, ",");
         }
     }
@@ -576,37 +576,37 @@ bool chess_persist_build_state_snapshot_payload(const AppContext *ctx, ChessStat
     int file;
     int idx;
 
-    if (!ctx || !out_payload || !ctx->network_session.game_started || ctx->network_session.game_id == 0u) {
+    if (!ctx || !out_payload || !ctx->network.network_session.game_started || ctx->network.network_session.game_id == 0u) {
         return false;
     }
 
     memset(out_payload, 0, sizeof(*out_payload));
-    out_payload->game_id = ctx->network_session.game_id;
-    out_payload->side_to_move = (uint32_t)ctx->game_state.side_to_move;
-    out_payload->fullmove_number = (uint32_t)ctx->game_state.fullmove_number;
-    out_payload->halfmove_clock = (uint32_t)ctx->game_state.halfmove_clock;
-    out_payload->outcome = (uint32_t)ctx->game_state.outcome;
-    out_payload->white_can_castle_kingside = ctx->game_state.white_can_castle_kingside ? 1u : 0u;
-    out_payload->white_can_castle_queenside = ctx->game_state.white_can_castle_queenside ? 1u : 0u;
-    out_payload->black_can_castle_kingside = ctx->game_state.black_can_castle_kingside ? 1u : 0u;
-    out_payload->black_can_castle_queenside = ctx->game_state.black_can_castle_queenside ? 1u : 0u;
-    out_payload->en_passant_target_file = ctx->game_state.en_passant_target_file;
-    out_payload->en_passant_target_rank = ctx->game_state.en_passant_target_rank;
-    SDL_strlcpy(out_payload->resume_token, ctx->pending_start_payload.resume_token, sizeof(out_payload->resume_token));
+    out_payload->game_id = ctx->network.network_session.game_id;
+    out_payload->side_to_move = (uint32_t)ctx->game.game_state.side_to_move;
+    out_payload->fullmove_number = (uint32_t)ctx->game.game_state.fullmove_number;
+    out_payload->halfmove_clock = (uint32_t)ctx->game.game_state.halfmove_clock;
+    out_payload->outcome = (uint32_t)ctx->game.game_state.outcome;
+    out_payload->white_can_castle_kingside = ctx->game.game_state.white_can_castle_kingside ? 1u : 0u;
+    out_payload->white_can_castle_queenside = ctx->game.game_state.white_can_castle_queenside ? 1u : 0u;
+    out_payload->black_can_castle_kingside = ctx->game.game_state.black_can_castle_kingside ? 1u : 0u;
+    out_payload->black_can_castle_queenside = ctx->game.game_state.black_can_castle_queenside ? 1u : 0u;
+    out_payload->en_passant_target_file = ctx->game.game_state.en_passant_target_file;
+    out_payload->en_passant_target_rank = ctx->game.game_state.en_passant_target_rank;
+    SDL_strlcpy(out_payload->resume_token, ctx->protocol.pending_start_payload.resume_token, sizeof(out_payload->resume_token));
 
     for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
         for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
             idx = rank * CHESS_BOARD_SIZE + file;
-            out_payload->board[idx] = ctx->game_state.board[rank][file];
+            out_payload->board[idx] = ctx->game.game_state.board[rank][file];
         }
     }
 
-    memcpy(out_payload->captured, ctx->game_state.captured,
-           sizeof(out_payload->captured) < sizeof(ctx->game_state.captured)
+    memcpy(out_payload->captured, ctx->game.game_state.captured,
+           sizeof(out_payload->captured) < sizeof(ctx->game.game_state.captured)
                ? sizeof(out_payload->captured)
-               : sizeof(ctx->game_state.captured));
+               : sizeof(ctx->game.game_state.captured));
 
-    history_count = ctx->move_history_count;
+    history_count = ctx->game.move_history_count;
     if (history_count > (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES) {
         history_count = (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES;
     }
@@ -615,7 +615,7 @@ bool chess_persist_build_state_snapshot_payload(const AppContext *ctx, ChessStat
     for (idx = 0; idx < (int)history_count; ++idx) {
         SDL_strlcpy(
             out_payload->move_history[idx],
-            ctx->move_history[idx],
+            ctx->game.move_history[idx],
             sizeof(out_payload->move_history[idx]));
     }
 
@@ -642,39 +642,39 @@ bool chess_persist_apply_state_snapshot_payload(
     }
 
     if (validate_resume_token &&
-        ctx->pending_start_payload.resume_token[0] != '\0' &&
+        ctx->protocol.pending_start_payload.resume_token[0] != '\0' &&
         SDL_strncmp(
             payload->resume_token,
-            ctx->pending_start_payload.resume_token,
+            ctx->protocol.pending_start_payload.resume_token,
             CHESS_UUID_STRING_LEN) != 0) {
         return false;
     }
 
-    chess_game_state_init(&ctx->game_state);
+    chess_game_state_init(&ctx->game.game_state);
     for (idx = 0; idx < (int)CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS; ++idx) {
         if (payload->board[idx] >= CHESS_PIECE_COUNT) {
             return false;
         }
-        ctx->game_state.board[idx / CHESS_BOARD_SIZE][idx % CHESS_BOARD_SIZE] = payload->board[idx];
+        ctx->game.game_state.board[idx / CHESS_BOARD_SIZE][idx % CHESS_BOARD_SIZE] = payload->board[idx];
     }
 
-    ctx->game_state.side_to_move = (ChessPlayerColor)payload->side_to_move;
-    ctx->game_state.fullmove_number = (uint16_t)payload->fullmove_number;
-    ctx->game_state.halfmove_clock = (uint16_t)payload->halfmove_clock;
-    ctx->game_state.outcome = (ChessGameOutcome)payload->outcome;
-    ctx->game_state.white_can_castle_kingside = payload->white_can_castle_kingside != 0u;
-    ctx->game_state.white_can_castle_queenside = payload->white_can_castle_queenside != 0u;
-    ctx->game_state.black_can_castle_kingside = payload->black_can_castle_kingside != 0u;
-    ctx->game_state.black_can_castle_queenside = payload->black_can_castle_queenside != 0u;
-    ctx->game_state.en_passant_target_file = payload->en_passant_target_file;
-    ctx->game_state.en_passant_target_rank = payload->en_passant_target_rank;
-    ctx->game_state.has_selection = false;
-    ctx->game_state.selected_file = -1;
-    ctx->game_state.selected_rank = -1;
+    ctx->game.game_state.side_to_move = (ChessPlayerColor)payload->side_to_move;
+    ctx->game.game_state.fullmove_number = (uint16_t)payload->fullmove_number;
+    ctx->game.game_state.halfmove_clock = (uint16_t)payload->halfmove_clock;
+    ctx->game.game_state.outcome = (ChessGameOutcome)payload->outcome;
+    ctx->game.game_state.white_can_castle_kingside = payload->white_can_castle_kingside != 0u;
+    ctx->game.game_state.white_can_castle_queenside = payload->white_can_castle_queenside != 0u;
+    ctx->game.game_state.black_can_castle_kingside = payload->black_can_castle_kingside != 0u;
+    ctx->game.game_state.black_can_castle_queenside = payload->black_can_castle_queenside != 0u;
+    ctx->game.game_state.en_passant_target_file = payload->en_passant_target_file;
+    ctx->game.game_state.en_passant_target_rank = payload->en_passant_target_rank;
+    ctx->game.game_state.has_selection = false;
+    ctx->game.game_state.selected_file = -1;
+    ctx->game.game_state.selected_rank = -1;
 
-    memcpy(ctx->game_state.captured, payload->captured,
-           sizeof(ctx->game_state.captured) < sizeof(payload->captured)
-               ? sizeof(ctx->game_state.captured)
+    memcpy(ctx->game.game_state.captured, payload->captured,
+           sizeof(ctx->game.game_state.captured) < sizeof(payload->captured)
+               ? sizeof(ctx->game.game_state.captured)
                : sizeof(payload->captured));
 
     history_count = payload->move_history_count;
@@ -682,10 +682,10 @@ bool chess_persist_apply_state_snapshot_payload(
         history_count = (uint16_t)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES;
     }
 
-    ctx->move_history_count = history_count;
+    ctx->game.move_history_count = history_count;
     for (idx = 0; idx < (int)history_count; ++idx) {
         SDL_strlcpy(
-            ctx->move_history[idx],
+            ctx->game.move_history[idx],
             payload->move_history[idx],
             (size_t)APP_MOVE_HISTORY_ENTRY);
     }
@@ -700,9 +700,9 @@ bool chess_persist_save_client_resume_state(AppContext *ctx)
     FILE *fp;
 
     if (!ctx ||
-        ctx->pending_start_payload.game_id == 0u ||
-        ctx->pending_start_payload.resume_token[0] == '\0' ||
-        ctx->network_session.remote_peer.profile_id[0] == '\0') {
+        ctx->protocol.pending_start_payload.game_id == 0u ||
+        ctx->protocol.pending_start_payload.resume_token[0] == '\0' ||
+        ctx->network.network_session.remote_peer.profile_id[0] == '\0') {
         return false;
     }
 
@@ -718,9 +718,9 @@ bool chess_persist_save_client_resume_state(AppContext *ctx)
 
     (void)fprintf(fp, "{\n");
     (void)fprintf(fp, "  \"version\": 1,\n");
-    (void)fprintf(fp, "  \"game_id\": %u,\n", ctx->pending_start_payload.game_id);
-    (void)fprintf(fp, "  \"resume_token\": \"%s\",\n", ctx->pending_start_payload.resume_token);
-    (void)fprintf(fp, "  \"remote_profile_id\": \"%s\"\n", ctx->network_session.remote_peer.profile_id);
+    (void)fprintf(fp, "  \"game_id\": %u,\n", ctx->protocol.pending_start_payload.game_id);
+    (void)fprintf(fp, "  \"resume_token\": \"%s\",\n", ctx->protocol.pending_start_payload.resume_token);
+    (void)fprintf(fp, "  \"remote_profile_id\": \"%s\"\n", ctx->network.network_session.remote_peer.profile_id);
     (void)fprintf(fp, "}\n");
 
     if (fclose(fp) != 0) {
@@ -730,11 +730,11 @@ bool chess_persist_save_client_resume_state(AppContext *ctx)
         return false;
     }
 
-    ctx->resume_state_loaded = true;
+    ctx->resume.resume_state_loaded = true;
     SDL_strlcpy(
-        ctx->resume_remote_profile_id,
-        ctx->network_session.remote_peer.profile_id,
-        sizeof(ctx->resume_remote_profile_id));
+        ctx->resume.resume_remote_profile_id,
+        ctx->network.network_session.remote_peer.profile_id,
+        sizeof(ctx->resume.resume_remote_profile_id));
     return true;
 }
 
@@ -750,10 +750,10 @@ void chess_persist_clear_client_resume_state(AppContext *ctx)
         (void)remove(path);
     }
 
-    ctx->resume_state_loaded = false;
-    ctx->resume_remote_profile_id[0] = '\0';
-    ctx->pending_start_payload.game_id = 0u;
-    ctx->pending_start_payload.resume_token[0] = '\0';
+    ctx->resume.resume_state_loaded = false;
+    ctx->resume.resume_remote_profile_id[0] = '\0';
+    ctx->protocol.pending_start_payload.game_id = 0u;
+    ctx->protocol.pending_start_payload.resume_token[0] = '\0';
 }
 
 bool chess_persist_load_client_resume_state(AppContext *ctx)
@@ -796,15 +796,15 @@ bool chess_persist_load_client_resume_state(AppContext *ctx)
         return false;
     }
 
-    ctx->pending_start_payload.game_id = game_id;
+    ctx->protocol.pending_start_payload.game_id = game_id;
     SDL_strlcpy(
-        ctx->pending_start_payload.resume_token,
+        ctx->protocol.pending_start_payload.resume_token,
         resume_token,
-        sizeof(ctx->pending_start_payload.resume_token));
+        sizeof(ctx->protocol.pending_start_payload.resume_token));
     SDL_strlcpy(
-        ctx->resume_remote_profile_id,
+        ctx->resume.resume_remote_profile_id,
         remote_profile_id,
-        sizeof(ctx->resume_remote_profile_id));
-    ctx->resume_state_loaded = true;
+        sizeof(ctx->resume.resume_remote_profile_id));
+    ctx->resume.resume_state_loaded = true;
     return true;
 }
