@@ -64,6 +64,8 @@ add_executable(chess_app
     src/ui/fonts.c
     src/ui/lobby.c
     src/ui/game.c
+    src/ui/game_panels.c
+    src/ui/game_animations.c
     src/game_state.c
     src/lobby_state.c
     src/render/board.c
