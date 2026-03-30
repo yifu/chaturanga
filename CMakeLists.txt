@@ -58,6 +58,7 @@ file(WRITE "${GENERATED_DIR}/embedded_pieces.h" "${EMBEDDED_HEADER_LINES}")
 add_executable(chess_app
     src/main.c
     src/app.c
+    src/game_actions.c
     src/input_handler.c
     src/persistence.c
     src/ui/fonts.c
