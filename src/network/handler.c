@@ -257,9 +257,7 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessNetPoll
             ChessDiscoveredPeerState *ps = &ctx->game.lobby.discovered_peers[peer_idx];
 
             if (chess_tcp_connect_start(ps->tcp_ipv4, ps->tcp_port, &new_fd)) {
-                /* Direct fd assignment: TCP connect is transport-establishment,
-                 * intentionally concrete per design (recv not ready until connected). */
-                ctx->network.transport.connection.fd = new_fd;
+                tcp_transport_init_from_fd(&ctx->network.transport, new_fd);
                 /* Check if already connected (immediate local connect) */
                 {
                     ChessConnectResult cr = chess_tcp_connect_check(new_fd);
