@@ -332,7 +332,7 @@ static void net_handle_resume_response_packet(AppContext *ctx, const ChessResume
     }
 
     if (response->status == CHESS_RESUME_ACCEPTED) {
-        app_set_status_message(ctx, "Resume accepted, synchronising game state...", 2500u);
+        app_set_status_message(ctx, "Resume accepted, synchronizing game state...", 2500u);
         SDL_Log("NET: resume accepted for game %u", response->game_id);
     } else {
         chess_persist_clear_client_resume_state(ctx);
@@ -360,7 +360,7 @@ static void net_handle_state_snapshot_packet(AppContext *ctx, const ChessStateSn
 
     (void)chess_persist_save_match_snapshot(ctx);
     SDL_Log("GAME: applied synced snapshot for game_id=%u", snapshot->game_id);
-    app_set_status_message(ctx, "Game state re-synchronised.", 2200u);
+    app_set_status_message(ctx, "Game state re-synchronized.", 2200u);
 }
 
 static void net_handle_ack_packet(AppContext *ctx, const ChessAckPayload *ack)
