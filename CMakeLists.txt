@@ -73,6 +73,7 @@ add_executable(chess_app
     src/network/peer.c
     src/network/session.c
     src/network/handler.c
+    src/network/handler_challenges.c
     src/network/packet_handlers.c
     src/network/discovery.c
     src/network/discovery_dnssd.c
