@@ -16,13 +16,17 @@
 #define APP_MOVE_HISTORY_MAX   ((int)CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES)
 #define APP_MOVE_HISTORY_ENTRY ((int)CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN)
 
-typedef struct AppContext {
-    /* ── Window / rendering ─────────────────────────────────────────── */
+/* ── Window / rendering ──────────────────────────────────────────────── */
+typedef struct AppWindow {
     int window_size;
     SDL_Window *window;
     SDL_Renderer *renderer;
+    SDL_Cursor *cursor_default;
+    SDL_Cursor *cursor_pointer;
+} AppWindow;
 
-    /* ── Networking ─────────────────────────────────────────────────── */
+/* ── Networking ──────────────────────────────────────────────────────── */
+typedef struct NetworkContext {
     ChessPeerInfo local_peer;
     ChessNetworkSession network_session;
     ChessDiscoveryContext discovery;
@@ -32,22 +36,30 @@ typedef struct AppContext {
     ChessDiscoveredPeer discovered_peer;
     int connect_retry_ms;
     uint64_t next_connect_attempt_at;
+} NetworkContext;
 
-    /* ── Game protocol ──────────────────────────────────────────────── */
+/* ── Game protocol ───────────────────────────────────────────────────── */
+typedef struct GameProtocol {
     ChessStartPayload pending_start_payload;
     uint32_t move_sequence;
+} GameProtocol;
 
-    /* ── Resume / persistence ───────────────────────────────────────── */
+/* ── Resume / persistence ────────────────────────────────────────────── */
+typedef struct ResumeContext {
     bool resume_state_loaded;
     char resume_remote_profile_id[CHESS_PROFILE_ID_STRING_LEN];
+} ResumeContext;
 
-    /* ── Game state ─────────────────────────────────────────────────── */
+/* ── Game state ──────────────────────────────────────────────────────── */
+typedef struct GameContext {
     ChessGameState game_state;
     ChessLobbyState lobby;
     uint16_t move_history_count;
     char move_history[APP_MOVE_HISTORY_MAX][APP_MOVE_HISTORY_ENTRY];
+} GameContext;
 
-    /* ── UI / input state ───────────────────────────────────────────── */
+/* ── Drag / input state ──────────────────────────────────────────────── */
+typedef struct DragState {
     bool drag_active;
     ChessPiece drag_piece;
     int drag_from_file;
@@ -57,40 +69,49 @@ typedef struct AppContext {
     bool promotion_pending;
     int promotion_to_file;
     int promotion_to_rank;
+} DragState;
 
-    /* ── Remote move animation ──────────────────────────────────────── */
-    bool remote_move_anim_active;
-    ChessPiece remote_move_anim_piece;
-    int remote_move_from_file;
-    int remote_move_from_rank;
-    int remote_move_to_file;
-    int remote_move_to_rank;
-    uint64_t remote_move_anim_started_at_ms;
-    uint32_t remote_move_anim_duration_ms;
+/* ── Remote move animation ───────────────────────────────────────────── */
+typedef struct RemoteMoveAnimation {
+    bool active;
+    ChessPiece piece;
+    int from_file;
+    int from_rank;
+    int to_file;
+    int to_rank;
+    uint64_t started_at_ms;
+    uint32_t duration_ms;
+} RemoteMoveAnimation;
 
-    /* ── Capture animation (piece flies to panel, shrinking) ─────── */
-    bool capture_anim_active;
-    ChessPiece capture_anim_piece;
-    int capture_anim_from_file;
-    int capture_anim_from_rank;
-    bool capture_anim_target_top;  /* true = fly to top panel */
-    uint64_t capture_anim_started_at_ms;
-    uint32_t capture_anim_duration_ms;
+/* ── Capture animation (piece flies to panel, shrinking) ─────────────── */
+typedef struct CaptureAnimation {
+    bool active;
+    ChessPiece piece;
+    int from_file;
+    int from_rank;
+    bool target_top;  /* true = fly to top panel */
+    uint64_t started_at_ms;
+    uint32_t duration_ms;
+} CaptureAnimation;
 
-    /* ── Status messages ────────────────────────────────────────────── */
+/* ── UI context ──────────────────────────────────────────────────────── */
+typedef struct UIContext {
+    DragState drag;
+    RemoteMoveAnimation remote_move_anim;
+    CaptureAnimation capture_anim;
     char status_message[APP_STATUS_MESSAGE_LEN];
     uint64_t status_message_until_ms;
+} UIContext;
 
-    /* ── Cursor ──────────────────────────────────────────────────────── */
-    SDL_Cursor *cursor_default;
-    SDL_Cursor *cursor_pointer;
-
-    /* ── Run control ────────────────────────────────────────────────── */
+typedef struct AppContext {
+    AppWindow win;
+    NetworkContext network;
+    GameProtocol protocol;
+    ResumeContext resume;
+    GameContext game;
+    UIContext ui;
     bool running;
 } AppContext;
-
-/* Temporary alias so existing app.c code compiles during migration */
-typedef AppContext AppLoopContext;
 
 /* ── Functions used by extracted modules (net_handler, etc.) ─────────── */
 void app_set_status_message(AppContext *ctx, const char *message, uint32_t duration_ms);

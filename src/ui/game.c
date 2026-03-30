@@ -122,17 +122,17 @@ bool chess_ui_screen_to_board_square(
     int screen_file;
     int screen_rank;
 
-    if (!ctx || !ctx->window || !out_file || !out_rank) {
+    if (!ctx || !ctx->win.window || !out_file || !out_rank) {
         return false;
     }
 
-    SDL_GetWindowSize(ctx->window, &width, &height);
-    board_width = chess_ui_board_width_for_window(width, ctx->network_session.game_started);
+    SDL_GetWindowSize(ctx->win.window, &width, &height);
+    board_width = chess_ui_board_width_for_window(width, ctx->network.network_session.game_started);
     if (mouse_x < 0 || mouse_x >= board_width) {
         return false;
     }
 
-    if (ctx->network_session.game_started) {
+    if (ctx->network.network_session.game_started) {
         board_y = CHESS_UI_PLAYER_PANEL_HEIGHT;
         board_height = height - 2 * CHESS_UI_PLAYER_PANEL_HEIGHT;
     } else {
@@ -149,7 +149,7 @@ bool chess_ui_screen_to_board_square(
 
     cell_w = (float)board_width / (float)CHESS_BOARD_SIZE;
     cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
-    black_perspective = use_black_perspective(ctx->network_session.local_color);
+    black_perspective = use_black_perspective(ctx->network.network_session.local_color);
     screen_file = (int)(mouse_x / cell_w);
     screen_rank = (int)(local_mouse_y / cell_h);
     *out_file = screen_to_board_index(screen_file, black_perspective);
@@ -181,15 +181,15 @@ static bool promotion_choice_rect(
     int screen_rank;
     SDL_FRect square_rect;
 
-    if (!ctx || !out_rect || !ctx->promotion_pending) {
+    if (!ctx || !out_rect || !ctx->ui.drag.promotion_pending) {
         return false;
     }
 
-    black_perspective = use_black_perspective(ctx->network_session.local_color);
+    black_perspective = use_black_perspective(ctx->network.network_session.local_color);
     cell_w = (float)width / (float)CHESS_BOARD_SIZE;
     cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
-    screen_file = board_to_screen_index(ctx->promotion_to_file, black_perspective);
-    screen_rank = board_to_screen_index(ctx->promotion_to_rank, black_perspective);
+    screen_file = board_to_screen_index(ctx->ui.drag.promotion_to_file, black_perspective);
+    screen_rank = board_to_screen_index(ctx->ui.drag.promotion_to_rank, black_perspective);
 
     square_rect.x = screen_file * cell_w + 3.0f;
     square_rect.y = (float)board_y + screen_rank * cell_h + 3.0f;
@@ -236,13 +236,13 @@ uint8_t chess_ui_promotion_from_mouse(AppContext *ctx, int mouse_x, int mouse_y)
     int board_height;
     size_t i;
 
-    if (!ctx || !ctx->window || !ctx->promotion_pending) {
+    if (!ctx || !ctx->win.window || !ctx->ui.drag.promotion_pending) {
         return CHESS_PROMOTION_NONE;
     }
 
-    SDL_GetWindowSize(ctx->window, &width, &height);
-    board_width = chess_ui_board_width_for_window(width, ctx->network_session.game_started);
-    if (ctx->network_session.game_started) {
+    SDL_GetWindowSize(ctx->win.window, &width, &height);
+    board_width = chess_ui_board_width_for_window(width, ctx->network.network_session.game_started);
+    if (ctx->network.network_session.game_started) {
         board_y = CHESS_UI_PLAYER_PANEL_HEIGHT;
         board_height = height - 2 * CHESS_UI_PLAYER_PANEL_HEIGHT;
     } else {
@@ -417,38 +417,38 @@ static void render_drag_preview(AppContext *ctx, int width, int board_height)
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
     const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
 
-    if (!ctx || !ctx->renderer || !ctx->drag_active ||
-        ctx->drag_piece <= CHESS_PIECE_EMPTY || ctx->drag_piece >= CHESS_PIECE_COUNT) {
+    if (!ctx || !ctx->win.renderer || !ctx->ui.drag.drag_active ||
+        ctx->ui.drag.drag_piece <= CHESS_PIECE_EMPTY || ctx->ui.drag.drag_piece >= CHESS_PIECE_COUNT) {
         return;
     }
 
     {
-        SDL_Texture *tex = s_piece_textures[(int)ctx->drag_piece];
+        SDL_Texture *tex = s_piece_textures[(int)ctx->ui.drag.drag_piece];
         if (tex) {
             float tex_w = 0.0f;
             float tex_h = 0.0f;
             SDL_FRect dst;
 
             SDL_GetTextureSize(tex, &tex_w, &tex_h);
-            dst.x = (float)ctx->drag_mouse_x - tex_w * 0.5f;
-            dst.y = (float)ctx->drag_mouse_y - tex_h * 0.5f;
+            dst.x = (float)ctx->ui.drag.drag_mouse_x - tex_w * 0.5f;
+            dst.y = (float)ctx->ui.drag.drag_mouse_y - tex_h * 0.5f;
             dst.w = tex_w;
             dst.h = tex_h;
-            SDL_RenderTexture(ctx->renderer, tex, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, tex, NULL, &dst);
         } else {
             SDL_FRect piece_rect = {
-                (float)ctx->drag_mouse_x - cell_w * 0.25f,
-                (float)ctx->drag_mouse_y - cell_h * 0.25f,
+                (float)ctx->ui.drag.drag_mouse_x - cell_w * 0.25f,
+                (float)ctx->ui.drag.drag_mouse_y - cell_h * 0.25f,
                 cell_w * 0.5f,
                 cell_h * 0.5f
             };
 
-            if ((int)ctx->drag_piece < (int)CHESS_PIECE_BLACK_PAWN) {
-                SDL_SetRenderDrawColor(ctx->renderer, 245, 245, 245, 255);
+            if ((int)ctx->ui.drag.drag_piece < (int)CHESS_PIECE_BLACK_PAWN) {
+                SDL_SetRenderDrawColor(ctx->win.renderer, 245, 245, 245, 255);
             } else {
-                SDL_SetRenderDrawColor(ctx->renderer, 25, 25, 25, 255);
+                SDL_SetRenderDrawColor(ctx->win.renderer, 25, 25, 25, 255);
             }
-            SDL_RenderFillRect(ctx->renderer, &piece_rect);
+            SDL_RenderFillRect(ctx->win.renderer, &piece_rect);
         }
     }
 }
@@ -467,7 +467,7 @@ static void render_promotion_overlay(AppContext *ctx, int width, int board_y, in
     };
     size_t i;
 
-    if (!ctx || !ctx->renderer || !ctx->promotion_pending) {
+    if (!ctx || !ctx->win.renderer || !ctx->ui.drag.promotion_pending) {
         return;
     }
 
@@ -479,13 +479,13 @@ static void render_promotion_overlay(AppContext *ctx, int width, int board_y, in
             continue;
         }
 
-        SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ctx->renderer, 28, 28, 28, 225);
-        SDL_RenderFillRect(ctx->renderer, &rect);
-        SDL_SetRenderDrawColor(ctx->renderer, 220, 185, 80, 255);
-        SDL_RenderRect(ctx->renderer, &rect);
+        SDL_SetRenderDrawBlendMode(ctx->win.renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ctx->win.renderer, 28, 28, 28, 225);
+        SDL_RenderFillRect(ctx->win.renderer, &rect);
+        SDL_SetRenderDrawColor(ctx->win.renderer, 220, 185, 80, 255);
+        SDL_RenderRect(ctx->win.renderer, &rect);
 
-        piece = promotion_choice_piece(ctx->network_session.local_color, choices[i]);
+        piece = promotion_choice_piece(ctx->network.network_session.local_color, choices[i]);
         if (piece != CHESS_PIECE_EMPTY && s_piece_textures[(int)piece]) {
             float tex_w = 0.0f;
             float tex_h = 0.0f;
@@ -503,7 +503,7 @@ static void render_promotion_overlay(AppContext *ctx, int width, int board_y, in
                 dst.x = rect.x + (rect.w - dst.w) * 0.5f;
                 dst.y = rect.y + (rect.h - dst.h) * 0.5f;
             }
-            SDL_RenderTexture(ctx->renderer, s_piece_textures[(int)piece], NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, s_piece_textures[(int)piece], NULL, &dst);
         }
     }
 }
@@ -517,19 +517,19 @@ void chess_ui_update_remote_move_animation(AppContext *ctx)
     uint64_t now;
     uint64_t elapsed;
 
-    if (!ctx || !ctx->remote_move_anim_active) {
+    if (!ctx || !ctx->ui.remote_move_anim.active) {
         return;
     }
 
     now = SDL_GetTicks();
-    elapsed = now - ctx->remote_move_anim_started_at_ms;
-    if (ctx->remote_move_anim_duration_ms == 0u || elapsed >= (uint64_t)ctx->remote_move_anim_duration_ms) {
-        ctx->remote_move_anim_active = false;
-        ctx->remote_move_anim_piece = CHESS_PIECE_EMPTY;
-        ctx->remote_move_from_file = -1;
-        ctx->remote_move_from_rank = -1;
-        ctx->remote_move_to_file = -1;
-        ctx->remote_move_to_rank = -1;
+    elapsed = now - ctx->ui.remote_move_anim.started_at_ms;
+    if (ctx->ui.remote_move_anim.duration_ms == 0u || elapsed >= (uint64_t)ctx->ui.remote_move_anim.duration_ms) {
+        ctx->ui.remote_move_anim.active = false;
+        ctx->ui.remote_move_anim.piece = CHESS_PIECE_EMPTY;
+        ctx->ui.remote_move_anim.from_file = -1;
+        ctx->ui.remote_move_anim.from_rank = -1;
+        ctx->ui.remote_move_anim.to_file = -1;
+        ctx->ui.remote_move_anim.to_rank = -1;
     }
 }
 
@@ -537,7 +537,7 @@ static void render_remote_move_animation(AppContext *ctx, int width, int board_y
 {
     const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
     const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
-    const bool black_perspective = use_black_perspective(ctx->network_session.local_color);
+    const bool black_perspective = use_black_perspective(ctx->network.network_session.local_color);
     uint64_t now;
     uint64_t elapsed;
     float t;
@@ -548,32 +548,32 @@ static void render_remote_move_animation(AppContext *ctx, int width, int board_y
     float interp_file;
     float interp_rank;
 
-    if (!ctx || !ctx->renderer || !ctx->remote_move_anim_active ||
-        ctx->remote_move_anim_piece <= CHESS_PIECE_EMPTY ||
-        ctx->remote_move_anim_piece >= CHESS_PIECE_COUNT) {
+    if (!ctx || !ctx->win.renderer || !ctx->ui.remote_move_anim.active ||
+        ctx->ui.remote_move_anim.piece <= CHESS_PIECE_EMPTY ||
+        ctx->ui.remote_move_anim.piece >= CHESS_PIECE_COUNT) {
         return;
     }
 
     now = SDL_GetTicks();
-    elapsed = now - ctx->remote_move_anim_started_at_ms;
-    if (ctx->remote_move_anim_duration_ms == 0u) {
+    elapsed = now - ctx->ui.remote_move_anim.started_at_ms;
+    if (ctx->ui.remote_move_anim.duration_ms == 0u) {
         t = 1.0f;
     } else {
-        t = (float)elapsed / (float)ctx->remote_move_anim_duration_ms;
+        t = (float)elapsed / (float)ctx->ui.remote_move_anim.duration_ms;
         if (t > 1.0f) {
             t = 1.0f;
         }
     }
 
-    from_screen_file = board_to_screen_index(ctx->remote_move_from_file, black_perspective);
-    from_screen_rank = board_to_screen_index(ctx->remote_move_from_rank, black_perspective);
-    to_screen_file = board_to_screen_index(ctx->remote_move_to_file, black_perspective);
-    to_screen_rank = board_to_screen_index(ctx->remote_move_to_rank, black_perspective);
+    from_screen_file = board_to_screen_index(ctx->ui.remote_move_anim.from_file, black_perspective);
+    from_screen_rank = board_to_screen_index(ctx->ui.remote_move_anim.from_rank, black_perspective);
+    to_screen_file = board_to_screen_index(ctx->ui.remote_move_anim.to_file, black_perspective);
+    to_screen_rank = board_to_screen_index(ctx->ui.remote_move_anim.to_rank, black_perspective);
     interp_file = (1.0f - t) * (float)from_screen_file + t * (float)to_screen_file;
     interp_rank = (1.0f - t) * (float)from_screen_rank + t * (float)to_screen_rank;
 
     {
-        SDL_Texture *tex = s_piece_textures[(int)ctx->remote_move_anim_piece];
+        SDL_Texture *tex = s_piece_textures[(int)ctx->ui.remote_move_anim.piece];
         if (tex) {
             float tex_w = 0.0f;
             float tex_h = 0.0f;
@@ -584,7 +584,7 @@ static void render_remote_move_animation(AppContext *ctx, int width, int board_y
             dst.y = (float)board_y + interp_rank * cell_h + (cell_h - tex_h) * 0.5f;
             dst.w = tex_w;
             dst.h = tex_h;
-            SDL_RenderTexture(ctx->renderer, tex, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, tex, NULL, &dst);
         } else {
             SDL_FRect piece_rect = {
                 interp_file * cell_w + cell_w * 0.25f,
@@ -593,12 +593,12 @@ static void render_remote_move_animation(AppContext *ctx, int width, int board_y
                 cell_h * 0.5f
             };
 
-            if ((int)ctx->remote_move_anim_piece < (int)CHESS_PIECE_BLACK_PAWN) {
-                SDL_SetRenderDrawColor(ctx->renderer, 245, 245, 245, 255);
+            if ((int)ctx->ui.remote_move_anim.piece < (int)CHESS_PIECE_BLACK_PAWN) {
+                SDL_SetRenderDrawColor(ctx->win.renderer, 245, 245, 245, 255);
             } else {
-                SDL_SetRenderDrawColor(ctx->renderer, 25, 25, 25, 255);
+                SDL_SetRenderDrawColor(ctx->win.renderer, 25, 25, 25, 255);
             }
-            SDL_RenderFillRect(ctx->renderer, &piece_rect);
+            SDL_RenderFillRect(ctx->win.renderer, &piece_rect);
         }
     }
 }
@@ -614,20 +614,20 @@ void chess_ui_update_capture_animation(AppContext *ctx)
     uint64_t now;
     uint64_t elapsed;
 
-    if (!ctx || !ctx->capture_anim_active) {
+    if (!ctx || !ctx->ui.capture_anim.active) {
         return;
     }
 
     now = SDL_GetTicks();
-    elapsed = now - ctx->capture_anim_started_at_ms;
-    if (ctx->capture_anim_duration_ms == 0u || elapsed >= (uint64_t)ctx->capture_anim_duration_ms) {
+    elapsed = now - ctx->ui.capture_anim.started_at_ms;
+    if (ctx->ui.capture_anim.duration_ms == 0u || elapsed >= (uint64_t)ctx->ui.capture_anim.duration_ms) {
         /* Animation finished: now add the piece to the captured list */
-        if ((int)ctx->capture_anim_piece > 0 &&
-            (int)ctx->capture_anim_piece < CHESS_PIECE_COUNT) {
-            ctx->game_state.captured[(int)ctx->capture_anim_piece]++;
+        if ((int)ctx->ui.capture_anim.piece > 0 &&
+            (int)ctx->ui.capture_anim.piece < CHESS_PIECE_COUNT) {
+            ctx->game.game_state.captured[(int)ctx->ui.capture_anim.piece]++;
         }
-        ctx->capture_anim_active = false;
-        ctx->capture_anim_piece = CHESS_PIECE_EMPTY;
+        ctx->ui.capture_anim.active = false;
+        ctx->ui.capture_anim.piece = CHESS_PIECE_EMPTY;
     }
 }
 
@@ -645,20 +645,20 @@ void chess_ui_start_capture_animation(
     }
 
     captured_is_black = ((int)captured_piece >= (int)CHESS_PIECE_BLACK_PAWN);
-    black_persp = use_black_perspective(ctx->network_session.local_color);
+    black_persp = use_black_perspective(ctx->network.network_session.local_color);
 
-    ctx->capture_anim_active = true;
-    ctx->capture_anim_piece = captured_piece;
-    ctx->capture_anim_from_file = from_file;
-    ctx->capture_anim_from_rank = from_rank;
-    ctx->capture_anim_target_top = (captured_is_black == black_persp);
-    ctx->capture_anim_started_at_ms = SDL_GetTicks();
-    ctx->capture_anim_duration_ms = CHESS_CAPTURE_ANIM_DEFAULT_MS;
+    ctx->ui.capture_anim.active = true;
+    ctx->ui.capture_anim.piece = captured_piece;
+    ctx->ui.capture_anim.from_file = from_file;
+    ctx->ui.capture_anim.from_rank = from_rank;
+    ctx->ui.capture_anim.target_top = (captured_is_black == black_persp);
+    ctx->ui.capture_anim.started_at_ms = SDL_GetTicks();
+    ctx->ui.capture_anim.duration_ms = CHESS_CAPTURE_ANIM_DEFAULT_MS;
 
     /* Hide the piece from the captured list during the animation;
        it will be re-added when the animation finishes. */
-    if (ctx->game_state.captured[(int)captured_piece] > 0) {
-        ctx->game_state.captured[(int)captured_piece]--;
+    if (ctx->game.game_state.captured[(int)captured_piece] > 0) {
+        ctx->game.game_state.captured[(int)captured_piece]--;
     }
 }
 
@@ -666,7 +666,7 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
 {
     const float cell_w = (float)board_width / (float)CHESS_BOARD_SIZE;
     const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
-    const bool black_perspective = use_black_perspective(ctx->network_session.local_color);
+    const bool black_perspective = use_black_perspective(ctx->network.network_session.local_color);
     const float panel_h = (float)CHESS_UI_PLAYER_PANEL_HEIGHT;
     const float target_size = 24.0f;
     uint64_t now;
@@ -684,26 +684,26 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
     float cur_size;
     SDL_Texture *tex;
 
-    if (!ctx || !ctx->renderer || !ctx->capture_anim_active ||
-        ctx->capture_anim_piece <= CHESS_PIECE_EMPTY ||
-        ctx->capture_anim_piece >= CHESS_PIECE_COUNT) {
+    if (!ctx || !ctx->win.renderer || !ctx->ui.capture_anim.active ||
+        ctx->ui.capture_anim.piece <= CHESS_PIECE_EMPTY ||
+        ctx->ui.capture_anim.piece >= CHESS_PIECE_COUNT) {
         return;
     }
 
     now = SDL_GetTicks();
-    elapsed = now - ctx->capture_anim_started_at_ms;
-    if (ctx->capture_anim_duration_ms == 0u) {
+    elapsed = now - ctx->ui.capture_anim.started_at_ms;
+    if (ctx->ui.capture_anim.duration_ms == 0u) {
         t = 1.0f;
     } else {
-        t = (float)elapsed / (float)ctx->capture_anim_duration_ms;
+        t = (float)elapsed / (float)ctx->ui.capture_anim.duration_ms;
         if (t > 1.0f) {
             t = 1.0f;
         }
     }
 
     /* Source position: center of the board square where capture happened */
-    screen_file = board_to_screen_index(ctx->capture_anim_from_file, black_perspective);
-    screen_rank = board_to_screen_index(ctx->capture_anim_from_rank, black_perspective);
+    screen_file = board_to_screen_index(ctx->ui.capture_anim.from_file, black_perspective);
+    screen_rank = board_to_screen_index(ctx->ui.capture_anim.from_rank, black_perspective);
     start_size = cell_h;
     start_x = screen_file * cell_w + cell_w * 0.5f;
     start_y = (float)board_y + screen_rank * cell_h + cell_h * 0.5f;
@@ -725,7 +725,7 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
         const ChessPiece *cap_order;
         size_t cap_count;
         size_t ci;
-        bool piece_is_black = ((int)ctx->capture_anim_piece >= (int)CHESS_PIECE_BLACK_PAWN);
+        bool piece_is_black = ((int)ctx->ui.capture_anim.piece >= (int)CHESS_PIECE_BLACK_PAWN);
         ChessPlayerColor panel_color;
         ChessCapturedPieces sim_cap;
         float sim_cursor;
@@ -744,10 +744,10 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
         }
 
         /* Simulate with the animated piece included */
-        chess_game_compute_captured(&ctx->game_state, &sim_cap);
-        sim_cap.count[(int)ctx->capture_anim_piece]++;
+        chess_game_compute_captured(&ctx->game.game_state, &sim_cap);
+        sim_cap.count[(int)ctx->ui.capture_anim.piece]++;
 
-        sim_cursor = ctx->capture_anim_target_top
+        sim_cursor = ctx->ui.capture_anim.target_top
             ? s_cap_cursor_start_top
             : s_cap_cursor_start_bottom;
 
@@ -768,7 +768,7 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
                     ps = (ph > 0.0f) ? 24.0f / ph : 1.0f;
                     pw *= ps;
                 }
-                if (idx == (int)ctx->capture_anim_piece && k == n - 1) {
+                if (idx == (int)ctx->ui.capture_anim.piece && k == n - 1) {
                     /* This is the slot for the animated piece */
                     target_x = sim_cursor + pw * 0.5f;
                     found = true;
@@ -787,7 +787,7 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
             target_x = sim_cursor;
         }
     }
-    if (ctx->capture_anim_target_top) {
+    if (ctx->ui.capture_anim.target_top) {
         target_y = panel_h * 0.5f;
     } else {
         target_y = (float)(board_y + board_height) + panel_h * 0.5f;
@@ -798,7 +798,7 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
     cur_y = (1.0f - t) * start_y + t * target_y;
     cur_size = (1.0f - t) * start_size + t * target_size;
 
-    tex = s_piece_textures[(int)ctx->capture_anim_piece];
+    tex = s_piece_textures[(int)ctx->ui.capture_anim.piece];
     if (tex) {
         float tex_w = 0.0f;
         float tex_h = 0.0f;
@@ -813,8 +813,8 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
         dst.y = cur_y - dst.h * 0.5f;
 
         /* White silhouette halo behind dark pieces */
-        if ((int)ctx->capture_anim_piece >= (int)CHESS_PIECE_BLACK_PAWN &&
-            s_piece_silhouettes[(int)ctx->capture_anim_piece]) {
+        if ((int)ctx->ui.capture_anim.piece >= (int)CHESS_PIECE_BLACK_PAWN &&
+            s_piece_silhouettes[(int)ctx->ui.capture_anim.piece]) {
             static const float offsets[][2] = {
                 {-2, -2}, {-1, -2}, { 0, -2}, { 1, -2}, { 2, -2},
                 {-2, -1},                               { 2, -1},
@@ -827,11 +827,11 @@ static void render_capture_animation(AppContext *ctx, int board_width, int board
                 SDL_FRect halo = dst;
                 halo.x += offsets[oi][0];
                 halo.y += offsets[oi][1];
-                SDL_RenderTexture(ctx->renderer, s_piece_silhouettes[(int)ctx->capture_anim_piece], NULL, &halo);
+                SDL_RenderTexture(ctx->win.renderer, s_piece_silhouettes[(int)ctx->ui.capture_anim.piece], NULL, &halo);
             }
         }
 
-        SDL_RenderTexture(ctx->renderer, tex, NULL, &dst);
+        SDL_RenderTexture(ctx->win.renderer, tex, NULL, &dst);
     }
 }
 
@@ -850,21 +850,21 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
     float sw;
     float sh;
 
-    if (!ctx || !ctx->renderer || ctx->game_state.outcome == CHESS_OUTCOME_NONE) {
+    if (!ctx || !ctx->win.renderer || ctx->game.game_state.outcome == CHESS_OUTCOME_NONE) {
         s_lobby_button_visible = false;
         return;
     }
 
     headline = NULL;
     subline = NULL;
-    switch (ctx->game_state.outcome) {
+    switch (ctx->game.game_state.outcome) {
     case CHESS_OUTCOME_CHECKMATE_WHITE_WINS:
         headline = "Checkmate";
-        subline = (ctx->network_session.local_color == CHESS_COLOR_WHITE) ? "You win!" : "Opponent wins";
+        subline = (ctx->network.network_session.local_color == CHESS_COLOR_WHITE) ? "You win!" : "Opponent wins";
         break;
     case CHESS_OUTCOME_CHECKMATE_BLACK_WINS:
         headline = "Checkmate";
-        subline = (ctx->network_session.local_color == CHESS_COLOR_BLACK) ? "You win!" : "Opponent wins";
+        subline = (ctx->network.network_session.local_color == CHESS_COLOR_BLACK) ? "You win!" : "Opponent wins";
         break;
     case CHESS_OUTCOME_STALEMATE:
         headline = "Draw";
@@ -876,11 +876,11 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
         break;
     case CHESS_OUTCOME_WHITE_RESIGNED:
         headline = "Resignation";
-        subline = (ctx->network_session.local_color == CHESS_COLOR_WHITE) ? "You resigned" : "Opponent resigned";
+        subline = (ctx->network.network_session.local_color == CHESS_COLOR_WHITE) ? "You resigned" : "Opponent resigned";
         break;
     case CHESS_OUTCOME_BLACK_RESIGNED:
         headline = "Resignation";
-        subline = (ctx->network_session.local_color == CHESS_COLOR_BLACK) ? "You resigned" : "Opponent resigned";
+        subline = (ctx->network.network_session.local_color == CHESS_COLOR_BLACK) ? "You resigned" : "Opponent resigned";
         break;
     case CHESS_OUTCOME_DRAW_AGREED:
         headline = "Draw";
@@ -896,10 +896,10 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
         overlay.y = (float)board_y;
         overlay.w = (float)width;
         overlay.h = (float)board_height;
-        SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 160);
-        SDL_RenderFillRect(ctx->renderer, &overlay);
-        SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawBlendMode(ctx->win.renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ctx->win.renderer, 0, 0, 0, 160);
+        SDL_RenderFillRect(ctx->win.renderer, &overlay);
+        SDL_SetRenderDrawBlendMode(ctx->win.renderer, SDL_BLENDMODE_NONE);
     }
 
     hw = 0.0f;
@@ -907,13 +907,13 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
     sw = 0.0f;
     sh = 0.0f;
     headline_tex = make_text_texture(
-        ctx->renderer,
+        ctx->win.renderer,
         s_lobby_font ? s_lobby_font : s_coord_font,
         headline,
         (SDL_Color){ 255, 255, 255, 255 }
     );
     subline_tex = make_text_texture(
-        ctx->renderer,
+        ctx->win.renderer,
         s_coord_font ? s_coord_font : s_lobby_font,
         subline,
         (SDL_Color){ 210, 210, 210, 255 }
@@ -938,7 +938,7 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
         SDL_Texture *btn_tex;
 
         btn_tex = make_text_texture(
-            ctx->renderer, s_coord_font, "Return to Lobby",
+            ctx->win.renderer, s_coord_font, "Return to Lobby",
             (SDL_Color){232, 232, 238, 255});
         if (btn_tex) { SDL_GetTextureSize(btn_tex, &btn_text_w, &btn_text_h); }
 
@@ -955,17 +955,17 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
         box.w = box_w;
         box.h = box_h;
 
-        SDL_SetRenderDrawColor(ctx->renderer, 30, 30, 30, 255);
-        SDL_RenderFillRect(ctx->renderer, &box);
-        SDL_SetRenderDrawColor(ctx->renderer, 200, 160, 60, 255);
-        SDL_RenderRect(ctx->renderer, &box);
+        SDL_SetRenderDrawColor(ctx->win.renderer, 30, 30, 30, 255);
+        SDL_RenderFillRect(ctx->win.renderer, &box);
+        SDL_SetRenderDrawColor(ctx->win.renderer, 200, 160, 60, 255);
+        SDL_RenderRect(ctx->win.renderer, &box);
 
         if (headline_tex) {
             dst.x = box.x + (box.w - hw) * 0.5f;
             dst.y = box.y + pad;
             dst.w = hw;
             dst.h = hh;
-            SDL_RenderTexture(ctx->renderer, headline_tex, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, headline_tex, NULL, &dst);
             SDL_DestroyTexture(headline_tex);
         }
         if (subline_tex) {
@@ -973,7 +973,7 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
             dst.y = box.y + pad + hh + gap;
             dst.w = sw;
             dst.h = sh;
-            SDL_RenderTexture(ctx->renderer, subline_tex, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, subline_tex, NULL, &dst);
             SDL_DestroyTexture(subline_tex);
         }
 
@@ -986,10 +986,10 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
             btn_rect.w = btn_w;
             btn_rect.h = btn_h;
 
-            SDL_SetRenderDrawColor(ctx->renderer, 60, 60, 70, 255);
-            SDL_RenderFillRect(ctx->renderer, &btn_rect);
-            SDL_SetRenderDrawColor(ctx->renderer, 150, 150, 160, 255);
-            SDL_RenderRect(ctx->renderer, &btn_rect);
+            SDL_SetRenderDrawColor(ctx->win.renderer, 60, 60, 70, 255);
+            SDL_RenderFillRect(ctx->win.renderer, &btn_rect);
+            SDL_SetRenderDrawColor(ctx->win.renderer, 150, 150, 160, 255);
+            SDL_RenderRect(ctx->win.renderer, &btn_rect);
 
             if (btn_tex) {
                 SDL_FRect bdst;
@@ -997,7 +997,7 @@ static void render_game_over_banner(AppContext *ctx, int width, int board_y, int
                 bdst.y = btn_rect.y + (btn_rect.h - btn_text_h) * 0.5f;
                 bdst.w = btn_text_w;
                 bdst.h = btn_text_h;
-                SDL_RenderTexture(ctx->renderer, btn_tex, NULL, &bdst);
+                SDL_RenderTexture(ctx->win.renderer, btn_tex, NULL, &bdst);
                 SDL_DestroyTexture(btn_tex);
             }
 
@@ -1047,7 +1047,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
     const SDL_Color placeholder_color = {112, 112, 120, 255};
     const SDL_Color last_move_color = {236, 201, 104, 255};
 
-    if (!ctx || !ctx->renderer || !s_coord_font || !ctx->network_session.game_started) {
+    if (!ctx || !ctx->win.renderer || !s_coord_font || !ctx->network.network_session.game_started) {
         return;
     }
 
@@ -1065,34 +1065,34 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
     x_white = panel_left + 46;
     x_black = panel_left + (int)(panel_rect.w * 0.56f);
     col_sep_x = panel_left + (int)(panel_rect.w * 0.52f);
-    current_turn = ((int)ctx->move_history_count / 2) + 1;
+    current_turn = ((int)ctx->game.move_history_count / 2) + 1;
 
-    SDL_SetRenderDrawColor(ctx->renderer, 20, 20, 24, 255);
-    SDL_RenderFillRect(ctx->renderer, &panel_rect);
+    SDL_SetRenderDrawColor(ctx->win.renderer, 20, 20, 24, 255);
+    SDL_RenderFillRect(ctx->win.renderer, &panel_rect);
 
     border_rect.x = (float)board_width;
     border_rect.y = 0.0f;
     border_rect.w = 1.0f;
     border_rect.h = (float)window_height;
-    SDL_SetRenderDrawColor(ctx->renderer, 84, 84, 94, 255);
-    SDL_RenderFillRect(ctx->renderer, &border_rect);
+    SDL_SetRenderDrawColor(ctx->win.renderer, 84, 84, 94, 255);
+    SDL_RenderFillRect(ctx->win.renderer, &border_rect);
 
     header_rect.x = (float)(panel_left + 1);
     header_rect.y = 0.0f;
     header_rect.w = (float)(window_width - panel_left - 1);
     header_rect.h = 56.0f;
-    SDL_SetRenderDrawColor(ctx->renderer, 28, 28, 34, 255);
-    SDL_RenderFillRect(ctx->renderer, &header_rect);
+    SDL_SetRenderDrawColor(ctx->win.renderer, 28, 28, 34, 255);
+    SDL_RenderFillRect(ctx->win.renderer, &header_rect);
 
-    title_tex = make_text_texture(ctx->renderer, s_coord_font, "Moves (Ctrl/Cmd+C)", (SDL_Color){232, 232, 238, 255});
+    title_tex = make_text_texture(ctx->win.renderer, s_coord_font, "Moves (Ctrl/Cmd+C)", (SDL_Color){232, 232, 238, 255});
     turn_tex = NULL;
-    white_header_tex = make_text_texture(ctx->renderer, s_coord_font, "White", white_black_header_color);
-    black_header_tex = make_text_texture(ctx->renderer, s_coord_font, "Black", white_black_header_color);
+    white_header_tex = make_text_texture(ctx->win.renderer, s_coord_font, "White", white_black_header_color);
+    black_header_tex = make_text_texture(ctx->win.renderer, s_coord_font, "Black", white_black_header_color);
 
     {
         char turn_label[32];
         SDL_snprintf(turn_label, sizeof(turn_label), "Turn %d", current_turn);
-        turn_tex = make_text_texture(ctx->renderer, s_coord_font, turn_label, (SDL_Color){198, 198, 206, 255});
+        turn_tex = make_text_texture(ctx->win.renderer, s_coord_font, turn_label, (SDL_Color){198, 198, 206, 255});
     }
 
     if (title_tex) {
@@ -1102,7 +1102,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
         title_dst.y = 10.0f;
         title_dst.w = title_w;
         title_dst.h = title_h;
-        SDL_RenderTexture(ctx->renderer, title_tex, NULL, &title_dst);
+        SDL_RenderTexture(ctx->win.renderer, title_tex, NULL, &title_dst);
         SDL_DestroyTexture(title_tex);
     }
 
@@ -1117,7 +1117,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
         turn_dst.y = 12.0f;
         turn_dst.w = turn_w;
         turn_dst.h = turn_h;
-        SDL_RenderTexture(ctx->renderer, turn_tex, NULL, &turn_dst);
+        SDL_RenderTexture(ctx->win.renderer, turn_tex, NULL, &turn_dst);
         SDL_DestroyTexture(turn_tex);
     }
 
@@ -1128,7 +1128,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
         dst.y = 40.0f;
         dst.w = white_header_w;
         dst.h = white_header_h;
-        SDL_RenderTexture(ctx->renderer, white_header_tex, NULL, &dst);
+        SDL_RenderTexture(ctx->win.renderer, white_header_tex, NULL, &dst);
         SDL_DestroyTexture(white_header_tex);
     }
 
@@ -1139,13 +1139,13 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
         dst.y = 40.0f;
         dst.w = black_header_w;
         dst.h = black_header_h;
-        SDL_RenderTexture(ctx->renderer, black_header_tex, NULL, &dst);
+        SDL_RenderTexture(ctx->win.renderer, black_header_tex, NULL, &dst);
         SDL_DestroyTexture(black_header_tex);
     }
 
-    SDL_SetRenderDrawColor(ctx->renderer, 74, 74, 84, 255);
-    SDL_RenderLine(ctx->renderer, (float)(panel_left + 1), 56.0f, (float)panel_right, 56.0f);
-    SDL_RenderLine(ctx->renderer, (float)col_sep_x, 38.0f, (float)col_sep_x, (float)window_height);
+    SDL_SetRenderDrawColor(ctx->win.renderer, 74, 74, 84, 255);
+    SDL_RenderLine(ctx->win.renderer, (float)(panel_left + 1), 56.0f, (float)panel_right, 56.0f);
+    SDL_RenderLine(ctx->win.renderer, (float)col_sep_x, 38.0f, (float)col_sep_x, (float)window_height);
 
     max_rows = (window_height - start_y - 8) / row_height;
     if (max_rows <= 0) {
@@ -1153,10 +1153,10 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
         return;
     }
 
-    total_turns = ((int)ctx->move_history_count + 1) / 2;
+    total_turns = ((int)ctx->game.move_history_count + 1) / 2;
     if (total_turns <= 0) {
         SDL_Texture *empty_tex = make_text_texture(
-            ctx->renderer,
+            ctx->win.renderer,
             s_coord_font,
             "No moves yet",
             (SDL_Color){120, 120, 128, 255});
@@ -1169,7 +1169,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
             dst.y = 72.0f;
             dst.w = tw;
             dst.h = th;
-            SDL_RenderTexture(ctx->renderer, empty_tex, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, empty_tex, NULL, &dst);
             SDL_DestroyTexture(empty_tex);
         }
         render_panel_buttons(ctx, panel_left, (int)panel_rect.w, window_height);
@@ -1185,12 +1185,12 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
         int row = turn - first_turn;
         int white_idx = (turn - 1) * 2;
         int black_idx = white_idx + 1;
-        bool has_white = white_idx < (int)ctx->move_history_count;
-        bool has_black = black_idx < (int)ctx->move_history_count;
-        bool last_white = has_white && white_idx == ((int)ctx->move_history_count - 1);
-        bool last_black = has_black && black_idx == ((int)ctx->move_history_count - 1);
-        const char *white_move = has_white ? ctx->move_history[white_idx] : "";
-        const char *black_move = has_black ? ctx->move_history[black_idx] : "...";
+        bool has_white = white_idx < (int)ctx->game.move_history_count;
+        bool has_black = black_idx < (int)ctx->game.move_history_count;
+        bool last_white = has_white && white_idx == ((int)ctx->game.move_history_count - 1);
+        bool last_black = has_black && black_idx == ((int)ctx->game.move_history_count - 1);
+        const char *white_move = has_white ? ctx->game.move_history[white_idx] : "";
+        const char *black_move = has_black ? ctx->game.move_history[black_idx] : "...";
         SDL_Texture *turn_tex_row;
         SDL_Texture *white_tex;
         SDL_Texture *black_tex;
@@ -1203,21 +1203,21 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
         row_rect.h = (float)(row_height - 1);
 
         if (last_white || last_black) {
-            SDL_SetRenderDrawColor(ctx->renderer, 58, 52, 34, 180);
-            SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
-            SDL_RenderFillRect(ctx->renderer, &row_rect);
-            SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(ctx->win.renderer, 58, 52, 34, 180);
+            SDL_SetRenderDrawBlendMode(ctx->win.renderer, SDL_BLENDMODE_BLEND);
+            SDL_RenderFillRect(ctx->win.renderer, &row_rect);
+            SDL_SetRenderDrawBlendMode(ctx->win.renderer, SDL_BLENDMODE_NONE);
         }
 
         SDL_snprintf(turn_label, sizeof(turn_label), "%d.", turn);
-        turn_tex_row = make_text_texture(ctx->renderer, s_coord_font, turn_label, turn_color);
+        turn_tex_row = make_text_texture(ctx->win.renderer, s_coord_font, turn_label, turn_color);
         white_tex = make_text_texture(
-            ctx->renderer,
+            ctx->win.renderer,
             s_coord_font,
             white_move,
             last_white ? last_move_color : normal_move_color);
         black_tex = make_text_texture(
-            ctx->renderer,
+            ctx->win.renderer,
             s_coord_font,
             black_move,
             has_black ? (last_black ? last_move_color : normal_move_color) : placeholder_color);
@@ -1231,7 +1231,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
             dst.y = (float)(start_y + row * row_height);
             dst.w = tw;
             dst.h = th;
-            SDL_RenderTexture(ctx->renderer, turn_tex_row, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, turn_tex_row, NULL, &dst);
             SDL_DestroyTexture(turn_tex_row);
         }
 
@@ -1244,7 +1244,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
             dst.y = (float)(start_y + row * row_height);
             dst.w = tw;
             dst.h = th;
-            SDL_RenderTexture(ctx->renderer, white_tex, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, white_tex, NULL, &dst);
             SDL_DestroyTexture(white_tex);
         }
 
@@ -1257,7 +1257,7 @@ static void render_move_history_panel(AppContext *ctx, int window_width, int win
             dst.y = (float)(start_y + row * row_height);
             dst.w = tw;
             dst.h = th;
-            SDL_RenderTexture(ctx->renderer, black_tex, NULL, &dst);
+            SDL_RenderTexture(ctx->win.renderer, black_tex, NULL, &dst);
             SDL_DestroyTexture(black_tex);
         }
     }
@@ -1326,32 +1326,32 @@ static void render_panel_buttons(AppContext *ctx, int panel_left, int panel_widt
     bool offer_pending;
     bool offer_received;
 
-    if (!ctx || !ctx->renderer || !s_coord_font) {
+    if (!ctx || !ctx->win.renderer || !s_coord_font) {
         return;
     }
 
-    game_over      = (ctx->game_state.outcome != CHESS_OUTCOME_NONE);
-    offer_pending  = ctx->network_session.draw_offer_pending;
-    offer_received = ctx->network_session.draw_offer_received;
+    game_over      = (ctx->game.game_state.outcome != CHESS_OUTCOME_NONE);
+    offer_pending  = ctx->network.network_session.draw_offer_pending;
+    offer_received = ctx->network.network_session.draw_offer_received;
 
     get_button_rects(panel_left, panel_width, window_height, &left_btn, &right_btn);
 
     if (game_over) {
         /* Both grayed out */
-        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Resign", (SDL_Color){40, 40, 46, 255}, fg_dim);
-        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Draw",   (SDL_Color){40, 40, 46, 255}, fg_dim);
+        render_panel_button(ctx->win.renderer, s_coord_font, &left_btn,  "Resign", (SDL_Color){40, 40, 46, 255}, fg_dim);
+        render_panel_button(ctx->win.renderer, s_coord_font, &right_btn, "Draw",   (SDL_Color){40, 40, 46, 255}, fg_dim);
     } else if (offer_received) {
         /* Accept (green) / Decline (red) */
-        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Accept",  (SDL_Color){30,  90, 40, 255}, fg_normal);
-        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Decline", (SDL_Color){120, 30, 30, 255}, fg_normal);
+        render_panel_button(ctx->win.renderer, s_coord_font, &left_btn,  "Accept",  (SDL_Color){30,  90, 40, 255}, fg_normal);
+        render_panel_button(ctx->win.renderer, s_coord_font, &right_btn, "Decline", (SDL_Color){120, 30, 30, 255}, fg_normal);
     } else if (offer_pending) {
         /* Resign normal, Draw grayed "Pending..." */
-        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Resign",     (SDL_Color){70, 30, 30, 255}, fg_normal);
-        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Pending...", (SDL_Color){40, 40, 46, 255}, fg_dim);
+        render_panel_button(ctx->win.renderer, s_coord_font, &left_btn,  "Resign",     (SDL_Color){70, 30, 30, 255}, fg_normal);
+        render_panel_button(ctx->win.renderer, s_coord_font, &right_btn, "Pending...", (SDL_Color){40, 40, 46, 255}, fg_dim);
     } else {
         /* Normal: Resign / Draw */
-        render_panel_button(ctx->renderer, s_coord_font, &left_btn,  "Resign", (SDL_Color){70, 30, 30, 255}, fg_normal);
-        render_panel_button(ctx->renderer, s_coord_font, &right_btn, "Draw",   (SDL_Color){40, 60, 90, 255}, fg_normal);
+        render_panel_button(ctx->win.renderer, s_coord_font, &left_btn,  "Resign", (SDL_Color){70, 30, 30, 255}, fg_normal);
+        render_panel_button(ctx->win.renderer, s_coord_font, &right_btn, "Draw",   (SDL_Color){40, 60, 90, 255}, fg_normal);
     }
 }
 
@@ -1374,7 +1374,7 @@ ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, in
     bool offer_received;
     bool offer_pending;
 
-    if (!ctx || !ctx->window || !ctx->network_session.game_started) {
+    if (!ctx || !ctx->win.window || !ctx->network.network_session.game_started) {
         return CHESS_GAME_BUTTON_NONE;
     }
 
@@ -1388,7 +1388,7 @@ ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, in
         return CHESS_GAME_BUTTON_RETURN_LOBBY;
     }
 
-    SDL_GetWindowSize(ctx->window, &window_width, &window_height);
+    SDL_GetWindowSize(ctx->win.window, &window_width, &window_height);
     board_width  = chess_ui_board_width_for_window(window_width, true);
     panel_left   = board_width;
     panel_width  = window_width - board_width;
@@ -1397,9 +1397,9 @@ ChessGameButton chess_ui_game_button_from_mouse(AppContext *ctx, int mouse_x, in
         return CHESS_GAME_BUTTON_NONE;
     }
 
-    game_over      = (ctx->game_state.outcome != CHESS_OUTCOME_NONE);
-    offer_received = ctx->network_session.draw_offer_received;
-    offer_pending  = ctx->network_session.draw_offer_pending;
+    game_over      = (ctx->game.game_state.outcome != CHESS_OUTCOME_NONE);
+    offer_received = ctx->network.network_session.draw_offer_received;
+    offer_pending  = ctx->network.network_session.draw_offer_pending;
 
     if (game_over) {
         return CHESS_GAME_BUTTON_NONE;
@@ -1436,19 +1436,19 @@ static void render_status_message(AppContext *ctx, int width, int board_y)
 {
     SDL_Texture *msg_tex;
 
-    if (!ctx || !ctx->renderer || !ctx->status_message[0]) {
+    if (!ctx || !ctx->win.renderer || !ctx->ui.status_message[0]) {
         return;
     }
 
-    if (SDL_GetTicks() >= ctx->status_message_until_ms) {
-        ctx->status_message[0] = '\0';
+    if (SDL_GetTicks() >= ctx->ui.status_message_until_ms) {
+        ctx->ui.status_message[0] = '\0';
         return;
     }
 
     msg_tex = make_text_texture(
-        ctx->renderer,
+        ctx->win.renderer,
         s_lobby_font ? s_lobby_font : s_coord_font,
-        ctx->status_message,
+        ctx->ui.status_message,
         (SDL_Color){255, 240, 130, 255}
     );
     if (msg_tex) {
@@ -1467,11 +1467,11 @@ static void render_status_message(AppContext *ctx, int width, int board_y)
         dst.x = bg_rect.x + 8.0f;
         dst.y = bg_rect.y + 5.0f;
 
-        SDL_SetRenderDrawColor(ctx->renderer, 35, 35, 35, 230);
-        SDL_RenderFillRect(ctx->renderer, &bg_rect);
-        SDL_SetRenderDrawColor(ctx->renderer, 215, 170, 70, 255);
-        SDL_RenderRect(ctx->renderer, &bg_rect);
-        SDL_RenderTexture(ctx->renderer, msg_tex, NULL, &dst);
+        SDL_SetRenderDrawColor(ctx->win.renderer, 35, 35, 35, 230);
+        SDL_RenderFillRect(ctx->win.renderer, &bg_rect);
+        SDL_SetRenderDrawColor(ctx->win.renderer, 215, 170, 70, 255);
+        SDL_RenderRect(ctx->win.renderer, &bg_rect);
+        SDL_RenderTexture(ctx->win.renderer, msg_tex, NULL, &dst);
         SDL_DestroyTexture(msg_tex);
     }
 }
@@ -1677,7 +1677,7 @@ static void render_player_panels(
     int board_y,
     int board_height)
 {
-    const bool black_perspective = use_black_perspective(ctx->network_session.local_color);
+    const bool black_perspective = use_black_perspective(ctx->network.network_session.local_color);
     const ChessPeerInfo *top_peer;
     const ChessPeerInfo *bottom_peer;
     ChessPlayerColor top_color;
@@ -1687,23 +1687,23 @@ static void render_player_panels(
     SDL_FRect top_rect;
     SDL_FRect bottom_rect;
 
-    if (!ctx || !ctx->renderer) {
+    if (!ctx || !ctx->win.renderer) {
         return;
     }
 
-    chess_game_compute_captured(&ctx->game_state, &captured);
+    chess_game_compute_captured(&ctx->game.game_state, &captured);
 
     if (black_perspective) {
         /* Black at bottom (local), white at top (opponent) */
-        top_peer = &ctx->network_session.remote_peer;
+        top_peer = &ctx->network.network_session.remote_peer;
         top_color = CHESS_COLOR_WHITE;
-        bottom_peer = &ctx->network_session.local_peer;
+        bottom_peer = &ctx->network.network_session.local_peer;
         bottom_color = CHESS_COLOR_BLACK;
     } else {
         /* White at bottom (local), black at top (opponent) */
-        top_peer = &ctx->network_session.remote_peer;
+        top_peer = &ctx->network.network_session.remote_peer;
         top_color = CHESS_COLOR_BLACK;
-        bottom_peer = &ctx->network_session.local_peer;
+        bottom_peer = &ctx->network.network_session.local_peer;
         bottom_color = CHESS_COLOR_WHITE;
     }
 
@@ -1717,8 +1717,8 @@ static void render_player_panels(
     bottom_rect.w = (float)board_width;
     bottom_rect.h = (float)CHESS_UI_PLAYER_PANEL_HEIGHT;
 
-    render_one_player_panel(ctx->renderer, font, top_peer, &captured, top_rect, top_color);
-    render_one_player_panel(ctx->renderer, font, bottom_peer, &captured, bottom_rect, bottom_color);
+    render_one_player_panel(ctx->win.renderer, font, top_peer, &captured, top_rect, top_color);
+    render_one_player_panel(ctx->win.renderer, font, bottom_peer, &captured, bottom_rect, bottom_color);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1736,16 +1736,16 @@ void chess_ui_render_frame(AppContext *ctx)
     int hidden_file = -1;
     int hidden_rank = -1;
 
-    if (!ctx || !ctx->renderer || !ctx->window) {
+    if (!ctx || !ctx->win.renderer || !ctx->win.window) {
         return;
     }
 
-    SDL_GetWindowSize(ctx->window, &width, &height);
-    board_width = chess_ui_board_width_for_window(width, ctx->network_session.game_started);
-    SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 255);
-    SDL_RenderClear(ctx->renderer);
+    SDL_GetWindowSize(ctx->win.window, &width, &height);
+    board_width = chess_ui_board_width_for_window(width, ctx->network.network_session.game_started);
+    SDL_SetRenderDrawColor(ctx->win.renderer, 0, 0, 0, 255);
+    SDL_RenderClear(ctx->win.renderer);
 
-    if (!ctx->network_session.game_started) {
+    if (!ctx->network.network_session.game_started) {
         board_height = height;
         /* Update lobby hover state and cursor */
         {
@@ -1753,15 +1753,15 @@ void chess_ui_render_frame(AppContext *ctx)
             float my = 0.0f;
             int hovered;
             SDL_GetMouseState(&mx, &my);
-            hovered = chess_lobby_find_clicked_peer(ctx->window, &ctx->lobby, (int)mx, (int)my);
-            ctx->lobby.hovered_peer_idx = hovered;
-            if (hovered >= 0 && ctx->cursor_pointer) {
-                SDL_SetCursor(ctx->cursor_pointer);
-            } else if (ctx->cursor_default) {
-                SDL_SetCursor(ctx->cursor_default);
+            hovered = chess_lobby_find_clicked_peer(ctx->win.window, &ctx->game.lobby, (int)mx, (int)my);
+            ctx->game.lobby.hovered_peer_idx = hovered;
+            if (hovered >= 0 && ctx->win.cursor_pointer) {
+                SDL_SetCursor(ctx->win.cursor_pointer);
+            } else if (ctx->win.cursor_default) {
+                SDL_SetCursor(ctx->win.cursor_default);
             }
         }
-        chess_lobby_render(ctx->renderer, width, height, &ctx->lobby, s_lobby_font ? s_lobby_font : s_coord_font);
+        chess_lobby_render(ctx->win.renderer, width, height, &ctx->game.lobby, s_lobby_font ? s_lobby_font : s_coord_font);
     } else {
         board_y = CHESS_UI_PLAYER_PANEL_HEIGHT;
         board_height = height - 2 * CHESS_UI_PLAYER_PANEL_HEIGHT;
@@ -1770,25 +1770,25 @@ void chess_ui_render_frame(AppContext *ctx)
             board_y = 0;
         }
 
-        if (ctx->drag_active) {
+        if (ctx->ui.drag.drag_active) {
             hide_piece = true;
-            hidden_file = ctx->drag_from_file;
-            hidden_rank = ctx->drag_from_rank;
-        } else if (ctx->remote_move_anim_active) {
+            hidden_file = ctx->ui.drag.drag_from_file;
+            hidden_rank = ctx->ui.drag.drag_from_rank;
+        } else if (ctx->ui.remote_move_anim.active) {
             hide_piece = true;
-            hidden_file = ctx->remote_move_to_file;
-            hidden_rank = ctx->remote_move_to_rank;
+            hidden_file = ctx->ui.remote_move_anim.to_file;
+            hidden_rank = ctx->ui.remote_move_anim.to_rank;
         }
 
         render_player_panels(ctx, board_width, height, board_y, board_height);
-        render_board(ctx->renderer, board_width, board_y, board_height);
+        render_board(ctx->win.renderer, board_width, board_y, board_height);
         render_game_overlay(
-            ctx->renderer,
+            ctx->win.renderer,
             board_width,
             board_y,
             board_height,
-            &ctx->game_state,
-            ctx->network_session.local_color,
+            &ctx->game.game_state,
+            ctx->network.network_session.local_color,
             hide_piece,
             hidden_file,
             hidden_rank);
@@ -1796,12 +1796,12 @@ void chess_ui_render_frame(AppContext *ctx)
         render_remote_move_animation(ctx, board_width, board_y, board_height);
         render_capture_animation(ctx, board_width, board_y, board_height);
         render_drag_preview(ctx, board_width, board_height);
-        render_board_coordinates(ctx->renderer, board_width, board_y, board_height, ctx->network_session.local_color);
+        render_board_coordinates(ctx->win.renderer, board_width, board_y, board_height, ctx->network.network_session.local_color);
         render_game_over_banner(ctx, board_width, board_y, board_height);
         render_move_history_panel(ctx, width, height, board_width);
     }
 
     render_status_message(ctx, board_width, board_y);
 
-    SDL_RenderPresent(ctx->renderer);
+    SDL_RenderPresent(ctx->win.renderer);
 }
