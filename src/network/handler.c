@@ -11,6 +11,7 @@
 #include "chess_app/network_protocol.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/transport.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -75,7 +76,7 @@ typedef struct ChessNetPollResult {
 /* Central poll: listener + game connection + challenge fds + discovery fds */
 static void poll_socket_events(
     const ChessTcpListener *listener,
-    const ChessTcpConnection *connection,
+    int conn_fd,
     const ChessLobbyState *lobby,
     ChessDiscoveryContext *discovery,
     ChessNetPollResult *events)
@@ -107,9 +108,9 @@ static void poll_socket_events(
         nfds++;
     }
 
-    if (connection && connection->fd >= 0) {
+    if (conn_fd >= 0) {
         connection_idx = nfds;
-        fds[nfds].fd = connection->fd;
+        fds[nfds].fd = conn_fd;
         fds[nfds].events = POLLIN | POLLOUT;
         fds[nfds].revents = 0;
         nfds++;
@@ -201,12 +202,14 @@ void chess_net_reset_transport_progress(AppContext *ctx)
 static ChessRecvResult net_receive_next_packet(AppContext *ctx, ChessPacketHeader *header, uint8_t *payload, size_t payload_capacity)
 {
     ChessRecvResult result;
+    Transport *t;
 
     if (!ctx || !header || !payload) {
         return CHESS_RECV_ERROR;
     }
 
-    result = chess_tcp_recv_nonblocking(&ctx->network.connection, &ctx->network.recv_buffer, header, payload, payload_capacity);
+    t = &ctx->network.transport.base;
+    result = transport_recv_nonblocking(t, header, payload, payload_capacity);
 
     if (result == CHESS_RECV_ERROR) {
         SDL_Log("NET: recv error on game connection, closing");
@@ -289,7 +292,7 @@ static void net_handle_offer_packet(AppContext *ctx, const ChessOfferPayload *of
             ChessAcceptPayload accept;
             memset(&accept, 0, sizeof(accept));
             SDL_strlcpy(accept.acceptor_profile_id, ctx->network.network_session.local_peer.profile_id, sizeof(accept.acceptor_profile_id));
-            if (ctx->network.connection.fd >= 0 && chess_tcp_send_accept(&ctx->network.connection, &accept)) {
+            if (transport_send_accept(&ctx->network.transport.base, &accept)) {
                 /* Close all outgoing challenge connections */
                 chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
                 /* Clear other outgoing challenges */
@@ -371,7 +374,7 @@ static void net_handle_start_packet(AppContext *ctx, const ChessStartPayload *st
         return;
     }
 
-    if (chess_tcp_send_ack(&ctx->network.connection, CHESS_MSG_START, 2u, 0u)) {
+    if (transport_send_ack(&ctx->network.transport.base, CHESS_MSG_START, 2u, 0u)) {
         chess_network_session_start_game(
             &ctx->network.network_session,
             start_payload->game_id,
@@ -480,7 +483,7 @@ static void net_handle_resume_request_packet(AppContext *ctx, const ChessResumeR
         SDL_Log("NET: resume request rejected for game %u", request->game_id);
     }
 
-    if (!chess_tcp_send_resume_response(&ctx->network.connection, &response)) {
+    if (!transport_send_resume_response(&ctx->network.transport.base, &response)) {
         SDL_Log("NET: failed to send resume response, disconnecting");
         app_handle_peer_disconnect(ctx, "failed to send RESUME_RESPONSE");
     }
@@ -774,7 +777,7 @@ static void net_drain_incoming_packets(AppContext *ctx, bool initially_readable)
     const int max_packets_per_frame = 8;
     int packet_idx;
 
-    if (!ctx || ctx->network.connection.fd < 0 || !initially_readable) {
+    if (!ctx || transport_get_fd(&ctx->network.transport.base) < 0 || !initially_readable) {
         return;
     }
 
@@ -796,12 +799,17 @@ static void net_drain_incoming_packets(AppContext *ctx, bool initially_readable)
 static void net_send_state_snapshot_if_needed(AppContext *ctx)
 {
     ChessStateSnapshotPayload snapshot;
+    Transport *t;
 
     if (!ctx ||
         ctx->network.network_session.role != CHESS_ROLE_SERVER ||
         !ctx->network.network_session.pending_resume_state_sync ||
-        !ctx->network.network_session.start_completed ||
-        ctx->network.connection.fd < 0) {
+        !ctx->network.network_session.start_completed) {
+        return;
+    }
+
+    t = &ctx->network.transport.base;
+    if (transport_get_fd(t) < 0) {
         return;
     }
 
@@ -809,7 +817,7 @@ static void net_send_state_snapshot_if_needed(AppContext *ctx)
         return;
     }
 
-    if (chess_tcp_send_state_snapshot(&ctx->network.connection, &snapshot)) {
+    if (transport_send_state_snapshot(t, &snapshot)) {
         ctx->network.network_session.pending_resume_state_sync = false;
         SDL_Log("NET: sent state snapshot for resumed game %u", snapshot.game_id);
     }
@@ -817,6 +825,8 @@ static void net_send_state_snapshot_if_needed(AppContext *ctx)
 
 static void net_advance_transport_connection(AppContext *ctx, const ChessNetPollResult *socket_events)
 {
+    Transport *t;
+
     if (!ctx || !socket_events) {
         return;
     }
@@ -832,10 +842,12 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessNetPoll
         return;
     }
 
+    t = &ctx->network.transport.base;
+
     /* CLIENT-side: initiate outgoing TCP connect for resume reconnection.
      * The resume flow sets role=CLIENT and phase=TCP_CONNECTING when the
      * persisted resume peer is rediscovered via mDNS. */
-    if (ctx->network.connection.fd < 0 &&
+    if (transport_get_fd(t) < 0 &&
         ctx->network.network_session.role == CHESS_ROLE_CLIENT &&
         ctx->network.network_session.phase == CHESS_PHASE_TCP_CONNECTING) {
         const uint64_t now = SDL_GetTicks();
@@ -860,13 +872,13 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessNetPoll
             ChessDiscoveredPeerState *ps = &ctx->game.lobby.discovered_peers[peer_idx];
 
             if (chess_tcp_connect_start(ps->tcp_ipv4, ps->tcp_port, &new_fd)) {
-                ctx->network.connection.fd = new_fd;
+                ctx->network.transport.connection.fd = new_fd;
                 /* Check if already connected (immediate local connect) */
                 {
                     ChessConnectResult cr = chess_tcp_connect_check(new_fd);
                     if (cr == CHESS_CONNECT_CONNECTED) {
-                        chess_tcp_set_nonblocking(&ctx->network.connection);
-                        chess_tcp_recv_reset(&ctx->network.recv_buffer);
+                        transport_set_nonblocking(t);
+                        transport_recv_reset(t);
                         ctx->network.network_session.transport_connected = true;
                         ctx->network.next_connect_attempt_at = 0;
                         SDL_Log("NET: connected to resume peer %d (%.8s...)", peer_idx, ps->peer.profile_id);
@@ -880,22 +892,21 @@ static void net_advance_transport_connection(AppContext *ctx, const ChessNetPoll
     }
 
     /* Finalize async resume connect when central poll reports writable */
-    if (ctx->network.connection.fd >= 0 &&
+    if (transport_get_fd(t) >= 0 &&
         ctx->network.network_session.role == CHESS_ROLE_CLIENT &&
         ctx->network.network_session.phase == CHESS_PHASE_TCP_CONNECTING &&
         !ctx->network.network_session.transport_connected &&
         socket_events->connection_writable) {
-        ChessConnectResult cr = chess_tcp_connect_check(ctx->network.connection.fd);
+        ChessConnectResult cr = chess_tcp_connect_check(transport_get_fd(t));
         if (cr == CHESS_CONNECT_CONNECTED) {
-            chess_tcp_set_nonblocking(&ctx->network.connection);
-            chess_tcp_recv_reset(&ctx->network.recv_buffer);
+            transport_set_nonblocking(t);
+            transport_recv_reset(t);
             ctx->network.network_session.transport_connected = true;
             ctx->network.next_connect_attempt_at = 0;
             SDL_Log("NET: resume connect completed");
         } else if (cr == CHESS_CONNECT_FAILED) {
             SDL_Log("NET: resume connect failed, will retry");
-            close(ctx->network.connection.fd);
-            ctx->network.connection.fd = -1;
+            transport_close(t);
             ctx->network.next_connect_attempt_at = SDL_GetTicks() + (uint64_t)ctx->network.connect_retry_ms;
         }
     }
@@ -905,12 +916,12 @@ accept_inbound:
      * resolves the remote peer.  The HELLO handshake identifies
      * the peer.  This eliminates ~800 ms of Bonjour propagation
      * delay on reconnect. */
-    if (ctx->network.connection.fd < 0 &&
+    if (transport_get_fd(t) < 0 &&
         ctx->network.listener.fd >= 0 &&
         socket_events->listener_readable) {
-        if (chess_tcp_accept_once(&ctx->network.listener, 0, &ctx->network.connection)) {
-            chess_tcp_set_nonblocking(&ctx->network.connection);
-            chess_tcp_recv_reset(&ctx->network.recv_buffer);
+        if (chess_tcp_accept_once(&ctx->network.listener, 0, &ctx->network.transport.connection)) {
+            transport_set_nonblocking(t);
+            transport_recv_reset(t);
             SDL_Log("NET: accepted TCP client connection");
         }
     }
@@ -930,12 +941,15 @@ static void net_promote_challenge_to_game(AppContext *ctx, int peer_idx)
     ps = &ctx->game.lobby.discovered_peers[peer_idx];
 
     /* Take over the challenge fd as the game connection */
-    chess_tcp_connection_close(&ctx->network.connection);
-    ctx->network.connection.fd = ps->challenge_conn.fd;
-    ps->challenge_conn.fd = -1; /* prevent close_challenge_connection from closing it */
+    {
+        Transport *t = &ctx->network.transport.base;
+        transport_close(t);
+        ctx->network.transport.connection.fd = ps->challenge_conn.fd;
+        ps->challenge_conn.fd = -1; /* prevent close_challenge_connection from closing it */
 
-    chess_tcp_set_nonblocking(&ctx->network.connection);
-    chess_tcp_recv_reset(&ctx->network.recv_buffer);
+        transport_set_nonblocking(t);
+        transport_recv_reset(t);
+    }
 
     /* Close all other challenge connections */
     for (i = 0; i < ctx->game.lobby.discovered_peer_count; ++i) {
@@ -1163,8 +1177,14 @@ static void net_advance_outgoing_challenges(AppContext *ctx, const ChessNetPollR
 static void net_advance_hello_handshake(AppContext *ctx)
 {
     ChessRole effective_role;
+    Transport *t;
 
-    if (!ctx || ctx->network.connection.fd < 0) {
+    if (!ctx) {
+        return;
+    }
+
+    t = &ctx->network.transport.base;
+    if (transport_get_fd(t) < 0) {
         return;
     }
 
@@ -1174,14 +1194,14 @@ static void net_advance_hello_handshake(AppContext *ctx)
 
     /* Infer server role when we accepted an inbound connection
      * before the mDNS election completed (role still UNKNOWN).
-     * Client-side HELLO on ctx->network.connection is used for resume reconnection;
+     * Client-side HELLO on the transport is used for resume reconnection;
      * challenge HELLO is handled per-peer in net_advance_outgoing_challenges. */
     effective_role = ctx->network.network_session.role;
     if (effective_role == CHESS_ROLE_UNKNOWN) {
         effective_role = CHESS_ROLE_SERVER;
     }
 
-    /* CLIENT-side HELLO on ctx->network.connection (resume reconnection).
+    /* CLIENT-side HELLO (resume reconnection).
      * Wait until async connect is finalized (transport_connected). */
     if (effective_role == CHESS_ROLE_CLIENT) {
         if (!ctx->network.network_session.transport_connected) {
@@ -1195,7 +1215,7 @@ static void net_advance_hello_handshake(AppContext *ctx)
             SDL_strlcpy(local_hello.username, ctx->network.network_session.local_peer.username, sizeof(local_hello.username));
             SDL_strlcpy(local_hello.hostname, ctx->network.network_session.local_peer.hostname, sizeof(local_hello.hostname));
             local_hello.role = (uint32_t)CHESS_ROLE_CLIENT;
-            if (chess_tcp_send_hello(&ctx->network.connection, &local_hello)) {
+            if (transport_send_hello(t, &local_hello)) {
                 ctx->network.network_session.hello_sent = true;
                 SDL_Log("NET: sent HELLO (client, resume)");
             }
@@ -1224,7 +1244,7 @@ static void net_advance_hello_handshake(AppContext *ctx)
         local_hello.role = (uint32_t)CHESS_ROLE_SERVER;
 
         if (ctx->network.network_session.hello_received && !ctx->network.network_session.hello_sent) {
-            if (chess_tcp_send_hello(&ctx->network.connection, &local_hello)) {
+            if (transport_send_hello(t, &local_hello)) {
                 ctx->network.network_session.hello_sent = true;
             }
         }
@@ -1241,15 +1261,18 @@ static void net_advance_hello_handshake(AppContext *ctx)
 
 static void net_send_start_if_needed(AppContext *ctx)
 {
+    Transport *t;
+
     if (!ctx) {
         return;
     }
 
+    t = &ctx->network.transport.base;
     if (!ctx->network.network_session.hello_completed ||
         !ctx->network.network_session.challenge_done ||
         ctx->network.network_session.start_completed ||
         ctx->network.network_session.role != CHESS_ROLE_SERVER ||
-        ctx->network.connection.fd < 0 ||
+        transport_get_fd(t) < 0 ||
         ctx->network.network_session.start_sent) {
         return;
     }
@@ -1281,7 +1304,7 @@ static void net_send_start_if_needed(AppContext *ctx)
         }
     }
 
-    if (chess_tcp_send_start(&ctx->network.connection, &ctx->protocol.pending_start_payload)) {
+    if (transport_send_start(t, &ctx->protocol.pending_start_payload)) {
         ctx->network.network_session.start_sent = true;
         ctx->network.network_session.start_sent_at_ms = SDL_GetTicks();
     } else {
@@ -1295,15 +1318,20 @@ static void net_send_start_if_needed(AppContext *ctx)
 static void net_send_resume_request_if_needed(AppContext *ctx)
 {
     ChessResumeRequestPayload request;
+    Transport *t;
 
     if (!ctx ||
         ctx->network.network_session.role != CHESS_ROLE_CLIENT ||
         !ctx->network.network_session.hello_completed ||
-        ctx->network.connection.fd < 0 ||
         ctx->network.network_session.resume_request_sent ||
         ctx->network.network_session.start_completed ||
         ctx->protocol.pending_start_payload.game_id == 0u ||
         ctx->protocol.pending_start_payload.resume_token[0] == '\0') {
+        return;
+    }
+
+    t = &ctx->network.transport.base;
+    if (transport_get_fd(t) < 0) {
         return;
     }
 
@@ -1312,7 +1340,7 @@ static void net_send_resume_request_if_needed(AppContext *ctx)
     SDL_strlcpy(request.profile_id, ctx->network.local_peer.profile_id, sizeof(request.profile_id));
     SDL_strlcpy(request.resume_token, ctx->protocol.pending_start_payload.resume_token, sizeof(request.resume_token));
 
-    if (chess_tcp_send_resume_request(&ctx->network.connection, &request)) {
+    if (transport_send_resume_request(t, &request)) {
         ctx->network.network_session.resume_request_sent = true;
         SDL_Log("NET: sent resume request for game %u", request.game_id);
     }
@@ -1336,7 +1364,7 @@ void chess_net_tick(AppContext *ctx)
     }
 
     /* Single central poll for all network + discovery fds */
-    poll_socket_events(&ctx->network.listener, &ctx->network.connection, &ctx->game.lobby, &ctx->network.discovery, &poll_result);
+    poll_socket_events(&ctx->network.listener, transport_get_fd(&ctx->network.transport.base), &ctx->game.lobby, &ctx->network.discovery, &poll_result);
 
     /* Process discovery events (DNS-SD / Avahi) based on poll results */
     chess_discovery_process_events(&ctx->network.discovery, poll_result.discovery_readable, poll_result.discovery_fd_count);

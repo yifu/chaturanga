@@ -71,6 +71,7 @@ add_executable(chess_app
     src/network/handler.c
     src/network/discovery.c
     src/network/tcp.c
+    src/network/tcp_transport.c
     ${EMBEDDED_SOURCES}
 )
 

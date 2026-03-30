@@ -17,6 +17,7 @@
 #include "chess_app/network_peer.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/tcp_transport.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -61,7 +62,7 @@ static void app_loop_context_init_defaults(AppContext *ctx)
     memset(ctx, 0, sizeof(*ctx));
     ctx->win.window_size = 640;
     ctx->network.connect_retry_ms = 1000;
-    ctx->network.connection.fd = -1;
+    tcp_transport_init(&ctx->network.transport);
     ctx->running = true;
 }
 
@@ -73,7 +74,7 @@ static void app_loop_context_shutdown(AppContext *ctx)
 
     chess_discovery_stop(&ctx->network.discovery);
     chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
-    chess_tcp_connection_close(&ctx->network.connection);
+    transport_close(&ctx->network.transport.base);
     chess_tcp_listener_close(&ctx->network.listener);
     destroy_piece_textures();
     if (ctx->win.cursor_pointer) {
@@ -152,7 +153,7 @@ static void app_init_runtime_state(AppContext *ctx)
         return;
     }
 
-    ctx->network.connection.fd = -1;
+    tcp_transport_init(&ctx->network.transport);
     memset(&ctx->network.discovered_peer, 0, sizeof(ctx->network.discovered_peer));
     ctx->network.network_session.start_completed = false;
     memset(&ctx->protocol.pending_start_payload, 0, sizeof(ctx->protocol.pending_start_payload));
@@ -264,8 +265,8 @@ void app_handle_peer_disconnect(AppContext *ctx, const char *reason)
         SDL_Log("NET: peer disconnected");
     }
 
-    chess_tcp_connection_close(&ctx->network.connection);
-    chess_tcp_recv_reset(&ctx->network.recv_buffer);
+    transport_close(&ctx->network.transport.base);
+    transport_recv_reset(&ctx->network.transport.base);
     chess_net_reset_transport_progress(ctx);
 
     /*
@@ -339,8 +340,8 @@ void app_return_to_lobby(AppContext *ctx)
 
     SDL_Log("GAME: returning to lobby");
 
-    chess_tcp_connection_close(&ctx->network.connection);
-    chess_tcp_recv_reset(&ctx->network.recv_buffer);
+    transport_close(&ctx->network.transport.base);
+    transport_recv_reset(&ctx->network.transport.base);
     chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
     chess_net_reset_transport_progress(ctx);
     chess_persist_clear_client_resume_state(ctx);
