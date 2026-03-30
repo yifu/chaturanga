@@ -61,6 +61,7 @@ add_executable(chess_app
     src/game_actions.c
     src/input_handler.c
     src/persistence.c
+    src/persistence_resume.c
     src/ui/fonts.c
     src/ui/lobby.c
     src/ui/game.c
