@@ -133,7 +133,9 @@ static bool app_init_window_and_renderer(AppContext *ctx)
         if (io) {
             SDL_Surface *icon = IMG_Load_IO(io, true);
             if (icon) {
-                SDL_SetWindowIcon(ctx->win.window, icon);
+                if (!SDL_SetWindowIcon(ctx->win.window, icon)) {
+                    SDL_Log("APP: failed to set window icon: %s", SDL_GetError());
+                }
                 SDL_DestroySurface(icon);
             }
         }
