@@ -3,6 +3,7 @@
  *
  * Not part of the public API — only #included by:
  *   src/game_state.c
+ *   src/game_state_moves.c
  *   src/game_notation.c
  */
 #ifndef CHESS_APP_GAME_STATE_INTERNAL_H
@@ -12,6 +13,57 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
+/* ------------------------------------------------------------------ */
+/*  Inline utility helpers (shared across split modules)               */
+/* ------------------------------------------------------------------ */
+
+static inline int chess_gs_abs_i(int v)
+{
+    return (v < 0) ? -v : v;
+}
+
+static inline ChessPlayerColor chess_gs_opposite_color(ChessPlayerColor color)
+{
+    if (color == CHESS_COLOR_WHITE) {
+        return CHESS_COLOR_BLACK;
+    }
+    if (color == CHESS_COLOR_BLACK) {
+        return CHESS_COLOR_WHITE;
+    }
+    return CHESS_COLOR_UNASSIGNED;
+}
+
+static inline bool chess_gs_is_valid_promotion_choice(uint8_t promotion)
+{
+    return promotion == CHESS_PROMOTION_QUEEN ||
+           promotion == CHESS_PROMOTION_ROOK ||
+           promotion == CHESS_PROMOTION_BISHOP ||
+           promotion == CHESS_PROMOTION_KNIGHT;
+}
+
+static inline ChessPiece chess_gs_promoted_piece_for_choice(ChessPlayerColor color, uint8_t promotion)
+{
+    if (color == CHESS_COLOR_WHITE) {
+        switch (promotion) {
+        case CHESS_PROMOTION_QUEEN:  return CHESS_PIECE_WHITE_QUEEN;
+        case CHESS_PROMOTION_ROOK:   return CHESS_PIECE_WHITE_ROOK;
+        case CHESS_PROMOTION_BISHOP: return CHESS_PIECE_WHITE_BISHOP;
+        case CHESS_PROMOTION_KNIGHT: return CHESS_PIECE_WHITE_KNIGHT;
+        default:                     return CHESS_PIECE_EMPTY;
+        }
+    }
+    if (color == CHESS_COLOR_BLACK) {
+        switch (promotion) {
+        case CHESS_PROMOTION_QUEEN:  return CHESS_PIECE_BLACK_QUEEN;
+        case CHESS_PROMOTION_ROOK:   return CHESS_PIECE_BLACK_ROOK;
+        case CHESS_PROMOTION_BISHOP: return CHESS_PIECE_BLACK_BISHOP;
+        case CHESS_PROMOTION_KNIGHT: return CHESS_PIECE_BLACK_KNIGHT;
+        default:                     return CHESS_PIECE_EMPTY;
+        }
+    }
+    return CHESS_PIECE_EMPTY;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Utility helpers                                                    */
