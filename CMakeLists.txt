@@ -85,6 +85,7 @@ add_executable(chess_app
     src/network/discovery_dnssd.c
     src/network/discovery_avahi.c
     src/network/tcp.c
+    src/network/tcp_messages.c
     src/network/tcp_transport.c
     ${EMBEDDED_SOURCES}
 )
@@ -115,6 +116,7 @@ add_executable(chess_app_tests
     src/game_notation.c
     src/lobby_state.c
     src/network/tcp.c
+    src/network/tcp_messages.c
     src/network/session.c
     src/network/peer.c
 )
