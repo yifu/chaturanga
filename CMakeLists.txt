@@ -80,6 +80,7 @@ add_executable(chess_app
     src/network/session.c
     src/network/handler.c
     src/network/handler_challenges.c
+    src/network/handler_connection.c
     src/network/packet_handlers.c
     src/network/packet_handshake.c
     src/network/packet_game_init.c

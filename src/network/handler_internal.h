@@ -4,6 +4,7 @@
  * Not part of the public API — only #included by:
  *   src/network/handler.c
  *   src/network/handler_challenges.c
+ *   src/network/handler_connection.c
  */
 #ifndef CHESS_APP_HANDLER_INTERNAL_H
 #define CHESS_APP_HANDLER_INTERNAL_H
@@ -34,5 +35,12 @@ typedef struct ChessNetPollResult {
 /* ------------------------------------------------------------------ */
 
 void chess_net_advance_outgoing_challenges(AppContext *ctx, const ChessNetPollResult *poll_result);
+
+/* ------------------------------------------------------------------ */
+/*  Connection establishment (defined in handler_connection.c)         */
+/* ------------------------------------------------------------------ */
+
+void chess_net_advance_transport_connection(AppContext *ctx, const ChessNetPollResult *socket_events);
+void chess_net_advance_hello_handshake(AppContext *ctx);
 
 #endif /* CHESS_APP_HANDLER_INTERNAL_H */
