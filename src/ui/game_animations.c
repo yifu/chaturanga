@@ -172,6 +172,54 @@ void chess_ui_start_capture_animation(
     }
 }
 
+void chess_ui_render_pending_capture_piece(AppContext *ctx, int width, int board_y, int board_height)
+{
+    const float cell_w = (float)width / (float)CHESS_BOARD_SIZE;
+    const float cell_h = (float)board_height / (float)CHESS_BOARD_SIZE;
+    const bool black_perspective = use_black_perspective(ctx->network.network_session.local_color);
+    int screen_file;
+    int screen_rank;
+
+    if (!ctx || !ctx->win.renderer || !ctx->ui.capture_anim.pending ||
+        ctx->ui.capture_anim.piece <= CHESS_PIECE_EMPTY ||
+        ctx->ui.capture_anim.piece >= CHESS_PIECE_COUNT) {
+        return;
+    }
+
+    screen_file = board_to_screen_index(ctx->ui.capture_anim.from_file, black_perspective);
+    screen_rank = board_to_screen_index(ctx->ui.capture_anim.from_rank, black_perspective);
+
+    {
+        SDL_Texture *tex = s_piece_textures[(int)ctx->ui.capture_anim.piece];
+        if (tex) {
+            float tex_w = 0.0f;
+            float tex_h = 0.0f;
+            SDL_FRect dst;
+
+            SDL_GetTextureSize(tex, &tex_w, &tex_h);
+            dst.x = (float)screen_file * cell_w + (cell_w - tex_w) * 0.5f;
+            dst.y = (float)board_y + (float)screen_rank * cell_h + (cell_h - tex_h) * 0.5f;
+            dst.w = tex_w;
+            dst.h = tex_h;
+            SDL_RenderTexture(ctx->win.renderer, tex, NULL, &dst);
+        } else {
+            SDL_FRect piece_rect = {
+                (float)screen_file * cell_w + cell_w * 0.25f,
+                (float)board_y + (float)screen_rank * cell_h + cell_h * 0.25f,
+                cell_w * 0.5f,
+                cell_h * 0.5f
+            };
+
+            if ((int)ctx->ui.capture_anim.piece < (int)CHESS_PIECE_BLACK_PAWN) {
+                SDL_SetRenderDrawColor(ctx->win.renderer, 245, 245, 245, 255);
+            } else {
+                SDL_SetRenderDrawColor(ctx->win.renderer, 25, 25, 25, 255);
+            }
+            SDL_RenderFillRect(ctx->win.renderer, &piece_rect);
+        }
+    }
+}
+
 void chess_ui_render_capture_animation(AppContext *ctx, int board_width, int board_y, int board_height)
 {
     const float cell_w = (float)board_width / (float)CHESS_BOARD_SIZE;
