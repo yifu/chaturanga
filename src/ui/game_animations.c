@@ -30,6 +30,16 @@ void chess_ui_update_remote_move_animation(AppContext *ctx)
         ctx->ui.remote_move_anim.from_rank = -1;
         ctx->ui.remote_move_anim.to_file = -1;
         ctx->ui.remote_move_anim.to_rank = -1;
+
+        /* Start deferred capture animation now that the slide is done */
+        if (ctx->ui.capture_anim.pending) {
+            ctx->ui.capture_anim.pending = false;
+            chess_ui_start_capture_animation(
+                ctx,
+                ctx->ui.capture_anim.piece,
+                ctx->ui.capture_anim.from_file,
+                ctx->ui.capture_anim.from_rank);
+        }
     }
 }
 

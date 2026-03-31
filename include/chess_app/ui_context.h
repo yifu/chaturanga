@@ -39,6 +39,8 @@ typedef struct CaptureAnimation {
     bool target_top;
     uint64_t started_at_ms;
     uint32_t duration_ms;
+    /* Deferred capture: queued while a remote-move animation is in flight */
+    bool pending;
 } CaptureAnimation;
 
 typedef struct SnapBackAnimation {

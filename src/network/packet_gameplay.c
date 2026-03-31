@@ -67,8 +67,11 @@ void chess_pkt_handle_move(AppContext *ctx, const ChessMovePayload *move)
 
         if (chess_game_apply_remote_move(&ctx->game.game_state, remote_color, move)) {
             if (victim != CHESS_PIECE_EMPTY) {
-                chess_ui_start_capture_animation(
-                    ctx, victim, victim_file, victim_rank);
+                /* Defer capture animation until the remote-move slide finishes */
+                ctx->ui.capture_anim.pending = true;
+                ctx->ui.capture_anim.piece = victim;
+                ctx->ui.capture_anim.from_file = victim_file;
+                ctx->ui.capture_anim.from_rank = victim_rank;
             }
 
             ChessPiece piece_to_animate = moving_piece;
