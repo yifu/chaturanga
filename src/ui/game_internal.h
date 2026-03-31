@@ -3,6 +3,7 @@
  *
  * Not part of the public API — only #included by:
  *   src/ui/game.c
+ *   src/ui/game_overlays.c
  *   src/ui/game_panels.c
  *   src/ui/game_animations.c
  */
@@ -59,6 +60,29 @@ extern float s_cap_cursor_start_bottom;
 /* ------------------------------------------------------------------ */
 /*  Internal rendering functions called by chess_ui_render_frame()      */
 /* ------------------------------------------------------------------ */
+
+bool chess_ui_promotion_choice_rect(
+    AppContext *ctx, int width, int board_y, int board_height,
+    uint8_t promotion, SDL_FRect *out_rect);
+
+void chess_ui_render_board_coordinates(
+    SDL_Renderer *renderer, int width, int board_y, int board_height,
+    ChessPlayerColor local_color);
+
+void chess_ui_render_game_overlay(
+    SDL_Renderer *renderer, int width, int board_y, int board_height,
+    const ChessGameState *game_state, ChessPlayerColor local_color,
+    bool hide_piece, int hidden_file, int hidden_rank);
+
+void chess_ui_render_drag_preview(AppContext *ctx, int width, int board_height);
+
+void chess_ui_render_promotion_overlay(
+    AppContext *ctx, int width, int board_y, int board_height);
+
+void chess_ui_render_game_over_banner(
+    AppContext *ctx, int width, int board_y, int board_height);
+
+void chess_ui_render_status_message(AppContext *ctx, int width, int board_y);
 
 void chess_ui_render_player_panels(
     AppContext *ctx, int board_width, int window_height,
