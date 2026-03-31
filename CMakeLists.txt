@@ -77,6 +77,7 @@ add_executable(chess_app
     src/lobby_state.c
     src/render/board.c
     src/network/peer.c
+    src/network/peer_profile.c
     src/network/session.c
     src/network/handler.c
     src/network/handler_challenges.c
@@ -123,6 +124,7 @@ add_executable(chess_app_tests
     src/network/tcp_messages.c
     src/network/session.c
     src/network/peer.c
+    src/network/peer_profile.c
 )
 
 target_include_directories(chess_app_tests PRIVATE include)
