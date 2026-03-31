@@ -215,8 +215,26 @@ void chess_input_handle_board_mouse_up(AppContext *ctx, int mouse_x, int mouse_y
         return;
     }
 
-    if (chess_ui_screen_to_board_square(ctx, mouse_x, mouse_y, &to_file, &to_rank)) {
-        (void)chess_input_try_send_local_move(ctx, to_file, to_rank, CHESS_PROMOTION_NONE);
+    {
+        bool move_ok = false;
+
+        if (chess_ui_screen_to_board_square(ctx, mouse_x, mouse_y, &to_file, &to_rank)) {
+            if (to_file == ctx->ui.drag.drag_from_file && to_rank == ctx->ui.drag.drag_from_rank) {
+                /* Dropped on the same square — no snap-back, just deselect */
+            } else {
+                move_ok = chess_input_try_send_local_move(ctx, to_file, to_rank, CHESS_PROMOTION_NONE);
+            }
+        }
+
+        if (!move_ok && !ctx->ui.drag.promotion_pending) {
+            chess_ui_start_snap_back_animation(
+                ctx,
+                ctx->ui.drag.drag_piece,
+                ctx->ui.drag.drag_from_file,
+                ctx->ui.drag.drag_from_rank,
+                (float)mouse_x,
+                (float)mouse_y);
+        }
     }
 
     ctx->ui.drag.drag_active = false;

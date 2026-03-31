@@ -189,6 +189,10 @@ void chess_ui_render_frame(AppContext *ctx)
             hide_piece = true;
             hidden_file = ctx->ui.drag.drag_from_file;
             hidden_rank = ctx->ui.drag.drag_from_rank;
+        } else if (ctx->ui.snap_back_anim.active) {
+            hide_piece = true;
+            hidden_file = ctx->ui.snap_back_anim.to_file;
+            hidden_rank = ctx->ui.snap_back_anim.to_rank;
         } else if (ctx->ui.remote_move_anim.active) {
             hide_piece = true;
             hidden_file = ctx->ui.remote_move_anim.to_file;
@@ -210,6 +214,7 @@ void chess_ui_render_frame(AppContext *ctx)
             hidden_rank);
         chess_ui_render_promotion_overlay(ctx, board_width, board_y, board_height);
         chess_ui_render_remote_move_animation(ctx, board_width, board_y, board_height);
+        chess_ui_render_snap_back_animation(ctx, board_width, board_y, board_height);
         chess_ui_render_drag_preview(ctx, board_width, board_height);
         chess_ui_render_board_coordinates(ctx->win.renderer, board_width, board_y, board_height, ctx->network.network_session.local_color);
         chess_ui_render_game_over_banner(ctx, board_width, board_y, board_height);

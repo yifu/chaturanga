@@ -41,10 +41,22 @@ typedef struct CaptureAnimation {
     uint32_t duration_ms;
 } CaptureAnimation;
 
+typedef struct SnapBackAnimation {
+    bool active;
+    ChessPiece piece;
+    int to_file;
+    int to_rank;
+    float from_x;
+    float from_y;
+    uint64_t started_at_ms;
+    uint32_t duration_ms;
+} SnapBackAnimation;
+
 typedef struct UIContext {
     DragState drag;
     RemoteMoveAnimation remote_move_anim;
     CaptureAnimation capture_anim;
+    SnapBackAnimation snap_back_anim;
     char status_message[APP_STATUS_MESSAGE_LEN];
     uint64_t status_message_until_ms;
 } UIContext;

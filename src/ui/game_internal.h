@@ -98,4 +98,7 @@ void chess_ui_render_remote_move_animation(
 void chess_ui_render_capture_animation(
     AppContext *ctx, int board_width, int board_y, int board_height);
 
+void chess_ui_render_snap_back_animation(
+    AppContext *ctx, int width, int board_y, int board_height);
+
 #endif /* CHESS_APP_UI_GAME_INTERNAL_H */

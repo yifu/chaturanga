@@ -59,6 +59,24 @@ void chess_ui_update_remote_move_animation(AppContext *ctx);
 void chess_ui_update_capture_animation(AppContext *ctx);
 
 /**
+ * Advance the snap-back animation timer.
+ * Call once per frame from the main loop.
+ */
+void chess_ui_update_snap_back_animation(AppContext *ctx);
+
+/**
+ * Start a snap-back animation: the piece slides from its current
+ * screen position back to its origin square after an illegal move.
+ */
+void chess_ui_start_snap_back_animation(
+    AppContext *ctx,
+    ChessPiece piece,
+    int to_file,
+    int to_rank,
+    float from_x,
+    float from_y);
+
+/**
  * Start a capture animation: the captured piece flies from its board
  * square to the appropriate player panel, shrinking along the way.
  */

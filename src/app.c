@@ -336,6 +336,7 @@ int app_run(void)
 
         chess_ui_update_remote_move_animation(&ctx);
         chess_ui_update_capture_animation(&ctx);
+        chess_ui_update_snap_back_animation(&ctx);
 
         chess_ui_render_frame(&ctx);
     }
