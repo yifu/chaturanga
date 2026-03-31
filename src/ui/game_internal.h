@@ -5,6 +5,7 @@
  *   src/ui/game.c
  *   src/ui/game_overlays.c
  *   src/ui/game_panels.c
+ *   src/ui/game_player_panels.c
  *   src/ui/game_animations.c
  */
 #ifndef CHESS_APP_UI_GAME_INTERNAL_H
