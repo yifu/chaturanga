@@ -197,6 +197,7 @@ void chess_ui_render_frame(AppContext *ctx)
 
         chess_ui_render_player_panels(ctx, board_width, height, board_y, board_height);
         render_board(ctx->win.renderer, board_width, board_y, board_height);
+        chess_ui_render_capture_animation(ctx, board_width, board_y, board_height);
         chess_ui_render_game_overlay(
             ctx->win.renderer,
             board_width,
@@ -209,7 +210,6 @@ void chess_ui_render_frame(AppContext *ctx)
             hidden_rank);
         chess_ui_render_promotion_overlay(ctx, board_width, board_y, board_height);
         chess_ui_render_remote_move_animation(ctx, board_width, board_y, board_height);
-        chess_ui_render_capture_animation(ctx, board_width, board_y, board_height);
         chess_ui_render_drag_preview(ctx, board_width, board_height);
         chess_ui_render_board_coordinates(ctx->win.renderer, board_width, board_y, board_height, ctx->network.network_session.local_color);
         chess_ui_render_game_over_banner(ctx, board_width, board_y, board_height);
