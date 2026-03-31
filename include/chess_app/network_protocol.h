@@ -109,7 +109,12 @@ typedef struct ChessStateSnapshotPayload {
     uint8_t black_can_castle_queenside;
     int8_t en_passant_target_file;
     int8_t en_passant_target_rank;
-    uint8_t _padding[2];
+    int8_t last_move_from_file;
+    int8_t last_move_from_rank;
+    int8_t last_move_to_file;
+    int8_t last_move_to_rank;
+    uint8_t has_last_move;
+    uint8_t _padding[1];
     uint16_t move_history_count;
     uint8_t _padding2[2];
     char resume_token[CHESS_UUID_STRING_LEN];

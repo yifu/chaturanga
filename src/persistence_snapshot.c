@@ -85,6 +85,23 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
 
     chess_game_state_init(&ctx->game.game_state);
 
+    /* Optional last-move fields (absent in older snapshots) */
+    {
+        uint32_t has_lm = 0u;
+        int32_t lm_ff = -1, lm_fr = -1, lm_tf = -1, lm_tr = -1;
+        if (chess_persist_extract_snapshot_u32(json, "\"has_last_move\"", &has_lm) && has_lm != 0u &&
+            chess_persist_extract_snapshot_i32(json, "\"last_move_from_file\"", &lm_ff) &&
+            chess_persist_extract_snapshot_i32(json, "\"last_move_from_rank\"", &lm_fr) &&
+            chess_persist_extract_snapshot_i32(json, "\"last_move_to_file\"", &lm_tf) &&
+            chess_persist_extract_snapshot_i32(json, "\"last_move_to_rank\"", &lm_tr)) {
+            ctx->game.game_state.has_last_move = true;
+            ctx->game.game_state.last_move_from_file = (int8_t)lm_ff;
+            ctx->game.game_state.last_move_from_rank = (int8_t)lm_fr;
+            ctx->game.game_state.last_move_to_file = (int8_t)lm_tf;
+            ctx->game.game_state.last_move_to_rank = (int8_t)lm_tr;
+        }
+    }
+
     board_key = strstr(json, "\"board\"");
     if (!board_key) {
         return false;
@@ -257,6 +274,11 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
     (void)fprintf(fp, "  \"black_can_castle_queenside\": %u,\n", ctx->game.game_state.black_can_castle_queenside ? 1u : 0u);
     (void)fprintf(fp, "  \"en_passant_target_file\": %d,\n", (int)ctx->game.game_state.en_passant_target_file);
     (void)fprintf(fp, "  \"en_passant_target_rank\": %d,\n", (int)ctx->game.game_state.en_passant_target_rank);
+    (void)fprintf(fp, "  \"has_last_move\": %u,\n", ctx->game.game_state.has_last_move ? 1u : 0u);
+    (void)fprintf(fp, "  \"last_move_from_file\": %d,\n", (int)ctx->game.game_state.last_move_from_file);
+    (void)fprintf(fp, "  \"last_move_from_rank\": %d,\n", (int)ctx->game.game_state.last_move_from_rank);
+    (void)fprintf(fp, "  \"last_move_to_file\": %d,\n", (int)ctx->game.game_state.last_move_to_file);
+    (void)fprintf(fp, "  \"last_move_to_rank\": %d,\n", (int)ctx->game.game_state.last_move_to_rank);
     (void)fprintf(fp, "  \"outcome\": %u,\n", (unsigned)ctx->game.game_state.outcome);
     (void)fprintf(fp, "  \"captured\": [");
     for (file = 0; file < CHESS_PIECE_COUNT; ++file) {

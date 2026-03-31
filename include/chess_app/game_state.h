@@ -53,6 +53,11 @@ typedef struct ChessGameState {
     int selected_rank;
     ChessGameOutcome outcome;
     uint8_t captured[CHESS_PIECE_COUNT];
+    bool has_last_move;
+    int8_t last_move_from_file;
+    int8_t last_move_from_rank;
+    int8_t last_move_to_file;
+    int8_t last_move_to_rank;
 } ChessGameState;
 
 typedef struct ChessCapturedPieces {

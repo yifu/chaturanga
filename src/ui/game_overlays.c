@@ -180,6 +180,39 @@ void chess_ui_render_game_overlay(
         return;
     }
 
+    /* ── Last-move highlight (drawn before pieces so tint is underneath) ── */
+    if (game_state->has_last_move) {
+        int from_screen_file = board_to_screen_index(game_state->last_move_from_file, black_perspective);
+        int from_screen_rank = board_to_screen_index(game_state->last_move_from_rank, black_perspective);
+        int to_screen_file = board_to_screen_index(game_state->last_move_to_file, black_perspective);
+        int to_screen_rank = board_to_screen_index(game_state->last_move_to_rank, black_perspective);
+
+        /* Origin square: yellow outline */
+        {
+            SDL_FRect from_rect = {
+                from_screen_file * cell_w + 2.0f,
+                (float)board_y + from_screen_rank * cell_h + 2.0f,
+                cell_w - 4.0f,
+                cell_h - 4.0f
+            };
+            SDL_SetRenderDrawColor(renderer, 255, 204, 0, 255);
+            SDL_RenderRect(renderer, &from_rect);
+        }
+
+        /* Destination square: filled yellow tint */
+        {
+            SDL_FRect to_rect = {
+                to_screen_file * cell_w,
+                (float)board_y + to_screen_rank * cell_h,
+                cell_w,
+                cell_h
+            };
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 255, 204, 0, 80);
+            SDL_RenderFillRect(renderer, &to_rect);
+        }
+    }
+
     for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
         for (file = 0; file < CHESS_BOARD_SIZE; ++file) {
             ChessPiece piece = chess_game_get_piece(game_state, file, rank);

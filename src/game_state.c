@@ -194,6 +194,11 @@ bool chess_gs_apply_move(
     state->has_selection = false;
     state->selected_file = -1;
     state->selected_rank = -1;
+    state->has_last_move = true;
+    state->last_move_from_file = (int8_t)from_file;
+    state->last_move_from_rank = (int8_t)from_rank;
+    state->last_move_to_file = (int8_t)to_file;
+    state->last_move_to_rank = (int8_t)to_rank;
 
     {
         ChessPlayerColor next_color = state->side_to_move;
@@ -233,6 +238,11 @@ void chess_game_state_init(ChessGameState *state)
     state->en_passant_target_rank = -1;
     state->selected_file = -1;
     state->selected_rank = -1;
+    state->has_last_move = false;
+    state->last_move_from_file = -1;
+    state->last_move_from_rank = -1;
+    state->last_move_to_file = -1;
+    state->last_move_to_rank = -1;
 
     /* Black back rank */
     state->board[0][0] = CHESS_PIECE_BLACK_ROOK;

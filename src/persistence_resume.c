@@ -37,6 +37,11 @@ bool chess_persist_build_state_snapshot_payload(const AppContext *ctx, ChessStat
     out_payload->black_can_castle_queenside = ctx->game.game_state.black_can_castle_queenside ? 1u : 0u;
     out_payload->en_passant_target_file = ctx->game.game_state.en_passant_target_file;
     out_payload->en_passant_target_rank = ctx->game.game_state.en_passant_target_rank;
+    out_payload->has_last_move = ctx->game.game_state.has_last_move ? 1u : 0u;
+    out_payload->last_move_from_file = ctx->game.game_state.last_move_from_file;
+    out_payload->last_move_from_rank = ctx->game.game_state.last_move_from_rank;
+    out_payload->last_move_to_file = ctx->game.game_state.last_move_to_file;
+    out_payload->last_move_to_rank = ctx->game.game_state.last_move_to_rank;
     SDL_strlcpy(out_payload->resume_token, ctx->protocol.pending_start_payload.resume_token, sizeof(out_payload->resume_token));
 
     for (rank = 0; rank < CHESS_BOARD_SIZE; ++rank) {
@@ -113,6 +118,11 @@ bool chess_persist_apply_state_snapshot_payload(
     ctx->game.game_state.black_can_castle_queenside = payload->black_can_castle_queenside != 0u;
     ctx->game.game_state.en_passant_target_file = payload->en_passant_target_file;
     ctx->game.game_state.en_passant_target_rank = payload->en_passant_target_rank;
+    ctx->game.game_state.has_last_move = payload->has_last_move != 0u;
+    ctx->game.game_state.last_move_from_file = payload->last_move_from_file;
+    ctx->game.game_state.last_move_from_rank = payload->last_move_from_rank;
+    ctx->game.game_state.last_move_to_file = payload->last_move_to_file;
+    ctx->game.game_state.last_move_to_rank = payload->last_move_to_rank;
     ctx->game.game_state.has_selection = false;
     ctx->game.game_state.selected_file = -1;
     ctx->game.game_state.selected_rank = -1;
