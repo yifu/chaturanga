@@ -15,6 +15,11 @@ typedef struct GameContext {
     ChessLobbyState lobby;
     uint16_t move_history_count;
     char move_history[APP_MOVE_HISTORY_MAX][APP_MOVE_HISTORY_ENTRY];
+    uint32_t time_control_ms;
+    uint32_t white_remaining_ms;
+    uint32_t black_remaining_ms;
+    uint64_t last_clock_sync_ticks;
+    uint64_t turn_started_at_ms;
 } GameContext;
 
 #endif

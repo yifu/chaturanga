@@ -57,5 +57,6 @@ void chess_pkt_handle_resign(AppContext *ctx);
 void chess_pkt_handle_draw_offer(AppContext *ctx);
 void chess_pkt_handle_draw_accept(AppContext *ctx);
 void chess_pkt_handle_draw_decline(AppContext *ctx);
+void chess_pkt_handle_time_sync(AppContext *ctx, const ChessTimeSyncPayload *ts);
 
 #endif /* CHESS_APP_PACKET_HANDLERS_INTERNAL_H */

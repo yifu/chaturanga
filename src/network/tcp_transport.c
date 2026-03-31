@@ -6,6 +6,15 @@ static bool tcp_send_packet_impl(void *self, uint32_t message_type, uint32_t seq
     return chess_tcp_send_packet(&tcp->connection, message_type, sequence, payload, payload_size);
 }
 
+static bool tcp_send_packet_pair_impl(void *self,
+                                       uint32_t msg_type_1, uint32_t seq_1, const void *payload_1, uint32_t payload_size_1,
+                                       uint32_t msg_type_2, uint32_t seq_2, const void *payload_2, uint32_t payload_size_2) {
+    TcpTransport *tcp = (TcpTransport *)self;
+    return chess_tcp_send_packet_pair(&tcp->connection,
+        msg_type_1, seq_1, payload_1, payload_size_1,
+        msg_type_2, seq_2, payload_2, payload_size_2);
+}
+
 static ChessRecvResult tcp_recv_nonblocking_impl(void *self,
                                                    ChessPacketHeader *out_header,
                                                    uint8_t *out_payload, size_t payload_capacity) {
@@ -36,6 +45,7 @@ static bool tcp_set_nonblocking_impl(void *self) {
 
 const TransportOps tcp_transport_ops = {
     .send_packet      = tcp_send_packet_impl,
+    .send_packet_pair = tcp_send_packet_pair_impl,
     .recv_nonblocking = tcp_recv_nonblocking_impl,
     .recv_reset       = tcp_recv_reset_impl,
     .close            = tcp_close_impl,

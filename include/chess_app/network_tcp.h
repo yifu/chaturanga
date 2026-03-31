@@ -45,6 +45,10 @@ bool chess_tcp_connect_start(uint32_t remote_ipv4_host_order, uint16_t remote_po
 ChessConnectResult chess_tcp_connect_check(int fd);
 
 bool chess_tcp_send_packet(ChessTcpConnection *conn, uint32_t message_type, uint32_t sequence, const void *payload, uint32_t payload_size);
+bool chess_tcp_send_packet_pair(
+    ChessTcpConnection *conn,
+    uint32_t msg_type_1, uint32_t seq_1, const void *payload_1, uint32_t payload_size_1,
+    uint32_t msg_type_2, uint32_t seq_2, const void *payload_2, uint32_t payload_size_2);
 bool chess_tcp_recv_packet_header(ChessTcpConnection *conn, int timeout_ms, ChessPacketHeader *out_header);
 bool chess_tcp_recv_payload(ChessTcpConnection *conn, int timeout_ms, void *out_payload, uint32_t payload_size);
 

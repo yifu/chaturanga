@@ -55,9 +55,18 @@ void chess_pkt_handle_start(AppContext *ctx, const ChessStartPayload *start_payl
         if (!chess_persist_load_match_snapshot(ctx, start_payload->game_id, start_payload->resume_token)) {
             chess_game_state_init(&ctx->game.game_state);
             ctx->game.move_history_count = 0;
+            /* New game: initialize chess clocks from time control */
+            ctx->game.time_control_ms = start_payload->time_control_ms;
+            ctx->game.white_remaining_ms = start_payload->time_control_ms;
+            ctx->game.black_remaining_ms = start_payload->time_control_ms;
         } else {
+            /* Resumed: clocks restored by chess_persist_load_match_snapshot */
             SDL_Log("GAME: restored snapshot for game_id=%u", start_payload->game_id);
         }
+
+        /* Initialize clock sync point */
+        ctx->game.last_clock_sync_ticks = SDL_GetTicks();
+        ctx->game.turn_started_at_ms = 0;
 
         (void)chess_persist_save_client_resume_state(ctx);
         SDL_Log(
@@ -104,9 +113,18 @@ void chess_pkt_handle_ack(AppContext *ctx, const ChessAckPayload *ack)
                 ctx->protocol.pending_start_payload.resume_token)) {
             chess_game_state_init(&ctx->game.game_state);
             ctx->game.move_history_count = 0;
+            /* New game: initialize chess clocks from time control */
+            ctx->game.time_control_ms = ctx->protocol.pending_start_payload.time_control_ms;
+            ctx->game.white_remaining_ms = ctx->game.time_control_ms;
+            ctx->game.black_remaining_ms = ctx->game.time_control_ms;
         } else {
+            /* Resumed: clocks restored by chess_persist_load_match_snapshot */
             SDL_Log("GAME: restored snapshot for game_id=%u", ctx->protocol.pending_start_payload.game_id);
         }
+
+        /* Initialize chess clocks */
+        ctx->game.last_clock_sync_ticks = SDL_GetTicks();
+        ctx->game.turn_started_at_ms = SDL_GetTicks();
 
         (void)chess_persist_save_match_snapshot(ctx);
         SDL_Log(

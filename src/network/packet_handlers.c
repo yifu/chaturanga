@@ -74,6 +74,9 @@ static void net_dispatch_incoming_packet(AppContext *ctx, const ChessPacketHeade
         chess_pkt_handle_draw_accept(ctx);
     } else if (header->message_type == CHESS_MSG_DRAW_DECLINE && header->payload_size == 0u) {
         chess_pkt_handle_draw_decline(ctx);
+    } else if (header->message_type == CHESS_MSG_TIME_SYNC &&
+               header->payload_size == sizeof(ChessTimeSyncPayload)) {
+        chess_pkt_handle_time_sync(ctx, (const ChessTimeSyncPayload *)payload);
     }
 }
 

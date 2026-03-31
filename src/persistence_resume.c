@@ -69,6 +69,9 @@ bool chess_persist_build_state_snapshot_payload(const AppContext *ctx, ChessStat
             sizeof(out_payload->move_history[idx]));
     }
 
+    out_payload->white_remaining_ms = ctx->game.white_remaining_ms;
+    out_payload->black_remaining_ms = ctx->game.black_remaining_ms;
+
     return true;
 }
 
@@ -87,7 +90,7 @@ bool chess_persist_apply_state_snapshot_payload(
     if (payload->side_to_move != CHESS_COLOR_WHITE && payload->side_to_move != CHESS_COLOR_BLACK) {
         return false;
     }
-    if (payload->outcome > CHESS_OUTCOME_FIFTY_MOVE_RULE) {
+    if (payload->outcome >= CHESS_OUTCOME_COUNT) {
         return false;
     }
 
@@ -144,6 +147,10 @@ bool chess_persist_apply_state_snapshot_payload(
             payload->move_history[idx],
             (size_t)APP_MOVE_HISTORY_ENTRY);
     }
+
+    ctx->game.white_remaining_ms = payload->white_remaining_ms;
+    ctx->game.black_remaining_ms = payload->black_remaining_ms;
+    ctx->game.last_clock_sync_ticks = SDL_GetTicks();
 
     return true;
 }

@@ -6,6 +6,7 @@
 #include "chess_app/network_peer.h"
 
 #define CHESS_PROTOCOL_VERSION 1u
+#define CHESS_DEFAULT_TIME_CONTROL_MS 600000u
 #define CHESS_DISCOVERY_SERVICE "_chess._tcp.local"
 #define CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS 64u
 #define CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES 300u
@@ -27,7 +28,8 @@ typedef enum ChessMessageType {
     CHESS_MSG_RESUME_RESPONSE,
     CHESS_MSG_STATE_SNAPSHOT,
     CHESS_MSG_HEARTBEAT,
-    CHESS_MSG_DISCONNECT
+    CHESS_MSG_DISCONNECT,
+    CHESS_MSG_TIME_SYNC
 } ChessMessageType;
 
 typedef enum ChessResumeStatus {
@@ -81,6 +83,7 @@ typedef struct ChessStartPayload {
     uint32_t game_id;
     uint32_t assigned_color;
     uint32_t initial_turn;
+    uint32_t time_control_ms;
     char white_profile_id[CHESS_PROFILE_ID_STRING_LEN];
     char black_profile_id[CHESS_PROFILE_ID_STRING_LEN];
     char resume_token[CHESS_UUID_STRING_LEN];
@@ -121,6 +124,8 @@ typedef struct ChessStateSnapshotPayload {
     uint8_t board[CHESS_PROTOCOL_SNAPSHOT_BOARD_CELLS];
     uint8_t captured[CHESS_PIECE_COUNT_PROTOCOL];
     uint8_t _padding3[3];
+    uint32_t white_remaining_ms;
+    uint32_t black_remaining_ms;
     char move_history[CHESS_PROTOCOL_MAX_MOVE_HISTORY_ENTRIES][CHESS_PROTOCOL_MOVE_HISTORY_ENTRY_LEN];
 } ChessStateSnapshotPayload;
 
@@ -135,5 +140,10 @@ typedef struct ChessOfferPayload {
 typedef struct ChessAcceptPayload {
     char acceptor_profile_id[CHESS_PROFILE_ID_STRING_LEN];
 } ChessAcceptPayload;
+
+typedef struct ChessTimeSyncPayload {
+    uint32_t white_remaining_ms;
+    uint32_t black_remaining_ms;
+} ChessTimeSyncPayload;
 
 #endif

@@ -116,15 +116,46 @@ bool chess_input_try_send_local_move(AppContext *ctx, int to_file, int to_rank, 
                               ctx->protocol.move_sequence, NULL, 0u);
     }
 
-    if (!transport_send_packet(
-            &ctx->network.transport.base,
-            CHESS_MSG_MOVE,
-            ctx->protocol.move_sequence++,
-            &move,
-            (uint32_t)sizeof(move))) {
-        SDL_Log("NET: failed to send MOVE packet, closing connection");
-        app_handle_peer_disconnect(ctx, "failed to send MOVE packet");
-        return false;
+    /* Server: deduct time and send MOVE + TIME_SYNC atomically via writev */
+    if (ctx->network.network_session.role == CHESS_ROLE_SERVER &&
+        ctx->game.turn_started_at_ms > 0) {
+        uint64_t now = SDL_GetTicks();
+        uint64_t elapsed = now - ctx->game.turn_started_at_ms;
+        uint32_t *mover_remaining = (ctx->network.network_session.local_color == CHESS_COLOR_WHITE)
+            ? &ctx->game.white_remaining_ms
+            : &ctx->game.black_remaining_ms;
+        ChessTimeSyncPayload ts;
+
+        if (elapsed >= *mover_remaining) {
+            *mover_remaining = 0;
+        } else {
+            *mover_remaining -= (uint32_t)elapsed;
+        }
+        ctx->game.turn_started_at_ms = now;
+        ctx->game.last_clock_sync_ticks = now;
+
+        ts.white_remaining_ms = ctx->game.white_remaining_ms;
+        ts.black_remaining_ms = ctx->game.black_remaining_ms;
+
+        if (!transport_send_move_with_time_sync(
+                &ctx->network.transport.base,
+                ctx->protocol.move_sequence++,
+                &move, &ts)) {
+            SDL_Log("NET: failed to send MOVE+TIME_SYNC packet, closing connection");
+            app_handle_peer_disconnect(ctx, "failed to send MOVE packet");
+            return false;
+        }
+    } else {
+        if (!transport_send_packet(
+                &ctx->network.transport.base,
+                CHESS_MSG_MOVE,
+                ctx->protocol.move_sequence++,
+                &move,
+                (uint32_t)sizeof(move))) {
+            SDL_Log("NET: failed to send MOVE packet, closing connection");
+            app_handle_peer_disconnect(ctx, "failed to send MOVE packet");
+            return false;
+        }
     }
 
     SDL_Log(

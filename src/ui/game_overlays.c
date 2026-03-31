@@ -427,6 +427,14 @@ void chess_ui_render_game_over_banner(AppContext *ctx, int width, int board_y, i
         headline = "Draw";
         subline = "By agreement";
         break;
+    case CHESS_OUTCOME_WHITE_TIMEOUT:
+        headline = "Time's up";
+        subline = (ctx->network.network_session.local_color == CHESS_COLOR_BLACK) ? "You win!" : "Opponent wins";
+        break;
+    case CHESS_OUTCOME_BLACK_TIMEOUT:
+        headline = "Time's up";
+        subline = (ctx->network.network_session.local_color == CHESS_COLOR_WHITE) ? "You win!" : "Opponent wins";
+        break;
     default:
         return;
     }

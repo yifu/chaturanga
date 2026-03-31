@@ -18,7 +18,9 @@ static void render_one_player_panel(
     const ChessPeerInfo *peer,
     const ChessCapturedPieces *captured,
     SDL_FRect panel_rect,
-    ChessPlayerColor player_color)
+    ChessPlayerColor player_color,
+    uint32_t remaining_ms,
+    bool is_active_player)
 {
     const SDL_Color name_color = {240, 240, 240, 255};
     const SDL_Color host_color = {170, 170, 170, 255};
@@ -200,6 +202,44 @@ static void render_one_player_panel(
         }
         cursor_x += 4.0f; /* gap between piece types */
     }
+
+    /* Chess clock — right-aligned */
+    {
+        char clock_buf[16];
+        uint32_t total_seconds = remaining_ms / 1000u;
+        uint32_t minutes = total_seconds / 60u;
+        uint32_t seconds = total_seconds % 60u;
+        SDL_Color clock_color;
+        SDL_Texture *clock_tex;
+
+        if (remaining_ms < 30000u) {
+            clock_color = (SDL_Color){230, 60, 60, 255};     /* red warning */
+        } else if (is_active_player) {
+            clock_color = (SDL_Color){255, 255, 255, 255};   /* bright white */
+        } else {
+            clock_color = (SDL_Color){160, 160, 160, 255};   /* dimmed */
+        }
+
+        SDL_snprintf(clock_buf, sizeof(clock_buf), "%02u:%02u", minutes, seconds);
+        clock_tex = make_text_texture(renderer, font, clock_buf, clock_color);
+        if (clock_tex) {
+            float cw = 0.0f;
+            float ch = 0.0f;
+            SDL_FRect dst;
+            SDL_GetTextureSize(clock_tex, &cw, &ch);
+            dst.w = cw;
+            dst.h = ch;
+            dst.x = panel_rect.x + panel_rect.w - cw - 8.0f;
+            dst.y = panel_rect.y + (panel_rect.h - ch) * 0.5f;
+            /* Bold trick for active player */
+            SDL_RenderTexture(renderer, clock_tex, NULL, &dst);
+            if (is_active_player) {
+                dst.x += 1.0f;
+                SDL_RenderTexture(renderer, clock_tex, NULL, &dst);
+            }
+            SDL_DestroyTexture(clock_tex);
+        }
+    }
 }
 
 void chess_ui_render_player_panels(
@@ -218,6 +258,12 @@ void chess_ui_render_player_panels(
     TTF_Font *font = s_coord_font;
     SDL_FRect top_rect;
     SDL_FRect bottom_rect;
+    uint32_t white_display_ms;
+    uint32_t black_display_ms;
+    uint32_t top_clock_ms;
+    uint32_t bottom_clock_ms;
+    bool top_active;
+    bool bottom_active;
 
     if (!ctx || !ctx->win.renderer) {
         return;
@@ -225,19 +271,42 @@ void chess_ui_render_player_panels(
 
     chess_game_compute_captured(&ctx->game.game_state, &captured);
 
+    /* Compute displayed clock values */
+    white_display_ms = ctx->game.white_remaining_ms;
+    black_display_ms = ctx->game.black_remaining_ms;
+    if (ctx->game.game_state.outcome == CHESS_OUTCOME_NONE &&
+        ctx->network.network_session.game_started &&
+        ctx->game.last_clock_sync_ticks > 0) {
+        uint64_t elapsed = SDL_GetTicks() - ctx->game.last_clock_sync_ticks;
+        if (ctx->game.game_state.side_to_move == CHESS_COLOR_WHITE) {
+            white_display_ms = (elapsed >= white_display_ms) ? 0 : white_display_ms - (uint32_t)elapsed;
+        } else {
+            black_display_ms = (elapsed >= black_display_ms) ? 0 : black_display_ms - (uint32_t)elapsed;
+        }
+    }
+
     if (black_perspective) {
         /* Black at bottom (local), white at top (opponent) */
         top_peer = &ctx->network.network_session.remote_peer;
         top_color = CHESS_COLOR_WHITE;
         bottom_peer = &ctx->network.network_session.local_peer;
         bottom_color = CHESS_COLOR_BLACK;
+        top_clock_ms = white_display_ms;
+        bottom_clock_ms = black_display_ms;
     } else {
         /* White at bottom (local), black at top (opponent) */
         top_peer = &ctx->network.network_session.remote_peer;
         top_color = CHESS_COLOR_BLACK;
         bottom_peer = &ctx->network.network_session.local_peer;
         bottom_color = CHESS_COLOR_WHITE;
+        top_clock_ms = black_display_ms;
+        bottom_clock_ms = white_display_ms;
     }
+
+    top_active = (ctx->game.game_state.side_to_move == top_color &&
+                  ctx->game.game_state.outcome == CHESS_OUTCOME_NONE);
+    bottom_active = (ctx->game.game_state.side_to_move == bottom_color &&
+                     ctx->game.game_state.outcome == CHESS_OUTCOME_NONE);
 
     top_rect.x = 0.0f;
     top_rect.y = 0.0f;
@@ -249,6 +318,6 @@ void chess_ui_render_player_panels(
     bottom_rect.w = (float)board_width;
     bottom_rect.h = (float)CHESS_UI_PLAYER_PANEL_HEIGHT;
 
-    render_one_player_panel(ctx->win.renderer, font, top_peer, &captured, top_rect, top_color);
-    render_one_player_panel(ctx->win.renderer, font, bottom_peer, &captured, bottom_rect, bottom_color);
+    render_one_player_panel(ctx->win.renderer, font, top_peer, &captured, top_rect, top_color, top_clock_ms, top_active);
+    render_one_player_panel(ctx->win.renderer, font, bottom_peer, &captured, bottom_rect, bottom_color, bottom_clock_ms, bottom_active);
 }

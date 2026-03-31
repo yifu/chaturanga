@@ -148,6 +148,25 @@ bool chess_persist_load_match_snapshot(AppContext *ctx, uint32_t game_id, const 
     ctx->game.game_state.selected_file = -1;
     ctx->game.game_state.selected_rank = -1;
 
+    /* Optional clock fields (absent in older snapshots) */
+    {
+        uint32_t tc = 0u, wr = 0u, br = 0u;
+        if (chess_persist_extract_snapshot_u32(json, "\"time_control_ms\"", &tc)) {
+            ctx->game.time_control_ms = tc;
+        } else {
+            ctx->game.time_control_ms = CHESS_DEFAULT_TIME_CONTROL_MS;
+        }
+        if (chess_persist_extract_snapshot_u32(json, "\"white_remaining_ms\"", &wr) &&
+            chess_persist_extract_snapshot_u32(json, "\"black_remaining_ms\"", &br)) {
+            ctx->game.white_remaining_ms = wr;
+            ctx->game.black_remaining_ms = br;
+        } else {
+            ctx->game.white_remaining_ms = ctx->game.time_control_ms;
+            ctx->game.black_remaining_ms = ctx->game.time_control_ms;
+        }
+        ctx->game.last_clock_sync_ticks = SDL_GetTicks();
+    }
+
     memset(ctx->game.game_state.captured, 0, sizeof(ctx->game.game_state.captured));
     {
         const char *cap_key = strstr(json, "\"captured\"");
@@ -280,6 +299,9 @@ bool chess_persist_save_match_snapshot(AppContext *ctx)
     (void)fprintf(fp, "  \"last_move_to_file\": %d,\n", (int)ctx->game.game_state.last_move_to_file);
     (void)fprintf(fp, "  \"last_move_to_rank\": %d,\n", (int)ctx->game.game_state.last_move_to_rank);
     (void)fprintf(fp, "  \"outcome\": %u,\n", (unsigned)ctx->game.game_state.outcome);
+    (void)fprintf(fp, "  \"time_control_ms\": %u,\n", (unsigned)ctx->game.time_control_ms);
+    (void)fprintf(fp, "  \"white_remaining_ms\": %u,\n", (unsigned)ctx->game.white_remaining_ms);
+    (void)fprintf(fp, "  \"black_remaining_ms\": %u,\n", (unsigned)ctx->game.black_remaining_ms);
     (void)fprintf(fp, "  \"captured\": [");
     for (file = 0; file < CHESS_PIECE_COUNT; ++file) {
         (void)fprintf(fp, "%u", (unsigned)ctx->game.game_state.captured[file]);

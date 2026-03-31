@@ -232,6 +232,7 @@ static void net_send_start_if_needed(AppContext *ctx)
         memset(&ctx->protocol.pending_start_payload, 0, sizeof(ctx->protocol.pending_start_payload));
         ctx->protocol.pending_start_payload.game_id = make_game_id(&ctx->network.network_session.local_peer, &ctx->network.network_session.remote_peer);
         ctx->protocol.pending_start_payload.initial_turn = CHESS_COLOR_WHITE;
+        ctx->protocol.pending_start_payload.time_control_ms = CHESS_DEFAULT_TIME_CONTROL_MS;
         if (ctx->protocol.pending_start_payload.resume_token[0] == '\0') {
             (void)chess_generate_peer_uuid(
                 ctx->protocol.pending_start_payload.resume_token,
@@ -331,4 +332,35 @@ void chess_net_tick(AppContext *ctx)
     chess_net_drain_incoming_packets(ctx, poll_result.connection_readable);
     net_send_start_if_needed(ctx);
     net_send_state_snapshot_if_needed(ctx);
+
+    /* Server: check for chess clock timeout */
+    if (ctx->network.network_session.role == CHESS_ROLE_SERVER &&
+        ctx->network.network_session.game_started &&
+        ctx->game.game_state.outcome == CHESS_OUTCOME_NONE &&
+        ctx->game.turn_started_at_ms > 0) {
+        uint64_t now = SDL_GetTicks();
+        uint64_t elapsed = now - ctx->game.turn_started_at_ms;
+        uint32_t *active_remaining = (ctx->game.game_state.side_to_move == CHESS_COLOR_WHITE)
+            ? &ctx->game.white_remaining_ms
+            : &ctx->game.black_remaining_ms;
+
+        if (elapsed >= *active_remaining) {
+            ChessTimeSyncPayload ts;
+            *active_remaining = 0;
+            ctx->game.turn_started_at_ms = 0;
+            ctx->game.last_clock_sync_ticks = now;
+
+            ctx->game.game_state.outcome = (ctx->game.game_state.side_to_move == CHESS_COLOR_WHITE)
+                ? CHESS_OUTCOME_WHITE_TIMEOUT
+                : CHESS_OUTCOME_BLACK_TIMEOUT;
+
+            ts.white_remaining_ms = ctx->game.white_remaining_ms;
+            ts.black_remaining_ms = ctx->game.black_remaining_ms;
+            transport_send_time_sync(&ctx->network.transport.base, &ts);
+
+            (void)chess_persist_save_match_snapshot(ctx);
+            SDL_Log("GAME: %s timed out",
+                ctx->game.game_state.side_to_move == CHESS_COLOR_WHITE ? "WHITE" : "BLACK");
+        }
+    }
 }

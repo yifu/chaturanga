@@ -66,6 +66,30 @@ void chess_pkt_handle_move(AppContext *ctx, const ChessMovePayload *move)
         }
 
         if (chess_game_apply_remote_move(&ctx->game.game_state, remote_color, move)) {
+            /* Server: deduct time from the player who just moved and send TIME_SYNC */
+            if (ctx->network.network_session.role == CHESS_ROLE_SERVER &&
+                ctx->game.turn_started_at_ms > 0) {
+                uint64_t now = SDL_GetTicks();
+                uint64_t elapsed = now - ctx->game.turn_started_at_ms;
+                uint32_t *mover_remaining = (remote_color == CHESS_COLOR_WHITE)
+                    ? &ctx->game.white_remaining_ms
+                    : &ctx->game.black_remaining_ms;
+                if (elapsed >= *mover_remaining) {
+                    *mover_remaining = 0;
+                } else {
+                    *mover_remaining -= (uint32_t)elapsed;
+                }
+                ctx->game.turn_started_at_ms = now;
+                ctx->game.last_clock_sync_ticks = now;
+
+                {
+                    ChessTimeSyncPayload ts;
+                    ts.white_remaining_ms = ctx->game.white_remaining_ms;
+                    ts.black_remaining_ms = ctx->game.black_remaining_ms;
+                    transport_send_time_sync(&ctx->network.transport.base, &ts);
+                }
+            }
+
             if (victim != CHESS_PIECE_EMPTY) {
                 /* Defer capture animation until the remote-move slide finishes */
                 ctx->ui.capture_anim.pending = true;
@@ -177,4 +201,24 @@ void chess_pkt_handle_draw_decline(AppContext *ctx)
     ctx->network.network_session.draw_offer_pending = false;
     SDL_Log("GAME: draw declined by opponent");
     app_set_status_message(ctx, "Draw declined.", 3000u);
+}
+
+/* ── TIME_SYNC ──────────────────────────────────────────────────────── */
+
+void chess_pkt_handle_time_sync(AppContext *ctx, const ChessTimeSyncPayload *ts)
+{
+    if (!ctx || !ts || !ctx->network.network_session.game_started) {
+        return;
+    }
+
+    ctx->game.white_remaining_ms = ts->white_remaining_ms;
+    ctx->game.black_remaining_ms = ts->black_remaining_ms;
+    ctx->game.last_clock_sync_ticks = SDL_GetTicks();
+
+    /* Detect timeout signaled by server */
+    if (ts->white_remaining_ms == 0 && ctx->game.game_state.outcome == CHESS_OUTCOME_NONE) {
+        ctx->game.game_state.outcome = CHESS_OUTCOME_WHITE_TIMEOUT;
+    } else if (ts->black_remaining_ms == 0 && ctx->game.game_state.outcome == CHESS_OUTCOME_NONE) {
+        ctx->game.game_state.outcome = CHESS_OUTCOME_BLACK_TIMEOUT;
+    }
 }

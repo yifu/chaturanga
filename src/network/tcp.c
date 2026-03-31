@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 static bool configure_connected_socket(int fd)
@@ -56,16 +57,7 @@ static bool recv_all_with_timeout(int fd, void *buf, size_t len, int timeout_ms)
 
 static bool send_all(int fd, const void *buf, size_t len)
 {
-    struct pollfd pfd = { .fd = fd, .events = POLLOUT, .revents = 0 };
-    int pr;
     size_t sent = 0;
-
-    do {
-        pr = poll(&pfd, 1, 0);
-    } while (pr < 0 && errno == EINTR);
-    if (pr <= 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
-        return false;
-    }
 
     while (sent < len) {
         ssize_t n = 0;
@@ -266,6 +258,8 @@ void chess_tcp_connection_close(ChessTcpConnection *conn)
 bool chess_tcp_send_packet(ChessTcpConnection *conn, uint32_t message_type, uint32_t sequence, const void *payload, uint32_t payload_size)
 {
     ChessPacketHeader header;
+    struct iovec iov[2];
+    int iovcnt = 1;
 
     if (!conn || conn->fd < 0) {
         return false;
@@ -276,15 +270,123 @@ bool chess_tcp_send_packet(ChessTcpConnection *conn, uint32_t message_type, uint
     header.sequence = sequence;
     header.payload_size = payload_size;
 
-    if (!send_all(conn->fd, &header, sizeof(header))) {
+    iov[0].iov_base = &header;
+    iov[0].iov_len = sizeof(header);
+
+    if (payload_size > 0u && payload) {
+        iov[1].iov_base = (void *)(uintptr_t)payload;
+        iov[1].iov_len = payload_size;
+        iovcnt = 2;
+    } else if (payload_size > 0u) {
         return false;
     }
 
-    if (payload_size == 0u) {
-        return true;
+    {
+        size_t total = iov[0].iov_len + (iovcnt > 1 ? iov[1].iov_len : 0u);
+        size_t sent = 0;
+
+        while (sent < total) {
+            ssize_t n = writev(conn->fd, iov, iovcnt);
+            if (n < 0 && errno == EINTR) {
+                continue;
+            }
+            if (n <= 0) {
+                return false;
+            }
+            sent += (size_t)n;
+            /* Advance iov past bytes already sent */
+            while (iovcnt > 0 && (size_t)n >= iov[0].iov_len) {
+                n -= (ssize_t)iov[0].iov_len;
+                iov[0] = iov[1];
+                iovcnt--;
+            }
+            if (iovcnt > 0 && n > 0) {
+                iov[0].iov_base = (char *)iov[0].iov_base + n;
+                iov[0].iov_len -= (size_t)n;
+            }
+        }
     }
 
-    return payload != NULL && send_all(conn->fd, payload, payload_size);
+    return true;
+}
+
+bool chess_tcp_send_packet_pair(
+    ChessTcpConnection *conn,
+    uint32_t msg_type_1, uint32_t seq_1, const void *payload_1, uint32_t payload_size_1,
+    uint32_t msg_type_2, uint32_t seq_2, const void *payload_2, uint32_t payload_size_2)
+{
+    ChessPacketHeader hdr1;
+    ChessPacketHeader hdr2;
+    struct iovec iov[4];
+    int iovcnt = 0;
+    size_t total;
+    size_t sent;
+
+    if (!conn || conn->fd < 0) {
+        return false;
+    }
+
+    hdr1.protocol_version = CHESS_PROTOCOL_VERSION;
+    hdr1.message_type = msg_type_1;
+    hdr1.sequence = seq_1;
+    hdr1.payload_size = payload_size_1;
+
+    iov[iovcnt].iov_base = &hdr1;
+    iov[iovcnt].iov_len = sizeof(hdr1);
+    iovcnt++;
+
+    if (payload_size_1 > 0u && payload_1) {
+        iov[iovcnt].iov_base = (void *)(uintptr_t)payload_1;
+        iov[iovcnt].iov_len = payload_size_1;
+        iovcnt++;
+    }
+
+    hdr2.protocol_version = CHESS_PROTOCOL_VERSION;
+    hdr2.message_type = msg_type_2;
+    hdr2.sequence = seq_2;
+    hdr2.payload_size = payload_size_2;
+
+    iov[iovcnt].iov_base = &hdr2;
+    iov[iovcnt].iov_len = sizeof(hdr2);
+    iovcnt++;
+
+    if (payload_size_2 > 0u && payload_2) {
+        iov[iovcnt].iov_base = (void *)(uintptr_t)payload_2;
+        iov[iovcnt].iov_len = payload_size_2;
+        iovcnt++;
+    }
+
+    total = 0;
+    {
+        int i;
+        for (i = 0; i < iovcnt; ++i) {
+            total += iov[i].iov_len;
+        }
+    }
+
+    sent = 0;
+
+    while (sent < total) {
+        ssize_t n = writev(conn->fd, iov, iovcnt);
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            return false;
+        }
+        sent += (size_t)n;
+        while (iovcnt > 0 && (size_t)n >= iov[0].iov_len) {
+            n -= (ssize_t)iov[0].iov_len;
+            memmove(&iov[0], &iov[1], (size_t)(iovcnt - 1) * sizeof(iov[0]));
+            iovcnt--;
+        }
+        if (iovcnt > 0 && n > 0) {
+            iov[0].iov_base = (char *)iov[0].iov_base + n;
+            iov[0].iov_len -= (size_t)n;
+        }
+    }
+
+    return true;
 }
 
 bool chess_tcp_recv_packet_header(ChessTcpConnection *conn, int timeout_ms, ChessPacketHeader *out_header)

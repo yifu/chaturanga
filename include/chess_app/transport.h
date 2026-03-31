@@ -17,6 +17,9 @@ typedef enum ChessRecvResult {
 typedef struct TransportOps {
     bool (*send_packet)(void *self, uint32_t message_type, uint32_t sequence,
                         const void *payload, uint32_t payload_size);
+    bool (*send_packet_pair)(void *self,
+                             uint32_t msg_type_1, uint32_t seq_1, const void *payload_1, uint32_t payload_size_1,
+                             uint32_t msg_type_2, uint32_t seq_2, const void *payload_2, uint32_t payload_size_2);
     ChessRecvResult (*recv_nonblocking)(void *self,
                                         ChessPacketHeader *out_header,
                                         uint8_t *out_payload, size_t payload_capacity);
@@ -36,6 +39,15 @@ static inline bool transport_send_packet(Transport *t, uint32_t msg_type, uint32
                                           const void *payload, uint32_t payload_size) {
     return t && t->ops && t->ops->send_packet
         ? t->ops->send_packet(t, msg_type, seq, payload, payload_size)
+        : false;
+}
+
+static inline bool transport_send_packet_pair(Transport *t,
+                                               uint32_t msg_type_1, uint32_t seq_1, const void *payload_1, uint32_t payload_size_1,
+                                               uint32_t msg_type_2, uint32_t seq_2, const void *payload_2, uint32_t payload_size_2) {
+    return t && t->ops && t->ops->send_packet_pair
+        ? t->ops->send_packet_pair(t, msg_type_1, seq_1, payload_1, payload_size_1,
+                                   msg_type_2, seq_2, payload_2, payload_size_2)
         : false;
 }
 
@@ -95,6 +107,17 @@ static inline bool transport_send_resume_response(Transport *t, const ChessResum
 
 static inline bool transport_send_state_snapshot(Transport *t, const ChessStateSnapshotPayload *snap) {
     return transport_send_packet(t, CHESS_MSG_STATE_SNAPSHOT, 4u, snap, (uint32_t)sizeof(*snap));
+}
+
+static inline bool transport_send_time_sync(Transport *t, const ChessTimeSyncPayload *ts) {
+    return transport_send_packet(t, CHESS_MSG_TIME_SYNC, 0u, ts, (uint32_t)sizeof(*ts));
+}
+
+static inline bool transport_send_move_with_time_sync(
+    Transport *t, uint32_t move_seq, const ChessMovePayload *move, const ChessTimeSyncPayload *ts) {
+    return transport_send_packet_pair(t,
+        CHESS_MSG_MOVE, move_seq, move, (uint32_t)sizeof(*move),
+        CHESS_MSG_TIME_SYNC, 0u, ts, (uint32_t)sizeof(*ts));
 }
 
 #endif /* CHESS_APP_TRANSPORT_H */
