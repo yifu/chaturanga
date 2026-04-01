@@ -196,22 +196,24 @@ void chess_input_handle_board_mouse_down(AppContext *ctx, int mouse_x, int mouse
         return;
     }
 
-    if (chess_game_select_local_piece(&ctx->game.game_state, ctx->network.network_session.local_color, file, rank)) {
-        ctx->ui.drag.drag_active = true;
-        ctx->ui.drag.drag_piece = chess_game_get_piece(&ctx->game.game_state, file, rank);
-        ctx->ui.drag.drag_from_file = file;
-        ctx->ui.drag.drag_from_rank = rank;
-        ctx->ui.drag.drag_mouse_x = mouse_x;
-        ctx->ui.drag.drag_mouse_y = mouse_y;
-        return;
+    {
+        bool was_selected = ctx->game.game_state.has_selection
+            && ctx->game.game_state.selected_file == file
+            && ctx->game.game_state.selected_rank == rank;
+
+        if (chess_game_select_local_piece(&ctx->game.game_state, ctx->network.network_session.local_color, file, rank)) {
+            ctx->ui.drag.drag_active = true;
+            ctx->ui.drag.drag_piece = chess_game_get_piece(&ctx->game.game_state, file, rank);
+            ctx->ui.drag.drag_from_file = file;
+            ctx->ui.drag.drag_from_rank = rank;
+            ctx->ui.drag.drag_mouse_x = mouse_x;
+            ctx->ui.drag.drag_mouse_y = mouse_y;
+            ctx->ui.drag.was_already_selected = was_selected;
+            return;
+        }
     }
 
     if (ctx->game.game_state.has_selection) {
-        if (ctx->game.game_state.selected_file == file && ctx->game.game_state.selected_rank == rank) {
-            chess_game_clear_selection(&ctx->game.game_state);
-            return;
-        }
-
         (void)chess_input_try_send_local_move(ctx, file, rank, CHESS_PROMOTION_NONE);
     }
 }
@@ -248,16 +250,23 @@ void chess_input_handle_board_mouse_up(AppContext *ctx, int mouse_x, int mouse_y
 
     {
         bool move_ok = false;
+        bool same_square = false;
 
         if (chess_ui_screen_to_board_square(ctx, mouse_x, mouse_y, &to_file, &to_rank)) {
             if (to_file == ctx->ui.drag.drag_from_file && to_rank == ctx->ui.drag.drag_from_rank) {
-                /* Dropped on the same square — no snap-back, just deselect */
+                /* Clicked (not dragged) on the same square */
+                same_square = true;
+                if (ctx->ui.drag.was_already_selected) {
+                    /* Re-click on the selected piece → deselect */
+                    chess_game_clear_selection(&ctx->game.game_state);
+                }
+                /* else: newly selected → keep selection for click-to-move */
             } else {
                 move_ok = chess_input_try_send_local_move(ctx, to_file, to_rank, CHESS_PROMOTION_NONE);
             }
         }
 
-        if (!move_ok && !ctx->ui.drag.promotion_pending) {
+        if (!move_ok && !same_square && !ctx->ui.drag.promotion_pending) {
             chess_ui_start_snap_back_animation(
                 ctx,
                 ctx->ui.drag.drag_piece,

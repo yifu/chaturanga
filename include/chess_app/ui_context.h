@@ -18,6 +18,7 @@ typedef struct DragState {
     bool promotion_pending;
     int promotion_to_file;
     int promotion_to_rank;
+    bool was_already_selected; /* piece was selected before this drag started */
 } DragState;
 
 typedef struct RemoteMoveAnimation {
