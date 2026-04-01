@@ -222,6 +222,29 @@ void chess_input_handle_events(AppContext *ctx)
         }
 
         if (!ctx->network.network_session.game_started) {
+            if (event.type == SDL_EVENT_MOUSE_WHEEL) {
+                int ww = 0;
+                int wh = 0;
+                SDL_GetWindowSize(ctx->win.window, &ww, &wh);
+                {
+                    int row_step = 36 + 6; /* peer_row_height + peer_row_gap */
+                    int total_content = ctx->game.lobby.discovered_peer_count * row_step;
+                    int visible_area = wh - 60; /* margin + title area */
+                    int max_scroll = total_content - visible_area;
+                    int delta = (event.wheel.y > 0.0f) ? -row_step : ((event.wheel.y < 0.0f) ? row_step : 0);
+
+                    if (max_scroll < 0) {
+                        max_scroll = 0;
+                    }
+                    ctx->game.lobby.scroll_offset += delta;
+                    if (ctx->game.lobby.scroll_offset < 0) {
+                        ctx->game.lobby.scroll_offset = 0;
+                    }
+                    if (ctx->game.lobby.scroll_offset > max_scroll) {
+                        ctx->game.lobby.scroll_offset = max_scroll;
+                    }
+                }
+            }
             if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                 event.button.button == SDL_BUTTON_LEFT &&
                 ctx->game.lobby.discovered_peer_count > 0) {

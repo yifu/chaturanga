@@ -39,7 +39,12 @@ void chess_lobby_render(
         }
     }
 
-    y = margin + 50;
+    y = margin + 50 - lobby->scroll_offset;
+
+    {
+        SDL_Rect clip = {0, margin + 50, width, height - (margin + 50)};
+        SDL_SetRenderClipRect(renderer, &clip);
+    }
 
     /* Render peer list */
     for (i = 0; i < lobby->discovered_peer_count; ++i) {
@@ -164,6 +169,8 @@ void chess_lobby_render(
         y += peer_row_height + peer_row_gap;
     }
 
+    SDL_SetRenderClipRect(renderer, NULL);
+
     /* If no peers, show waiting message */
     if (lobby->discovered_peer_count == 0) {
         SDL_Texture *waiting_tex = make_text_texture(
@@ -205,7 +212,7 @@ int chess_lobby_find_clicked_peer(
 
     SDL_GetWindowSize(window, &width, &height);
     peer_item_x = (width - peer_item_width) / 2;
-    lobby_start_y = margin + 50;
+    lobby_start_y = margin + 50 - lobby->scroll_offset;
 
     for (peer_idx = 0; peer_idx < lobby->discovered_peer_count; ++peer_idx) {
         const int peer_y = lobby_start_y + peer_idx * (peer_row_height + peer_row_gap);

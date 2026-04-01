@@ -47,6 +47,7 @@ typedef struct ChessLobbyState {
     int discovered_peer_count;
     int selected_peer_idx;
     int hovered_peer_idx;
+    int scroll_offset; /* pixels scrolled (0 = top) */
 } ChessLobbyState;
 
 void chess_lobby_init(ChessLobbyState *lobby);

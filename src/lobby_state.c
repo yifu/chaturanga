@@ -175,6 +175,15 @@ bool chess_lobby_remove_peer_by_profile_id(ChessLobbyState *lobby, const char *p
         lobby->selected_peer_idx -= 1;
     }
 
+    /* Clamp scroll offset after removing a peer */
+    if (lobby->scroll_offset > 0) {
+        int row_step = 42; /* peer_row_height(36) + peer_row_gap(6) */
+        int total = lobby->discovered_peer_count * row_step;
+        if (lobby->scroll_offset > total) {
+            lobby->scroll_offset = total > 0 ? total : 0;
+        }
+    }
+
     return true;
 }
 
