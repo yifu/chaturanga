@@ -106,6 +106,29 @@ void chess_ui_start_king_bounce_animation(AppContext *ctx, int king_file, int ki
 float chess_ui_king_bounce_offset(const AppContext *ctx, int file, int rank, float cell_h);
 
 /**
+ * Advance the king-tilt (checkmate) animation timer.
+ * Call once per frame from the main loop.
+ */
+void chess_ui_update_king_tilt_animation(AppContext *ctx);
+
+/**
+ * Start a king-tilt animation: the mated king falls over to one side.
+ */
+void chess_ui_start_king_tilt_animation(AppContext *ctx, int king_file, int king_rank);
+
+/**
+ * Return the current rotation angle (degrees) for a king tilt in
+ * progress.  Returns 0.0 when no tilt is active or the given
+ * square is not the tilting king.
+ */
+double chess_ui_king_tilt_angle(const AppContext *ctx, int file, int rank);
+
+/**
+ * Return true while the king tilt animation is still playing.
+ */
+bool chess_ui_king_tilt_active(const AppContext *ctx);
+
+/**
  * Full frame rendering: lobby, board, overlays, history panel, status.
  */
 void chess_ui_render_frame(AppContext *ctx);

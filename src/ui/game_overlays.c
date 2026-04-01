@@ -2,6 +2,7 @@
 #include "chess_app/render_board.h"
 
 #include <SDL3_ttf/SDL_ttf.h>
+#include <math.h>
 
 /* ------------------------------------------------------------------ */
 /*  Promotion helpers                                                  */
@@ -236,13 +237,31 @@ void chess_ui_render_game_overlay(
                     int screen_file = board_to_screen_index(file, black_perspective);
                     int screen_rank = board_to_screen_index(rank, black_perspective);
                     float bounce_y = chess_ui_king_bounce_offset(ctx, file, rank, cell_h);
+                    double tilt_angle = chess_ui_king_tilt_angle(ctx, file, rank);
                     SDL_FRect dst;
                     SDL_GetTextureSize(tex, &tex_w, &tex_h);
                     dst.x = screen_file * cell_w + (cell_w - tex_w) * 0.5f;
                     dst.y = (float)board_y + screen_rank * cell_h + (cell_h - tex_h) * 0.5f - bounce_y;
                     dst.w = tex_w;
                     dst.h = tex_h;
-                    SDL_RenderTexture(renderer, tex, NULL, &dst);
+
+                    if (tilt_angle != 0.0) {
+                        /* Slide the king's base down to the cell bottom as it falls */
+                        float tilt_frac = (float)(fabs(tilt_angle) / 90.0);
+                        if (tilt_frac > 1.0f) tilt_frac = 1.0f;
+                        dst.y += tilt_frac * (cell_h - tex_h) * 0.5f;
+                        /* Compensate for the rotation extending below the cell:
+                         * the bottom corners of the texture dip by sin(angle)*tex_w/2,
+                         * so shift the whole piece up by that amount. */
+                        float sin_a = (float)sin(fabs(tilt_angle) * M_PI / 180.0);
+                        dst.y -= sin_a * tex_w * 0.5f;
+                        /* Pivot at bottom-center of the piece */
+                        SDL_FPoint pivot = { tex_w * 0.5f, tex_h };
+                        SDL_RenderTextureRotated(renderer, tex, NULL, &dst,
+                                                 tilt_angle, &pivot, SDL_FLIP_NONE);
+                    } else {
+                        SDL_RenderTexture(renderer, tex, NULL, &dst);
+                    }
 
                     /* Draw "!" above the bouncing king (static position) */
                     if (bounce_y > 0.0f) {

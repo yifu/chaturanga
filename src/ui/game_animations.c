@@ -34,12 +34,25 @@ static bool find_checked_king(const ChessGameState *state, ChessPlayerColor colo
     return false;
 }
 
-/* Try to start a king-bounce animation if the side to move is in check. */
-static void try_start_king_bounce_if_check(AppContext *ctx)
+/* Try to start a king-bounce (check) or king-tilt (checkmate) animation. */
+static void try_start_king_check_animation(AppContext *ctx)
 {
     ChessPlayerColor side = ctx->game.game_state.side_to_move;
+    ChessGameOutcome outcome = ctx->game.game_state.outcome;
     int king_file, king_rank;
 
+    /* Checkmate: the losing king tilts over */
+    if (outcome == CHESS_OUTCOME_CHECKMATE_WHITE_WINS ||
+        outcome == CHESS_OUTCOME_CHECKMATE_BLACK_WINS) {
+        ChessPlayerColor loser = (outcome == CHESS_OUTCOME_CHECKMATE_WHITE_WINS)
+            ? CHESS_COLOR_BLACK : CHESS_COLOR_WHITE;
+        if (find_checked_king(&ctx->game.game_state, loser, &king_file, &king_rank)) {
+            chess_ui_start_king_tilt_animation(ctx, king_file, king_rank);
+        }
+        return;
+    }
+
+    /* Check (not mate): the king bounces in surprise */
     if (chess_gs_is_king_in_check(&ctx->game.game_state, side) &&
         find_checked_king(&ctx->game.game_state, side, &king_file, &king_rank)) {
         chess_ui_start_king_bounce_animation(ctx, king_file, king_rank);
@@ -80,7 +93,7 @@ void chess_ui_update_remote_move_animation(AppContext *ctx)
         }
 
         /* Bounce the checked king now that the piece has landed */
-        try_start_king_bounce_if_check(ctx);
+        try_start_king_check_animation(ctx);
     }
 }
 
@@ -639,4 +652,125 @@ float chess_ui_king_bounce_offset(const AppContext *ctx, int file, int rank, flo
     height = s_bounce_heights[bounce_idx] * cell_h;
 
     return height * 4.0f * seg_t * (1.0f - seg_t);
+}
+
+/* ------------------------------------------------------------------ */
+/*  King-tilt animation (mated king falls over)                        */
+/* ------------------------------------------------------------------ */
+
+#define CHESS_KING_TILT_TOTAL_MS  700u
+#define CHESS_KING_TILT_FINAL_DEG  90.0
+
+/*
+ * Damped spring: the king falls to 90°, overshoots, and settles.
+ * Three segments:
+ *   0.0–0.45 :   0° → 100°  (fall + overshoot)
+ *   0.45–0.75:  100° →  83°  (bounce back)
+ *   0.75–1.0 :   83° →  90°  (settle)
+ */
+static const double s_tilt_from[3] = {  0.0, 100.0, 83.0 };
+static const double s_tilt_to[3]   = { 100.0, 83.0, 90.0 };
+static const float  s_tilt_end[3]  = { 0.45f, 0.75f, 1.0f };
+
+/* Ease-out quad: decelerating */
+static double ease_out(double t)
+{
+    return t * (2.0 - t);
+}
+
+/* Ease-in-out quad */
+static double ease_in_out(double t)
+{
+    return (t < 0.5) ? 2.0 * t * t : -1.0 + (4.0 - 2.0 * t) * t;
+}
+
+void chess_ui_start_king_tilt_animation(AppContext *ctx, int king_file, int king_rank)
+{
+    if (!ctx) {
+        return;
+    }
+
+    ctx->ui.king_tilt_anim.active = true;
+    ctx->ui.king_tilt_anim.king_file = king_file;
+    ctx->ui.king_tilt_anim.king_rank = king_rank;
+    ctx->ui.king_tilt_anim.started_at_ms = SDL_GetTicks();
+    ctx->ui.king_tilt_anim.duration_ms = CHESS_KING_TILT_TOTAL_MS;
+}
+
+void chess_ui_update_king_tilt_animation(AppContext *ctx)
+{
+    uint64_t now;
+    uint64_t elapsed;
+
+    if (!ctx || !ctx->ui.king_tilt_anim.active) {
+        return;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->ui.king_tilt_anim.started_at_ms;
+    if (ctx->ui.king_tilt_anim.duration_ms == 0u ||
+        elapsed >= (uint64_t)ctx->ui.king_tilt_anim.duration_ms) {
+        ctx->ui.king_tilt_anim.active = false;
+    }
+}
+
+bool chess_ui_king_tilt_active(const AppContext *ctx)
+{
+    return ctx && ctx->ui.king_tilt_anim.active;
+}
+
+double chess_ui_king_tilt_angle(const AppContext *ctx, int file, int rank)
+{
+    uint64_t now;
+    uint64_t elapsed;
+    float t;
+    int seg;
+    float seg_start;
+    float seg_len;
+    double seg_t;
+
+    if (!ctx || !ctx->ui.king_tilt_anim.active) {
+        return 0.0;
+    }
+
+    if (file != ctx->ui.king_tilt_anim.king_file ||
+        rank != ctx->ui.king_tilt_anim.king_rank) {
+        return 0.0;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->ui.king_tilt_anim.started_at_ms;
+    if (ctx->ui.king_tilt_anim.duration_ms == 0u) {
+        return CHESS_KING_TILT_FINAL_DEG;
+    }
+
+    t = (float)elapsed / (float)ctx->ui.king_tilt_anim.duration_ms;
+    if (t >= 1.0f) {
+        return CHESS_KING_TILT_FINAL_DEG;
+    }
+
+    /* Find which segment we're in */
+    seg_start = 0.0f;
+    for (seg = 0; seg < 3; ++seg) {
+        if (t < s_tilt_end[seg]) {
+            break;
+        }
+        seg_start = s_tilt_end[seg];
+    }
+    if (seg >= 3) {
+        seg = 2;
+    }
+
+    seg_len = s_tilt_end[seg] - seg_start;
+    seg_t = (double)(t - seg_start) / (double)seg_len;
+
+    /* First segment: ease-out (fast start, slow arrival).
+     * Later segments: ease-in-out (smooth spring). */
+    if (seg == 0) {
+        seg_t = ease_out(seg_t);
+    } else {
+        seg_t = ease_in_out(seg_t);
+    }
+
+    return s_tilt_from[seg] + (s_tilt_to[seg] - s_tilt_from[seg]) * seg_t;
 }

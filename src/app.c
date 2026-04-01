@@ -342,6 +342,7 @@ int app_run(void)
         chess_ui_update_capture_animation(&ctx);
         chess_ui_update_snap_back_animation(&ctx);
         chess_ui_update_king_bounce_animation(&ctx);
+        chess_ui_update_king_tilt_animation(&ctx);
 
         chess_ui_render_frame(&ctx);
     }

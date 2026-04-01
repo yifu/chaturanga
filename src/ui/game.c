@@ -219,7 +219,8 @@ void chess_ui_render_frame(AppContext *ctx)
         chess_ui_render_snap_back_animation(ctx, board_width, board_y, board_height);
         chess_ui_render_drag_preview(ctx, board_width, board_height);
         chess_ui_render_board_coordinates(ctx->win.renderer, board_width, board_y, board_height, ctx->network.network_session.local_color);
-        chess_ui_render_game_over_banner(ctx, board_width, board_y, board_height);
+        if (!chess_ui_king_tilt_active(ctx))
+            chess_ui_render_game_over_banner(ctx, board_width, board_y, board_height);
         chess_ui_render_move_history_panel(ctx, width, height, board_width);
     }
 

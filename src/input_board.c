@@ -97,19 +97,38 @@ bool chess_input_try_send_local_move(AppContext *ctx, int to_file, int to_rank, 
             chess_ui_start_capture_animation(ctx, victim, victim_file, victim_rank);
         }
 
-        /* Bounce the opponent's king if it is now in check */
+        /* Tilt on checkmate, bounce on check */
         {
-            ChessPlayerColor opponent = ctx->game.game_state.side_to_move;
-            if (chess_gs_is_king_in_check(&ctx->game.game_state, opponent)) {
-                ChessPiece king_target = (opponent == CHESS_COLOR_WHITE)
+            ChessGameOutcome outcome = ctx->game.game_state.outcome;
+            if (outcome == CHESS_OUTCOME_CHECKMATE_WHITE_WINS ||
+                outcome == CHESS_OUTCOME_CHECKMATE_BLACK_WINS) {
+                ChessPlayerColor loser = (outcome == CHESS_OUTCOME_CHECKMATE_WHITE_WINS)
+                    ? CHESS_COLOR_BLACK : CHESS_COLOR_WHITE;
+                ChessPiece king_target = (loser == CHESS_COLOR_WHITE)
                     ? CHESS_PIECE_WHITE_KING : CHESS_PIECE_BLACK_KING;
                 int r, f;
                 for (r = 0; r < CHESS_BOARD_SIZE; ++r) {
                     for (f = 0; f < CHESS_BOARD_SIZE; ++f) {
                         if (chess_game_get_piece(&ctx->game.game_state, f, r) == king_target) {
-                            chess_ui_start_king_bounce_animation(ctx, f, r);
-                            r = CHESS_BOARD_SIZE; /* break outer */
+                            chess_ui_start_king_tilt_animation(ctx, f, r);
+                            r = CHESS_BOARD_SIZE;
                             break;
+                        }
+                    }
+                }
+            } else {
+                ChessPlayerColor opponent = ctx->game.game_state.side_to_move;
+                if (chess_gs_is_king_in_check(&ctx->game.game_state, opponent)) {
+                    ChessPiece king_target = (opponent == CHESS_COLOR_WHITE)
+                        ? CHESS_PIECE_WHITE_KING : CHESS_PIECE_BLACK_KING;
+                    int r, f;
+                    for (r = 0; r < CHESS_BOARD_SIZE; ++r) {
+                        for (f = 0; f < CHESS_BOARD_SIZE; ++f) {
+                            if (chess_game_get_piece(&ctx->game.game_state, f, r) == king_target) {
+                                chess_ui_start_king_bounce_animation(ctx, f, r);
+                                r = CHESS_BOARD_SIZE;
+                                break;
+                            }
                         }
                     }
                 }
