@@ -243,6 +243,49 @@ void chess_ui_render_game_overlay(
                     dst.w = tex_w;
                     dst.h = tex_h;
                     SDL_RenderTexture(renderer, tex, NULL, &dst);
+
+                    /* Draw "!" above the bouncing king (static position) */
+                    if (bounce_y > 0.0f) {
+                        SDL_Color outline_color = {0, 0, 0, 255};
+                        SDL_Color bang_color = {220, 40, 40, 255};
+                        SDL_Texture *bang_tex = make_text_texture(renderer, s_coord_font, "!", bang_color);
+                        SDL_Texture *outline_tex = make_text_texture(renderer, s_coord_font, "!", outline_color);
+                        if (bang_tex) {
+                            float bw = 0.0f, bh = 0.0f;
+                            float scale;
+                            /* Vertical offset above the king's rest position (fraction of cell_h) */
+                            float bang_offset = 0.15f;
+                            /* Outline grows by this fraction of the foreground size */
+                            float outline_grow = 0.25f;
+                            float rest_y = (float)board_y + screen_rank * cell_h + (cell_h - tex_h) * 0.5f;
+                            SDL_FRect bang_dst;
+                            SDL_GetTextureSize(bang_tex, &bw, &bh);
+                            scale = (cell_h * 0.4f) / bh;
+                            bw *= scale * 3.0f;
+                            bh *= scale;
+                            bang_dst.x = dst.x + (tex_w - bw) * 0.5f;
+                            bang_dst.y = rest_y - bh - cell_h * bang_offset;
+                            bang_dst.w = bw;
+                            bang_dst.h = bh;
+
+                            /* Draw black outline behind (slightly larger) */
+                            if (outline_tex) {
+                                float ow = bw * (1.0f + outline_grow);
+                                float oh = bh * (1.0f + outline_grow);
+                                SDL_FRect outline_dst;
+                                outline_dst.x = bang_dst.x - (ow - bw) * 0.5f;
+                                outline_dst.y = bang_dst.y - (oh - bh) * 0.5f;
+                                outline_dst.w = ow;
+                                outline_dst.h = oh;
+                                SDL_RenderTexture(renderer, outline_tex, NULL, &outline_dst);
+                                SDL_DestroyTexture(outline_tex);
+                            }
+
+                            /* Draw red foreground */
+                            SDL_RenderTexture(renderer, bang_tex, NULL, &bang_dst);
+                            SDL_DestroyTexture(bang_tex);
+                        }
+                    }
                 } else {
                     /* Fallback: coloured rectangle when font unavailable */
                     int screen_file = board_to_screen_index(file, black_perspective);
