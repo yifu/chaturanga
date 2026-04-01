@@ -9,7 +9,8 @@ void chess_lobby_render(
     const ChessLobbyState *lobby,
     TTF_Font *font)
 {
-    const int peer_row_height = 60;
+    const int peer_row_height = 36;
+    const int peer_row_gap = 6;
     const int margin = 10;
     const int peer_item_width = 400;
     const int peer_item_x = (width - peer_item_width) / 2;
@@ -160,7 +161,7 @@ void chess_lobby_render(
             if (name_tex) { SDL_DestroyTexture(name_tex); }
         }
 
-        y += peer_row_height;
+        y += peer_row_height + peer_row_gap;
     }
 
     /* If no peers, show waiting message */
@@ -188,7 +189,8 @@ int chess_lobby_find_clicked_peer(
     int mouse_x,
     int mouse_y)
 {
-    const int peer_row_height = 60;
+    const int peer_row_height = 36;
+    const int peer_row_gap = 6;
     const int margin = 10;
     const int peer_item_width = 400;
     int width = 0;
@@ -206,7 +208,7 @@ int chess_lobby_find_clicked_peer(
     lobby_start_y = margin + 50;
 
     for (peer_idx = 0; peer_idx < lobby->discovered_peer_count; ++peer_idx) {
-        const int peer_y = lobby_start_y + peer_idx * peer_row_height;
+        const int peer_y = lobby_start_y + peer_idx * (peer_row_height + peer_row_gap);
         if (mouse_x >= peer_item_x &&
             mouse_x < peer_item_x + peer_item_width &&
             mouse_y >= peer_y &&
