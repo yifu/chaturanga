@@ -62,6 +62,7 @@ typedef struct UIContext {
     SnapBackAnimation snap_back_anim;
     char status_message[APP_STATUS_MESSAGE_LEN];
     uint64_t status_message_until_ms;
+    int history_scroll_offset; /* turn-lines from bottom; 0 = follow latest */
 } UIContext;
 
 #endif

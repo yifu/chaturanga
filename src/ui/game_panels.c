@@ -310,9 +310,12 @@ void chess_ui_render_move_history_panel(AppContext *ctx, int window_width, int w
 
     SDL_SetRenderDrawColor(ctx->win.renderer, 74, 74, 84, 255);
     SDL_RenderLine(ctx->win.renderer, (float)(panel_left + 1), 56.0f, (float)panel_right, 56.0f);
-    SDL_RenderLine(ctx->win.renderer, (float)col_sep_x, 38.0f, (float)col_sep_x, (float)window_height);
 
-    max_rows = (window_height - start_y - 8) / row_height;
+    {
+        int btn_top = window_height - BTN_HEIGHT - BTN_MARGIN - BTN_MARGIN;
+        int history_bottom = btn_top;
+        max_rows = (history_bottom - start_y) / row_height;
+    }
     if (max_rows <= 0) {
         render_panel_buttons(ctx, panel_left, (int)panel_rect.w, window_height);
         return;
@@ -341,10 +344,24 @@ void chess_ui_render_move_history_panel(AppContext *ctx, int window_width, int w
         return;
     }
 
-    first_turn = total_turns - max_rows + 1;
+    first_turn = total_turns - max_rows + 1 - ctx->ui.history_scroll_offset;
     if (first_turn < 1) {
         first_turn = 1;
     }
+
+    {
+        int btn_top = window_height - BTN_HEIGHT - BTN_MARGIN - BTN_MARGIN;
+        SDL_Rect clip_rect;
+        clip_rect.x = panel_left;
+        clip_rect.y = start_y - 2;
+        clip_rect.w = window_width - panel_left;
+        clip_rect.h = btn_top - (start_y - 2);
+        SDL_SetRenderClipRect(ctx->win.renderer, &clip_rect);
+    }
+
+    /* Column separator — drawn inside clip region */
+    SDL_SetRenderDrawColor(ctx->win.renderer, 74, 74, 84, 255);
+    SDL_RenderLine(ctx->win.renderer, (float)col_sep_x, 38.0f, (float)col_sep_x, (float)window_height);
 
     for (turn = first_turn; turn <= total_turns; ++turn) {
         int row = turn - first_turn;
@@ -426,6 +443,9 @@ void chess_ui_render_move_history_panel(AppContext *ctx, int window_width, int w
             SDL_DestroyTexture(black_tex);
         }
     }
+
+    /* Restore clip rect before drawing buttons */
+    SDL_SetRenderClipRect(ctx->win.renderer, NULL);
 
     render_panel_buttons(ctx, panel_left, (int)panel_rect.w, window_height);
 }
