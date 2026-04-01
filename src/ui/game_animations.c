@@ -710,13 +710,20 @@ void chess_ui_update_king_tilt_animation(AppContext *ctx)
     elapsed = now - ctx->ui.king_tilt_anim.started_at_ms;
     if (ctx->ui.king_tilt_anim.duration_ms == 0u ||
         elapsed >= (uint64_t)ctx->ui.king_tilt_anim.duration_ms) {
-        ctx->ui.king_tilt_anim.active = false;
+        /* Animation finished — clamp elapsed so the king stays at final angle */
+        ctx->ui.king_tilt_anim.started_at_ms =
+            now - ctx->ui.king_tilt_anim.duration_ms;
     }
 }
 
 bool chess_ui_king_tilt_active(const AppContext *ctx)
 {
-    return ctx && ctx->ui.king_tilt_anim.active;
+    if (!ctx || !ctx->ui.king_tilt_anim.active) {
+        return false;
+    }
+    /* "Active" for UI gating means the spring is still animating */
+    uint64_t elapsed = SDL_GetTicks() - ctx->ui.king_tilt_anim.started_at_ms;
+    return elapsed < (uint64_t)ctx->ui.king_tilt_anim.duration_ms;
 }
 
 double chess_ui_king_tilt_angle(const AppContext *ctx, int file, int rank)
