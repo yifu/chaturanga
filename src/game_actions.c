@@ -36,10 +36,14 @@ void app_set_status_message(AppContext *ctx, const char *message, uint32_t durat
 void app_append_move_history(AppContext *ctx, const char *notation)
 {
     int idx;
+    bool new_turn_line;
 
     if (!ctx || !notation || notation[0] == '\0') {
         return;
     }
+
+    /* A new turn row appears when the count is even (white's move starts a row). */
+    new_turn_line = (ctx->game.move_history_count % 2u == 0u);
 
     if (ctx->game.move_history_count < (uint16_t)s_history_max_entries) {
         SDL_strlcpy(
@@ -47,16 +51,20 @@ void app_append_move_history(AppContext *ctx, const char *notation)
             notation,
             (size_t)s_history_entry_len);
         ctx->game.move_history_count += 1u;
-        return;
+    } else {
+        for (idx = 1; idx < s_history_max_entries; ++idx) {
+            SDL_memcpy(
+                ctx->game.move_history[idx - 1],
+                ctx->game.move_history[idx],
+                (size_t)s_history_entry_len);
+        }
+        SDL_strlcpy(ctx->game.move_history[s_history_max_entries - 1], notation, (size_t)s_history_entry_len);
     }
 
-    for (idx = 1; idx < s_history_max_entries; ++idx) {
-        SDL_memcpy(
-            ctx->game.move_history[idx - 1],
-            ctx->game.move_history[idx],
-            (size_t)s_history_entry_len);
+    /* Keep viewport stable when user is scrolled up. */
+    if (ctx->ui.history_scroll_offset > 0 && new_turn_line) {
+        ctx->ui.history_scroll_offset++;
     }
-    SDL_strlcpy(ctx->game.move_history[s_history_max_entries - 1], notation, (size_t)s_history_entry_len);
 }
 
 /* ── Challenge cleanup ───────────────────────────────────────────────── */
