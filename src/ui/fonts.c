@@ -18,6 +18,7 @@ SDL_Texture *s_piece_textures[CHESS_PIECE_COUNT];
 SDL_Texture *s_piece_silhouettes[CHESS_PIECE_COUNT];
 SDL_Texture *s_file_label_textures[CHESS_BOARD_SIZE][2];
 SDL_Texture *s_rank_label_textures[CHESS_BOARD_SIZE][2];
+SDL_Texture *s_nerve_texture = NULL;
 bool         s_ttf_initialized                = false;
 bool         s_lobby_icon_pending_available   = false;
 bool         s_lobby_icon_incoming_available  = false;
@@ -345,6 +346,12 @@ void init_piece_textures(SDL_Renderer *renderer)
         }
     }
 
+    /* Load embedded effect sprites */
+    s_nerve_texture = load_embedded_png(renderer, embedded_nerve, embedded_nerve_size);
+    if (!s_nerve_texture) {
+        SDL_Log("UI: failed to load embedded nerve PNG: %s", SDL_GetError());
+    }
+
     s_coord_font = open_font_from_candidates(coord_font_paths, 16.0f);
     if (!s_coord_font) {
         SDL_Log("UI: no coordinate font found, board coordinates disabled");
@@ -419,6 +426,10 @@ void destroy_piece_textures(void)
     if (s_lobby_font && s_lobby_font != s_coord_font) {
         TTF_CloseFont(s_lobby_font);
         s_lobby_font = NULL;
+    }
+    if (s_nerve_texture) {
+        SDL_DestroyTexture(s_nerve_texture);
+        s_nerve_texture = NULL;
     }
     s_lobby_icon_pending_available = false;
     s_lobby_icon_incoming_available = false;

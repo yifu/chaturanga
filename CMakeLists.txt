@@ -57,6 +57,28 @@ foreach(piece ${PIECE_PNGS})
     string(APPEND EMBEDDED_HEADER_LINES "extern const unsigned char ${_var}[];\nextern const size_t ${_var}_size;\n")
 endforeach()
 
+# ── Embed effect sprites ─────────────────────────────────────────
+set(EFFECT_PNGS nerve)
+
+foreach(effect ${EFFECT_PNGS})
+    set(_input  "${CMAKE_CURRENT_SOURCE_DIR}/assets/effects/${effect}.png")
+    set(_output "${GENERATED_DIR}/${effect}.c")
+    set(_var    "embedded_${effect}")
+
+    add_custom_command(
+        OUTPUT  "${_output}"
+        COMMAND "${CMAKE_COMMAND}"
+                -DINPUT_FILE=${_input}
+                -DOUTPUT_FILE=${_output}
+                -DVAR_NAME=${_var}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/bin2c.cmake"
+        DEPENDS "${_input}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/bin2c.cmake"
+        COMMENT "bin2c: ${effect}.png"
+    )
+    list(APPEND EMBEDDED_SOURCES "${_output}")
+    string(APPEND EMBEDDED_HEADER_LINES "extern const unsigned char ${_var}[];\nextern const size_t ${_var}_size;\n")
+endforeach()
+
 string(APPEND EMBEDDED_HEADER_LINES "\n#endif /* EMBEDDED_PIECES_H */\n")
 file(WRITE "${GENERATED_DIR}/embedded_pieces.h" "${EMBEDDED_HEADER_LINES}")
 

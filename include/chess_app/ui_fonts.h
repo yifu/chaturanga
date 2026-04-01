@@ -21,6 +21,7 @@ extern bool         s_lobby_icon_pending_available;
 extern bool         s_lobby_icon_incoming_available;
 extern bool         s_lobby_icon_matched_available;
 extern const char  *s_lobby_font_path;
+extern SDL_Texture *s_nerve_texture;
 
 /* ── Public API ───────────────────────────────────────────────────── */
 

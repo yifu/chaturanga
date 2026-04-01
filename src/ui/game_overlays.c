@@ -259,6 +259,28 @@ void chess_ui_render_game_overlay(
                         SDL_FPoint pivot = { tex_w * 0.5f, tex_h };
                         SDL_RenderTextureRotated(renderer, tex, NULL, &dst,
                                                  tilt_angle, &pivot, SDL_FLIP_NONE);
+
+                        /* Draw anger nerve on the king's forehead */
+                        if (s_nerve_texture) {
+                            float nerve_size = tex_w * 0.35f;
+                            /* Position on the right side of the king's head */
+                            float nerve_local_x = tex_w * 0.65f - nerve_size * 0.5f;
+                            float nerve_local_y = tex_h * 0.40f;
+                            /* Transform relative to the pivot (bottom-center) */
+                            float rel_x = nerve_local_x - pivot.x;
+                            float rel_y = nerve_local_y - pivot.y;
+                            float cos_a = (float)cos(tilt_angle * M_PI / 180.0);
+                            float sin_a2 = (float)sin(tilt_angle * M_PI / 180.0);
+                            float rot_x = rel_x * cos_a - rel_y * sin_a2;
+                            float rot_y = rel_x * sin_a2 + rel_y * cos_a;
+                            SDL_FRect nerve_dst;
+                            nerve_dst.x = dst.x + pivot.x + rot_x;
+                            nerve_dst.y = dst.y + pivot.y + rot_y;
+                            nerve_dst.w = nerve_size;
+                            nerve_dst.h = nerve_size;
+                            SDL_RenderTextureRotated(renderer, s_nerve_texture, NULL, &nerve_dst,
+                                                     tilt_angle, NULL, SDL_FLIP_NONE);
+                        }
                     } else {
                         SDL_RenderTexture(renderer, tex, NULL, &dst);
                     }
