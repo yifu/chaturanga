@@ -17,6 +17,10 @@
 
 /* ---------- clipboard helper ---------- */
 
+/* History-panel layout constants (mirrored from game_panels.c) */
+#define BTN_HEIGHT     28
+#define BTN_MARGIN      8
+
 static void copy_move_history_to_clipboard(AppContext *ctx)
 {
     size_t capacity;
@@ -269,6 +273,34 @@ void chess_input_handle_events(AppContext *ctx)
                     continue;
                 }
             }
+        }
+
+        if (event.type == SDL_EVENT_MOUSE_WHEEL) {
+            int ww = 0;
+            int wh = 0;
+            SDL_GetWindowSize(ctx->win.window, &ww, &wh);
+            {
+                int bw = chess_ui_board_width_for_window(ww, true);
+                if ((int)event.wheel.mouse_x >= bw && ctx->game.move_history_count > 0) {
+                    int total_turns = ((int)ctx->game.move_history_count + 1) / 2;
+                    int btn_top = wh - BTN_HEIGHT - BTN_MARGIN - BTN_MARGIN;
+                    int max_rows = (btn_top - 64) / 20;
+                    int max_offset = total_turns - max_rows;
+                    int scroll_lines = (event.wheel.y > 0.0f) ? 1 : ((event.wheel.y < 0.0f) ? -1 : 0);
+
+                    if (max_offset < 0) {
+                        max_offset = 0;
+                    }
+                    ctx->ui.history_scroll_offset += scroll_lines;
+                    if (ctx->ui.history_scroll_offset < 0) {
+                        ctx->ui.history_scroll_offset = 0;
+                    }
+                    if (ctx->ui.history_scroll_offset > max_offset) {
+                        ctx->ui.history_scroll_offset = max_offset;
+                    }
+                }
+            }
+            continue;
         }
 
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
