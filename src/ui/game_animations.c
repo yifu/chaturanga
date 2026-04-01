@@ -7,6 +7,44 @@
  *   - Capture animation (piece flies to the player panel, shrinking)
  */
 #include "game_internal.h"
+#include "chess_app/game_state.h"
+
+#include <stdbool.h>
+
+/* Declared in game_state_internal.h but we only need this one function */
+extern bool chess_gs_is_king_in_check(const ChessGameState *state, ChessPlayerColor color);
+
+/* Find the king for 'color' and return its file/rank.  Returns false if
+ * not found (should never happen in a valid game state). */
+static bool find_checked_king(const ChessGameState *state, ChessPlayerColor color,
+                              int *out_file, int *out_rank)
+{
+    ChessPiece target = (color == CHESS_COLOR_WHITE) ? CHESS_PIECE_WHITE_KING
+                                                     : CHESS_PIECE_BLACK_KING;
+    int r, f;
+    for (r = 0; r < CHESS_BOARD_SIZE; ++r) {
+        for (f = 0; f < CHESS_BOARD_SIZE; ++f) {
+            if (chess_game_get_piece(state, f, r) == target) {
+                *out_file = f;
+                *out_rank = r;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* Try to start a king-bounce animation if the side to move is in check. */
+static void try_start_king_bounce_if_check(AppContext *ctx)
+{
+    ChessPlayerColor side = ctx->game.game_state.side_to_move;
+    int king_file, king_rank;
+
+    if (chess_gs_is_king_in_check(&ctx->game.game_state, side) &&
+        find_checked_king(&ctx->game.game_state, side, &king_file, &king_rank)) {
+        chess_ui_start_king_bounce_animation(ctx, king_file, king_rank);
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Remote-move animation                                              */
@@ -40,6 +78,9 @@ void chess_ui_update_remote_move_animation(AppContext *ctx)
                 ctx->ui.capture_anim.from_file,
                 ctx->ui.capture_anim.from_rank);
         }
+
+        /* Bounce the checked king now that the piece has landed */
+        try_start_king_bounce_if_check(ctx);
     }
 }
 
@@ -506,4 +547,96 @@ void chess_ui_render_snap_back_animation(AppContext *ctx, int width, int board_y
             SDL_RenderFillRect(ctx->win.renderer, &piece_rect);
         }
     }
+}
+
+/* ------------------------------------------------------------------ */
+/*  King-bounce animation (checked king bounces on its square)         */
+/* ------------------------------------------------------------------ */
+
+#define CHESS_KING_BOUNCE_TOTAL_MS  450u
+#define CHESS_KING_BOUNCE_COUNT       3
+
+/*
+ * Heights as a fraction of cell_h for each bounce.
+ * Bounce 0: 2/3, Bounce 1: 1/3, Bounce 2: 1/6.
+ */
+static const float s_bounce_heights[CHESS_KING_BOUNCE_COUNT] = {
+    2.0f / 3.0f,
+    1.0f / 3.0f,
+    1.0f / 6.0f
+};
+
+void chess_ui_start_king_bounce_animation(AppContext *ctx, int king_file, int king_rank)
+{
+    if (!ctx) {
+        return;
+    }
+
+    ctx->ui.king_bounce_anim.active = true;
+    ctx->ui.king_bounce_anim.king_file = king_file;
+    ctx->ui.king_bounce_anim.king_rank = king_rank;
+    ctx->ui.king_bounce_anim.started_at_ms = SDL_GetTicks();
+    ctx->ui.king_bounce_anim.duration_ms = CHESS_KING_BOUNCE_TOTAL_MS;
+}
+
+void chess_ui_update_king_bounce_animation(AppContext *ctx)
+{
+    uint64_t now;
+    uint64_t elapsed;
+
+    if (!ctx || !ctx->ui.king_bounce_anim.active) {
+        return;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->ui.king_bounce_anim.started_at_ms;
+    if (ctx->ui.king_bounce_anim.duration_ms == 0u ||
+        elapsed >= (uint64_t)ctx->ui.king_bounce_anim.duration_ms) {
+        ctx->ui.king_bounce_anim.active = false;
+    }
+}
+
+float chess_ui_king_bounce_offset(const AppContext *ctx, int file, int rank, float cell_h)
+{
+    uint64_t now;
+    uint64_t elapsed;
+    float t;
+    int bounce_idx;
+    float seg_t;
+    float height;
+
+    if (!ctx || !ctx->ui.king_bounce_anim.active) {
+        return 0.0f;
+    }
+
+    if (file != ctx->ui.king_bounce_anim.king_file ||
+        rank != ctx->ui.king_bounce_anim.king_rank) {
+        return 0.0f;
+    }
+
+    now = SDL_GetTicks();
+    elapsed = now - ctx->ui.king_bounce_anim.started_at_ms;
+    if (ctx->ui.king_bounce_anim.duration_ms == 0u) {
+        return 0.0f;
+    }
+
+    t = (float)elapsed / (float)ctx->ui.king_bounce_anim.duration_ms;
+    if (t >= 1.0f) {
+        return 0.0f;
+    }
+
+    /* Determine which bounce segment we're in (0, 1 or 2) */
+    bounce_idx = (int)(t * (float)CHESS_KING_BOUNCE_COUNT);
+    if (bounce_idx >= CHESS_KING_BOUNCE_COUNT) {
+        bounce_idx = CHESS_KING_BOUNCE_COUNT - 1;
+    }
+
+    /* seg_t goes from 0..1 within the current bounce */
+    seg_t = t * (float)CHESS_KING_BOUNCE_COUNT - (float)bounce_idx;
+
+    /* Inverted parabola: peak at seg_t=0.5, zero at seg_t=0 and seg_t=1 */
+    /* offset = h * 4 * seg_t * (1 - seg_t) */
+    height = s_bounce_heights[bounce_idx] * cell_h;
+
+    return height * 4.0f * seg_t * (1.0f - seg_t);
 }

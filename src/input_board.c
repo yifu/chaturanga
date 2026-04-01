@@ -16,6 +16,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Declared in game_state_internal.h */
+extern bool chess_gs_is_king_in_check(const ChessGameState *state, ChessPlayerColor color);
+
 /* ---------- move sending ---------- */
 
 bool chess_input_try_send_local_move(AppContext *ctx, int to_file, int to_rank, uint8_t promotion)
@@ -92,6 +95,25 @@ bool chess_input_try_send_local_move(AppContext *ctx, int to_file, int to_rank, 
 
         if (victim != CHESS_PIECE_EMPTY) {
             chess_ui_start_capture_animation(ctx, victim, victim_file, victim_rank);
+        }
+
+        /* Bounce the opponent's king if it is now in check */
+        {
+            ChessPlayerColor opponent = ctx->game.game_state.side_to_move;
+            if (chess_gs_is_king_in_check(&ctx->game.game_state, opponent)) {
+                ChessPiece king_target = (opponent == CHESS_COLOR_WHITE)
+                    ? CHESS_PIECE_WHITE_KING : CHESS_PIECE_BLACK_KING;
+                int r, f;
+                for (r = 0; r < CHESS_BOARD_SIZE; ++r) {
+                    for (f = 0; f < CHESS_BOARD_SIZE; ++f) {
+                        if (chess_game_get_piece(&ctx->game.game_state, f, r) == king_target) {
+                            chess_ui_start_king_bounce_animation(ctx, f, r);
+                            r = CHESS_BOARD_SIZE; /* break outer */
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 

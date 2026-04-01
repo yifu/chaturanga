@@ -55,11 +55,20 @@ typedef struct SnapBackAnimation {
     uint32_t duration_ms;
 } SnapBackAnimation;
 
+typedef struct KingBounceAnimation {
+    bool active;
+    int king_file;
+    int king_rank;
+    uint64_t started_at_ms;
+    uint32_t duration_ms;
+} KingBounceAnimation;
+
 typedef struct UIContext {
     DragState drag;
     RemoteMoveAnimation remote_move_anim;
     CaptureAnimation capture_anim;
     SnapBackAnimation snap_back_anim;
+    KingBounceAnimation king_bounce_anim;
     char status_message[APP_STATUS_MESSAGE_LEN];
     uint64_t status_message_until_ms;
     int history_scroll_offset; /* turn-lines from bottom; 0 = follow latest */

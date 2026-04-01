@@ -87,6 +87,25 @@ void chess_ui_start_capture_animation(
     int from_rank);
 
 /**
+ * Advance the king-bounce animation timer.
+ * Call once per frame from the main loop.
+ */
+void chess_ui_update_king_bounce_animation(AppContext *ctx);
+
+/**
+ * Start a king-bounce animation: the checked king bounces on its
+ * square with decreasing height (three bounces).
+ */
+void chess_ui_start_king_bounce_animation(AppContext *ctx, int king_file, int king_rank);
+
+/**
+ * Return the current vertical pixel offset for a king bounce in
+ * progress.  Returns 0.0f when no bounce is active or the given
+ * square is not the bouncing king.
+ */
+float chess_ui_king_bounce_offset(const AppContext *ctx, int file, int rank, float cell_h);
+
+/**
  * Full frame rendering: lobby, board, overlays, history panel, status.
  */
 void chess_ui_render_frame(AppContext *ctx);

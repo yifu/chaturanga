@@ -204,6 +204,7 @@ void chess_ui_render_frame(AppContext *ctx)
         chess_ui_render_capture_animation(ctx, board_width, board_y, board_height);
         chess_ui_render_pending_capture_piece(ctx, board_width, board_y, board_height);
         chess_ui_render_game_overlay(
+            ctx,
             ctx->win.renderer,
             board_width,
             board_y,

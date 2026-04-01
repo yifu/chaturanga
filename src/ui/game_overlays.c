@@ -160,6 +160,7 @@ void chess_ui_render_board_coordinates(
 /* ------------------------------------------------------------------ */
 
 void chess_ui_render_game_overlay(
+    const AppContext *ctx,
     SDL_Renderer *renderer,
     int width,
     int board_y,
@@ -234,10 +235,11 @@ void chess_ui_render_game_overlay(
                     float tex_h = 0.0f;
                     int screen_file = board_to_screen_index(file, black_perspective);
                     int screen_rank = board_to_screen_index(rank, black_perspective);
+                    float bounce_y = chess_ui_king_bounce_offset(ctx, file, rank, cell_h);
                     SDL_FRect dst;
                     SDL_GetTextureSize(tex, &tex_w, &tex_h);
                     dst.x = screen_file * cell_w + (cell_w - tex_w) * 0.5f;
-                    dst.y = (float)board_y + screen_rank * cell_h + (cell_h - tex_h) * 0.5f;
+                    dst.y = (float)board_y + screen_rank * cell_h + (cell_h - tex_h) * 0.5f - bounce_y;
                     dst.w = tex_w;
                     dst.h = tex_h;
                     SDL_RenderTexture(renderer, tex, NULL, &dst);
@@ -245,9 +247,10 @@ void chess_ui_render_game_overlay(
                     /* Fallback: coloured rectangle when font unavailable */
                     int screen_file = board_to_screen_index(file, black_perspective);
                     int screen_rank = board_to_screen_index(rank, black_perspective);
+                    float bounce_y = chess_ui_king_bounce_offset(ctx, file, rank, cell_h);
                     SDL_FRect pawn_rect = {
                         screen_file * cell_w + (cell_w * 0.25f),
-                        (float)board_y + screen_rank * cell_h + (cell_h * 0.25f),
+                        (float)board_y + screen_rank * cell_h + (cell_h * 0.25f) - bounce_y,
                         cell_w * 0.5f,
                         cell_h * 0.5f
                     };

@@ -71,6 +71,7 @@ void chess_ui_render_board_coordinates(
     ChessPlayerColor local_color);
 
 void chess_ui_render_game_overlay(
+    const AppContext *ctx,
     SDL_Renderer *renderer, int width, int board_y, int board_height,
     const ChessGameState *game_state, ChessPlayerColor local_color,
     bool hide_piece, int hidden_file, int hidden_rank);
@@ -102,6 +103,9 @@ void chess_ui_render_pending_capture_piece(
     AppContext *ctx, int width, int board_y, int board_height);
 
 void chess_ui_render_snap_back_animation(
+    AppContext *ctx, int width, int board_y, int board_height);
+
+void chess_ui_render_king_bounce_animation(
     AppContext *ctx, int width, int board_y, int board_height);
 
 #endif /* CHESS_APP_UI_GAME_INTERNAL_H */
