@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(sdl3_test_chess_app C)
 
+if(APPLE)
+    enable_language(OBJC)
+endif()
+
 include(CTest)
 
 set(CMAKE_C_STANDARD 11)
@@ -15,6 +19,7 @@ find_package(SDL3_image REQUIRED CONFIG)
 
 if(PkgConfig_FOUND)
     pkg_check_modules(AVAHI_CLIENT QUIET avahi-client)
+    pkg_check_modules(LIBNOTIFY QUIET libnotify)
 endif()
 
 # ── Embed PNG piece sprites into the binary ──────────────────────
@@ -95,6 +100,15 @@ add_executable(chess_app
     ${EMBEDDED_SOURCES}
 )
 
+# ── Desktop notification source (platform-specific) ──────────────
+if(APPLE)
+    target_sources(chess_app PRIVATE src/notification_macos.m)
+elseif(LIBNOTIFY_FOUND)
+    target_sources(chess_app PRIVATE src/notification_linux.c)
+else()
+    target_sources(chess_app PRIVATE src/notification_stub.c)
+endif()
+
 target_include_directories(chess_app PRIVATE include "${GENERATED_DIR}")
 
 if(AVAHI_CLIENT_FOUND)
@@ -113,6 +127,11 @@ if(APPLE AND NOT AVAHI_CLIENT_FOUND)
 endif()
 
 target_link_libraries(chess_app PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image Threads::Threads)
+
+if(LIBNOTIFY_FOUND)
+    target_include_directories(chess_app PRIVATE ${LIBNOTIFY_INCLUDE_DIRS})
+    target_link_libraries(chess_app PRIVATE ${LIBNOTIFY_LIBRARIES})
+endif()
 
 add_executable(chess_app_tests
     tests/test_suite.c

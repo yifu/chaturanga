@@ -17,6 +17,7 @@
 #include "chess_app/network_peer.h"
 #include "chess_app/network_session.h"
 #include "chess_app/network_tcp.h"
+#include "chess_app/notification.h"
 #include "chess_app/tcp_transport.h"
 
 #include <SDL3/SDL.h>
@@ -59,9 +60,11 @@ static void app_loop_context_init_defaults(AppContext *ctx)
 
     memset(ctx, 0, sizeof(*ctx));
     ctx->win.window_size = 640;
+    ctx->win.window_has_focus = true;
     ctx->network.connect_retry_ms = 1000;
     tcp_transport_init(&ctx->network.transport);
     ctx->running = true;
+    chess_notification_init();
 }
 
 static void app_loop_context_shutdown(AppContext *ctx)
@@ -70,6 +73,7 @@ static void app_loop_context_shutdown(AppContext *ctx)
         return;
     }
 
+    chess_notification_cleanup();
     chess_discovery_stop(&ctx->network.discovery);
     chess_lobby_close_all_challenge_connections(&ctx->game.lobby);
     transport_close(&ctx->network.transport.base);

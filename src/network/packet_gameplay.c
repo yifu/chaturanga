@@ -9,6 +9,7 @@
 #include "chess_app/game_state.h"
 #include "chess_app/net_handler.h"
 #include "chess_app/network_session.h"
+#include "chess_app/notification.h"
 #include "chess_app/persistence.h"
 #include "chess_app/ui_game.h"
 
@@ -122,6 +123,13 @@ void chess_pkt_handle_move(AppContext *ctx, const ChessMovePayload *move)
 
             if (ctx->network.network_session.role == CHESS_ROLE_SERVER) {
                 (void)chess_persist_save_match_snapshot(ctx);
+            }
+
+            if (!ctx->win.window_has_focus && notation_ready) {
+                char notif_body[48];
+                SDL_snprintf(notif_body, sizeof(notif_body),
+                             "Your opponent played %s", notation);
+                chess_notification_send("Chaturanga", notif_body);
             }
 
             SDL_Log(

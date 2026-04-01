@@ -221,6 +221,15 @@ void chess_input_handle_events(AppContext *ctx)
             continue;
         }
 
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+            ctx->win.window_has_focus = true;
+            continue;
+        }
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            ctx->win.window_has_focus = false;
+            continue;
+        }
+
         if (!ctx->network.network_session.game_started) {
             if (event.type == SDL_EVENT_MOUSE_WHEEL) {
                 int ww = 0;
