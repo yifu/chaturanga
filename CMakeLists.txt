@@ -148,7 +148,7 @@ if(APPLE AND NOT AVAHI_CLIENT_FOUND)
     endif()
 endif()
 
-target_link_libraries(chess_app PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image Threads::Threads)
+target_link_libraries(chess_app PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image Threads::Threads m)
 
 if(LIBNOTIFY_FOUND)
     target_include_directories(chess_app PRIVATE ${LIBNOTIFY_INCLUDE_DIRS})
