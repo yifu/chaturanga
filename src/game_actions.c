@@ -211,6 +211,11 @@ void app_return_to_lobby(AppContext *ctx)
     ctx->ui.drag.promotion_to_rank = -1;
     ctx->ui.remote_move_anim.active = false;
     ctx->ui.remote_move_anim.piece = CHESS_PIECE_EMPTY;
+    ctx->ui.capture_anim.active = false;
+    ctx->ui.capture_anim.pending = false;
+    ctx->ui.snap_back_anim.active = false;
+    ctx->ui.king_bounce_anim.active = false;
+    ctx->ui.king_tilt_anim.active = false;
 
     chess_game_state_init(&ctx->game.game_state);
     ctx->game.move_history_count = 0;
